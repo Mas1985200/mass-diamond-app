@@ -1,28 +1,205 @@
 export default function App() {
+  const quickActions = [
+    { label: "هر چیزی بپرس", icon: <ChatIcon /> },
+    { label: "جستجو در وب", icon: <SearchIcon /> },
+    { label: "ساخت تصویر", icon: <ImageIcon /> },
+    { label: "کمک آموزشی", icon: <LearnIcon /> },
+    { label: "پیدا کردن محصول", icon: <BagIcon /> },
+    { label: "جستجوی ملک", icon: <HomeIcon /> },
+  ];
+
   return (
-    <div className="min-h-screen flex flex-col items-center justify-center gap-6 px-4 text-center">
-      <div className="w-24 h-24 rounded-full md-glass md-neon-surface flex items-center justify-center">
-        <span className="text-4xl">💎</span>
+    <div className="min-h-screen flex flex-col items-center justify-between px-4 py-10 text-center relative overflow-hidden">
+      <div className="pointer-events-none absolute inset-0 bg-[radial-gradient(circle_at_50%_20%,rgba(57,255,136,0.10),transparent_60%)]" />
+
+      <div className="flex-1 flex flex-col items-center justify-center gap-6 z-10 w-full">
+        <DiamondMark />
+
+        <div>
+          <h1 className="text-3xl font-bold leading-tight">
+            Hello, I'm <span className="text-primary">Mass Diamond</span>
+          </h1>
+          <p className="text-text-subtle mt-2">
+            Your Intelligent Assistant for a Bigger Tomorrow
+          </p>
+        </div>
+
+        <div className="grid grid-cols-2 gap-3 w-full max-w-md mt-4">
+          {quickActions.map((action) => (
+            <button
+              key={action.label}
+              type="button"
+              className="md-glass rounded-full px-4 py-3 flex items-center gap-2 text-sm text-text transition-colors duration-180 hover:border-[rgba(57,255,136,0.4)]"
+            >
+              <span className="text-primary shrink-0">{action.icon}</span>
+              <span className="truncate">{action.label}</span>
+            </button>
+          ))}
+        </div>
       </div>
-      <div>
-        <h1 className="text-3xl font-bold">
-          Hello, I'm <span className="text-primary">Mass Diamond</span>
-        </h1>
-        <p className="text-text-subtle mt-2">
-          Your Intelligent Assistant for a Bigger Tomorrow
-        </p>
-      </div>
-      <div className="w-full max-w-xl md-glass rounded-full px-4 py-3 flex items-center gap-3">
+
+      <div
+        className="w-full max-w-xl md-glass rounded-full px-3 py-2 flex items-center gap-2 z-10"
+        dir="rtl"
+      >
+        <button
+          type="button"
+          aria-label="پیوست فایل"
+          className="w-9 h-9 shrink-0 flex items-center justify-center text-text-subtle transition-colors hover:text-primary"
+        >
+          <AttachIcon />
+        </button>
         <input
           type="text"
           placeholder="چطور می‌تونم کمکت کنم؟"
-          className="flex-1 bg-transparent outline-none text-text placeholder:text-text-subtle"
-          dir="rtl"
+          className="flex-1 bg-transparent outline-none text-text placeholder:text-text-subtle text-sm"
         />
-        <button className="w-10 h-10 rounded-full bg-primary text-background flex items-center justify-center">
-          ➤
+        <button
+          type="button"
+          aria-label="ورودی صوتی"
+          className="w-9 h-9 shrink-0 flex items-center justify-center text-text-subtle transition-colors hover:text-primary"
+        >
+          <MicIcon />
+        </button>
+        <button
+          type="button"
+          aria-label="ارسال"
+          className="w-10 h-10 shrink-0 rounded-full bg-primary text-background flex items-center justify-center"
+        >
+          <SendIcon />
         </button>
       </div>
     </div>
+  );
+}
+
+function DiamondMark() {
+  return (
+    <div className="relative w-28 h-28 flex items-center justify-center">
+      <div className="absolute inset-0 rounded-full bg-[rgba(57,255,136,0.18)] blur-2xl" />
+      <div className="absolute inset-2 rounded-full border border-[rgba(57,255,136,0.35)]" />
+      <svg
+        viewBox="0 0 200 200"
+        className="relative w-20 h-20 drop-shadow-[0_0_18px_rgba(57,255,136,0.6)]"
+      >
+        <defs>
+          <linearGradient id="diamondBody" x1="0" y1="0" x2="0" y2="1">
+            <stop offset="0%" stopColor="#eafff0" />
+            <stop offset="35%" stopColor="#6dffab" />
+            <stop offset="70%" stopColor="#12b860" />
+            <stop offset="100%" stopColor="#054f2c" />
+          </linearGradient>
+          <linearGradient id="diamondShine" x1="0" y1="0" x2="1" y2="1">
+            <stop offset="0%" stopColor="#ffffff" stopOpacity="0.85" />
+            <stop offset="100%" stopColor="#ffffff" stopOpacity="0" />
+          </linearGradient>
+        </defs>
+        <polygon
+          points="100,18 155,72 100,188 45,72"
+          fill="url(#diamondBody)"
+          stroke="#054f2c"
+          strokeWidth="2"
+          strokeLinejoin="round"
+        />
+        <polyline points="45,72 155,72" stroke="#054f2c" strokeWidth="1.5" opacity="0.55" />
+        <polyline points="100,18 72,72" stroke="#054f2c" strokeWidth="1" opacity="0.45" />
+        <polyline points="100,18 128,72" stroke="#054f2c" strokeWidth="1" opacity="0.45" />
+        <polyline points="72,72 100,188" stroke="#054f2c" strokeWidth="1" opacity="0.3" />
+        <polyline points="128,72 100,188" stroke="#054f2c" strokeWidth="1" opacity="0.3" />
+        <polygon points="100,18 118,72 82,72" fill="url(#diamondShine)" opacity="0.6" />
+      </svg>
+    </div>
+  );
+}
+
+function iconProps() {
+  return {
+    viewBox: "0 0 24 24",
+    fill: "none",
+    stroke: "currentColor",
+    strokeWidth: 1.8,
+    strokeLinecap: "round" as const,
+    strokeLinejoin: "round" as const,
+    className: "w-5 h-5",
+  };
+}
+
+function AttachIcon() {
+  return (
+    <svg {...iconProps()}>
+      <path d="M17.5 8.5 9.6 16.4a3.2 3.2 0 0 1-4.5-4.5l8-8a2.2 2.2 0 0 1 3.1 3.1l-7.6 7.6a1.2 1.2 0 0 1-1.7-1.7l6.9-6.9" />
+    </svg>
+  );
+}
+
+function MicIcon() {
+  return (
+    <svg {...iconProps()}>
+      <rect x="9" y="3" width="6" height="11" rx="3" />
+      <path d="M5 11a7 7 0 0 0 14 0" />
+      <path d="M12 18v3" />
+    </svg>
+  );
+}
+
+function SendIcon() {
+  return (
+    <svg viewBox="0 0 24 24" fill="currentColor" className="w-5 h-5 -rotate-90">
+      <path d="M3 11.5 20 3l-4.5 17-4-7-7.5-1.5Z" />
+    </svg>
+  );
+}
+
+function ChatIcon() {
+  return (
+    <svg {...iconProps()}>
+      <path d="M4 5h16v11H8l-4 4V5Z" />
+    </svg>
+  );
+}
+
+function SearchIcon() {
+  return (
+    <svg {...iconProps()}>
+      <circle cx="11" cy="11" r="6" />
+      <path d="m20 20-3.2-3.2" />
+    </svg>
+  );
+}
+
+function ImageIcon() {
+  return (
+    <svg {...iconProps()}>
+      <rect x="3" y="4" width="18" height="15" rx="2" />
+      <circle cx="9" cy="10" r="1.6" />
+      <path d="m4 17 5-5 4 4 3-3 4 4" />
+    </svg>
+  );
+}
+
+function LearnIcon() {
+  return (
+    <svg {...iconProps()}>
+      <path d="M3 8 12 4l9 4-9 4-9-4Z" />
+      <path d="M7 10.5v4c0 1.4 2.2 2.5 5 2.5s5-1.1 5-2.5v-4" />
+    </svg>
+  );
+}
+
+function BagIcon() {
+  return (
+    <svg {...iconProps()}>
+      <path d="M6 8h12l-1 12H7L6 8Z" />
+      <path d="M9 8V6a3 3 0 0 1 6 0v2" />
+    </svg>
+  );
+}
+
+function HomeIcon() {
+  return (
+    <svg {...iconProps()}>
+      <path d="m4 11 8-7 8 7" />
+      <path d="M6 10v9h12v-9" />
+    </svg>
   );
 }
