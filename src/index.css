@@ -1,0 +1,41 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+* {
+  box-sizing: border-box;
+}
+
+html,
+body,
+#root {
+  height: 100%;
+}
+
+body {
+  margin: 0;
+  background-color: #060907;
+  color: #f2fff6;
+  font-family: "Segoe UI", Tahoma, sans-serif;
+  -webkit-tap-highlight-color: transparent;
+}
+
+::selection {
+  background-color: rgba(57, 255, 136, 0.35);
+}
+
+:focus-visible {
+  outline: 2px solid #39ff88;
+  outline-offset: 2px;
+}
+
+.md-glass {
+  background: rgba(13, 20, 16, 0.6);
+  backdrop-filter: blur(16px);
+  -webkit-backdrop-filter: blur(16px);
+  border: 1px solid rgba(57, 255, 136, 0.15);
+}
+
+.md-neon-surface {
+  box-shadow: 0 0 40px rgba(57, 255, 136, 0.25);
+}
