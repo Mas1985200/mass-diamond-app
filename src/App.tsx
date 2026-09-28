@@ -4,6 +4,7 @@ import type { Session } from "@supabase/supabase-js";
 import { supabase } from "./lib/supabase";
 import { I18nProvider } from "./i18n/I18nProvider";
 import Auth from "./components/auth/Auth";
+import DiamondMark from "./components/DiamondMark";
 
 export default function App() {
   return (
@@ -71,7 +72,7 @@ function HomeScreen() {
       <div className="pointer-events-none absolute inset-0 bg-[radial-gradient(circle_at_50%_20%,rgba(57,255,136,0.10),transparent_60%)]" />
 
       <div className="flex-1 flex flex-col items-center justify-center gap-6 z-10 w-full">
-        <DiamondMark />
+        <DiamondMark size={140} />
 
         <div>
           <h1 className="text-3xl font-bold leading-tight">
@@ -127,45 +128,6 @@ function HomeScreen() {
           <SendIcon />
         </button>
       </div>
-    </div>
-  );
-}
-
-function DiamondMark() {
-  return (
-    <div className="relative w-28 h-28 flex items-center justify-center">
-      <div className="absolute inset-0 rounded-full bg-[rgba(57,255,136,0.18)] blur-2xl" />
-      <div className="absolute inset-2 rounded-full border border-[rgba(57,255,136,0.35)]" />
-      <svg
-        viewBox="0 0 200 200"
-        className="relative w-20 h-20 drop-shadow-[0_0_18px_rgba(57,255,136,0.6)]"
-      >
-        <defs>
-          <linearGradient id="diamondBody" x1="0" y1="0" x2="0" y2="1">
-            <stop offset="0%" stopColor="#eafff0" />
-            <stop offset="35%" stopColor="#6dffab" />
-            <stop offset="70%" stopColor="#12b860" />
-            <stop offset="100%" stopColor="#054f2c" />
-          </linearGradient>
-          <linearGradient id="diamondShine" x1="0" y1="0" x2="1" y2="1">
-            <stop offset="0%" stopColor="#ffffff" stopOpacity="0.85" />
-            <stop offset="100%" stopColor="#ffffff" stopOpacity="0" />
-          </linearGradient>
-        </defs>
-        <polygon
-          points="100,18 155,72 100,188 45,72"
-          fill="url(#diamondBody)"
-          stroke="#054f2c"
-          strokeWidth="2"
-          strokeLinejoin="round"
-        />
-        <polyline points="45,72 155,72" stroke="#054f2c" strokeWidth="1.5" opacity="0.55" />
-        <polyline points="100,18 72,72" stroke="#054f2c" strokeWidth="1" opacity="0.45" />
-        <polyline points="100,18 128,72" stroke="#054f2c" strokeWidth="1" opacity="0.45" />
-        <polyline points="72,72 100,188" stroke="#054f2c" strokeWidth="1" opacity="0.3" />
-        <polyline points="128,72 100,188" stroke="#054f2c" strokeWidth="1" opacity="0.3" />
-        <polygon points="100,18 118,72 82,72" fill="url(#diamondShine)" opacity="0.6" />
-      </svg>
     </div>
   );
 }
