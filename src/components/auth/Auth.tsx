@@ -2,6 +2,7 @@ import { useState, type FormEvent } from "react";
 import type { SupabaseClient } from "@supabase/supabase-js";
 
 import { useI18n } from "../../i18n/I18nProvider";
+import DiamondMark from "../../components/DiamondMark";
 
 export interface AuthProps {
   readonly supabase: SupabaseClient;
@@ -68,8 +69,10 @@ export default function Auth({ supabase }: AuthProps) {
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
   const [loading, setLoading] = useState(false);
-  const [error, setError] = useState<AuthErrorKey | null>(null);
-  const [message, setMessage] = useState<string | null>(null);
+  const [error, setError] =
+    useState<AuthErrorKey | null>(null);
+  const [message, setMessage] =
+    useState<string | null>(null);
 
   const handleSubmit = async (
     event: FormEvent<HTMLFormElement>,
@@ -134,16 +137,12 @@ export default function Auth({ supabase }: AuthProps) {
     >
       <section className="w-full max-w-md">
         <div className="md-glass md-neon-surface rounded-3xl p-6 sm:p-8">
+          {/* =====================================================
+              BRAND
+          ====================================================== */}
           <div className="mb-7 text-center">
             <div className="mb-5 flex justify-center">
-              <div className="flex h-14 w-14 items-center justify-center rounded-2xl bg-primary/10 text-primary shadow-[0_0_24px_rgba(57,255,136,0.18)]">
-                <span
-                  aria-hidden="true"
-                  className="text-2xl"
-                >
-                  ◇
-                </span>
-              </div>
+              <DiamondMark size={96} />
             </div>
 
             <h1 className="text-2xl font-semibold tracking-tight text-white">
@@ -151,7 +150,9 @@ export default function Auth({ supabase }: AuthProps) {
             </h1>
           </div>
 
-          {/* Login / Signup segmented control */}
+          {/* =====================================================
+              LOGIN / SIGNUP SEGMENTED CONTROL
+          ====================================================== */}
           <div
             role="tablist"
             aria-label={t("auth.brand")}
@@ -188,17 +189,24 @@ export default function Auth({ supabase }: AuthProps) {
             </button>
           </div>
 
+          {/* =====================================================
+              SUBTITLE
+          ====================================================== */}
           <p className="mb-6 text-center text-sm text-white/60">
             {isSignUp
               ? t("auth.signupSubtitle")
               : t("auth.loginSubtitle")}
           </p>
 
+          {/* =====================================================
+              AUTH FORM
+          ====================================================== */}
           <form
             onSubmit={handleSubmit}
             className="space-y-5"
             noValidate
           >
+            {/* EMAIL */}
             <div className="space-y-2">
               <label
                 htmlFor="auth-email"
@@ -225,6 +233,7 @@ export default function Auth({ supabase }: AuthProps) {
               />
             </div>
 
+            {/* PASSWORD */}
             <div className="space-y-2">
               <label
                 htmlFor="auth-password"
@@ -255,6 +264,7 @@ export default function Auth({ supabase }: AuthProps) {
               />
             </div>
 
+            {/* ERROR */}
             {error && (
               <div
                 role="alert"
@@ -264,6 +274,7 @@ export default function Auth({ supabase }: AuthProps) {
               </div>
             )}
 
+            {/* SUCCESS MESSAGE */}
             {message && (
               <div
                 role="status"
@@ -273,6 +284,7 @@ export default function Auth({ supabase }: AuthProps) {
               </div>
             )}
 
+            {/* SUBMIT */}
             <button
               type="submit"
               disabled={loading}
