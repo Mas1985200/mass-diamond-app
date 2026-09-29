@@ -53,11 +53,27 @@ export default function DiamondMark({
         minWidth: 0,
         height: "auto",
         overflow: "hidden",
+        // 👇 اضافه شده: انیمیشن شناور بودن کل الماس
+        animation: "floatDiamond 4s ease-in-out infinite",
         ...style,
       }}
       role={title ? "img" : undefined}
       aria-labelledby={title ? titleId : undefined}
     >
+      {/* 👇 اضافه شده: استایل‌های انیمیشن */}
+      <style>
+        {`
+          @keyframes floatDiamond {
+            0%, 100% { transform: translateY(0px); }
+            50% { transform: translateY(-10px); }
+          }
+          @keyframes orbitPulse {
+            0%, 100% { opacity: 0.6; filter: drop-shadow(0 0 5px #39FF88); }
+            50% { opacity: 1; filter: drop-shadow(0 0 15px #39FF88); }
+          }
+        `}
+      </style>
+
       {title ? <title id={titleId}>{title}</title> : null}
 
       <defs>
@@ -141,6 +157,8 @@ export default function DiamondMark({
         strokeLinecap="round"
         opacity="0.82"
         filter={`url(#${glowId})`}
+        // 👇 اضافه شده: انیمیشن نبض برای حلقه
+        style={{ animation: "orbitPulse 3s ease-in-out infinite" }}
       />
 
       {/* Soft ambient glow */}
