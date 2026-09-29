@@ -1,135 +1,881 @@
-import React, { useState } from 'react';
-import DiamondMark from './DiamondMark'; // مسیر کامپوننت الماس خودتون
+import type { SVGProps } from "react";
+import { useId } from "react";
 
-export default function MassDiamondDashboard() {
-  const [sidebarOpen, setSidebarOpen] = useState(false);
+type DiamondMarkProps = {
+  size: number | string;
+  title?: string;
+  className?: string;
+  style?: SVGProps<SVGSVGElement>["style"];
+} & Omit<
+  SVGProps<SVGSVGElement>,
+  "width" | "height" | "title" | "className" | "style"
+>;
+
+export default function DiamondMark({
+  size,
+  title,
+  className,
+  style,
+  ...rest
+}: DiamondMarkProps) {
+  const rawId = useId();
+  const id = rawId.replace(/[^a-zA-Z0-9_-]/g, "");
+
+  const width =
+    typeof size === "number"
+      ? Math.round(size * 2.45)
+      : `min(245%, 100%)`;
+
+  const height =
+    typeof size === "number"
+      ? Math.round(size * 1.64)
+      : "auto";
+
+  const titleId = `${id}-title`;
+  const diamondGradient = `${id}-diamond-gradient`;
+  const crownGradient = `${id}-crown-gradient`;
+  const pavilionGradient = `${id}-pavilion-gradient`;
+  const greenFacetGradient = `${id}-green-facet`;
+  const darkGlassGradient = `${id}-dark-glass`;
+  const orbitGradient = `${id}-orbit-gradient`;
+  const glowFilter = `${id}-glow`;
+  const strongGlowFilter = `${id}-strong-glow`;
+  const starGlowFilter = `${id}-star-glow`;
 
   return (
-    <div className="flex h-screen bg-[#050a08] text-white font-sans overflow-hidden relative">
-      
-      {/* ================= سایدبار (سمت چپ) ================= */}
-      {/* در موبایل مخفی میشه و با دکمه منو باز میشه */}
-      <aside className={`fixed md:relative z-50 w-64 h-full bg-[#0a1410] border-r border-[#1a2e24] flex flex-col transition-transform duration-300 ${sidebarOpen ? 'translate-x-0' : '-translate-x-full md:translate-x-0'}`}>
-        
-        {/* لوگو و نام */}
-        <div className="p-4 flex items-center gap-3 border-b border-[#1a2e24]">
-          <div className="w-8 h-8"><DiamondMark size={32} /></div>
-          <div>
-            <h2 className="text-sm font-bold text-white">Mass Diamond</h2>
-            <p className="text-[10px] text-gray-500">Intelligent Assistant</p>
-          </div>
-          <button onClick={() => setSidebarOpen(false)} className="md:hidden ml-auto text-gray-400">✕</button>
-        </div>
+    <svg
+      {...rest}
+      width={width}
+      height={height}
+      viewBox="0 0 980 655"
+      preserveAspectRatio="xMidYMid meet"
+      xmlns="http://www.w3.org/2000/svg"
+      className={className}
+      style={{
+        display: "block",
+        maxWidth: "100%",
+        height: "auto",
+        overflow: "hidden",
+        ...style,
+      }}
+      overflow="hidden"
+      role={title ? "img" : undefined}
+      aria-labelledby={title ? titleId : undefined}
+    >
+      {title ? <title id={titleId}>{title}</title> : null}
 
-        {/* منوی اصلی */}
-        <div className="flex-1 overflow-y-auto p-3 space-y-1">
-          <button className="w-full flex items-center gap-3 px-3 py-2.5 bg-[#1a2e24] text-[#39FF88] rounded-lg text-sm font-medium transition-colors">
-            <span>🏠</span> Home
-          </button>
-          <button className="w-full flex items-center gap-3 px-3 py-2.5 text-gray-400 hover:text-white hover:bg-[#0d1f17] rounded-lg text-sm transition-colors">
-            <span>💬</span> Chat
-          </button>
-          <button className="w-full flex items-center gap-3 px-3 py-2.5 text-gray-400 hover:text-white hover:bg-[#0d1f17] rounded-lg text-sm transition-colors">
-            <span>🔍</span> Search
-          </button>
-          <button className="w-full flex items-center gap-3 px-3 py-2.5 text-gray-400 hover:text-white hover:bg-[#0d1f17] rounded-lg text-sm transition-colors">
-            <span>🎓</span> Learning
-          </button>
-          <button className="w-full flex items-center gap-3 px-3 py-2.5 text-gray-400 hover:text-white hover:bg-[#0d1f17] rounded-lg text-sm transition-colors">
-            <span>🖼️</span> Media
-          </button>
-          <button className="w-full flex items-center gap-3 px-3 py-2.5 text-gray-400 hover:text-white hover:bg-[#0d1f17] rounded-lg text-sm transition-colors">
-            <span>🧰</span> Tools
-          </button>
-        </div>
+      <defs>
+        {/* Main crystal */}
+        <linearGradient
+          id={diamondGradient}
+          x1="260"
+          y1="185"
+          x2="700"
+          y2="545"
+          gradientUnits="userSpaceOnUse"
+        >
+          <stop offset="0" stopColor="#FFFFFF" stopOpacity="0.98" />
+          <stop offset="0.14" stopColor="#DFFFF0" stopOpacity="0.96" />
+          <stop offset="0.3" stopColor="#7CFFB5" stopOpacity="0.78" />
+          <stop offset="0.48" stopColor="#FFFFFF" stopOpacity="0.98" />
+          <stop offset="0.67" stopColor="#54FF9C" stopOpacity="0.72" />
+          <stop offset="0.84" stopColor="#DFFFF0" stopOpacity="0.96" />
+          <stop offset="1" stopColor="#FFFFFF" stopOpacity="0.98" />
+        </linearGradient>
 
-        {/* چت‌های اخیر */}
-        <div className="p-4 border-t border-[#1a2e24]">
-          <p className="text-xs text-gray-500 mb-2 uppercase tracking-wider">Recent Chats</p>
-          <div className="space-y-2 text-sm text-gray-400">
-            <div className="flex justify-between items-center hover:text-white cursor-pointer"><span>چطور شروع کنم؟</span><span className="text-[10px]">2m</span></div>
-            <div className="flex justify-between items-center hover:text-white cursor-pointer"><span>ساختار پروژه</span><span className="text-[10px]">1h</span></div>
-            <div className="flex justify-between items-center hover:text-white cursor-pointer"><span>تنظیمات امنیتی</span><span className="text-[10px]">1d</span></div>
-          </div>
-        </div>
+        {/* Crown glass */}
+        <linearGradient
+          id={crownGradient}
+          x1="300"
+          y1="160"
+          x2="670"
+          y2="350"
+          gradientUnits="userSpaceOnUse"
+        >
+          <stop offset="0" stopColor="#FFFFFF" stopOpacity="0.96" />
+          <stop offset="0.2" stopColor="#D5FFEA" stopOpacity="0.9" />
+          <stop offset="0.42" stopColor="#57FF9E" stopOpacity="0.7" />
+          <stop offset="0.6" stopColor="#FFFFFF" stopOpacity="0.95" />
+          <stop offset="0.8" stopColor="#9CFFC8" stopOpacity="0.76" />
+          <stop offset="1" stopColor="#FFFFFF" stopOpacity="0.96" />
+        </linearGradient>
 
-        {/* پایین سایدبار */}
-        <div className="p-4 border-t border-[#1a2e24] space-y-2">
-          <button className="w-full flex items-center gap-3 text-gray-400 hover:text-white text-sm"><span>⚙️</span> Settings</button>
-          <button className="w-full flex items-center gap-3 text-gray-400 hover:text-white text-sm"><span>🌐</span> English</button>
-        </div>
-      </aside>
+        {/* Green glass reflections */}
+        <linearGradient
+          id={greenFacetGradient}
+          x1="530"
+          y1="180"
+          x2="700"
+          y2="490"
+          gradientUnits="userSpaceOnUse"
+        >
+          <stop offset="0" stopColor="#FFFFFF" stopOpacity="0.96" />
+          <stop offset="0.22" stopColor="#BFFFF0" stopOpacity="0.9" />
+          <stop offset="0.45" stopColor="#39FF88" stopOpacity="0.7" />
+          <stop offset="0.72" stopColor="#E5FFF2" stopOpacity="0.9" />
+          <stop offset="1" stopColor="#39FF88" stopOpacity="0.54" />
+        </linearGradient>
 
-      {/* ================= بخش اصلی (سمت راست) ================= */}
-      <main className="flex-1 flex flex-col relative overflow-hidden">
-        
-        {/* هدر بالای صفحه */}
-        <header className="flex justify-between items-center p-4 border-b border-[#1a2e24] md:border-none">
-          <button onClick={() => setSidebarOpen(true)} className="md:hidden text-2xl text-gray-400">☰</button>
-          <div className="flex-1"></div>
-          <div className="flex items-center gap-3">
-            <button className="text-gray-400 hover:text-white text-lg">☀️</button>
-            <div className="w-8 h-8 rounded-full bg-[#1a2e24] flex items-center justify-center text-[#39FF88] text-xs font-bold">A</div>
-          </div>
-        </header>
+        {/* Pavilion */}
+        <linearGradient
+          id={pavilionGradient}
+          x1="350"
+          y1="330"
+          x2="620"
+          y2="570"
+          gradientUnits="userSpaceOnUse"
+        >
+          <stop offset="0" stopColor="#FFFFFF" stopOpacity="0.95" />
+          <stop offset="0.2" stopColor="#CFFFF0" stopOpacity="0.82" />
+          <stop offset="0.4" stopColor="#39FF88" stopOpacity="0.58" />
+          <stop offset="0.58" stopColor="#FFFFFF" stopOpacity="0.9" />
+          <stop offset="0.78" stopColor="#63FFA7" stopOpacity="0.7" />
+          <stop offset="1" stopColor="#FFFFFF" stopOpacity="0.95" />
+        </linearGradient>
 
-        {/* ================= محتوای وسط (خوش‌آمدگویی و دکمه‌ها) ================= */}
-        <div className="flex-1 flex flex-col items-center justify-center p-4 relative z-10">
-          
-          {/* افکت نور سبز پس‌زمینه */}
-          <div className="absolute top-1/2 left-1/2 -translate-x-1/2 -translate-y-1/2 w-[800px] h-[500px] bg-[#39FF88] opacity-[0.04] blur-[120px] rounded-full pointer-events-none" />
+        {/* Transparent internal depth */}
+        <linearGradient
+          id={darkGlassGradient}
+          x1="390"
+          y1="210"
+          x2="590"
+          y2="510"
+          gradientUnits="userSpaceOnUse"
+        >
+          <stop offset="0" stopColor="#BFFFF0" stopOpacity="0.28" />
+          <stop offset="0.35" stopColor="#0B4B34" stopOpacity="0.34" />
+          <stop offset="0.55" stopColor="#031E15" stopOpacity="0.42" />
+          <stop offset="0.75" stopColor="#49FF98" stopOpacity="0.3" />
+          <stop offset="1" stopColor="#DFFFF0" stopOpacity="0.42" />
+        </linearGradient>
 
-          {/* الماس */}
-          <div className="mb-6">
-            <DiamondMark size={140} />
-          </div>
+        {/* Orbit */}
+        <linearGradient
+          id={orbitGradient}
+          x1="90"
+          y1="410"
+          x2="890"
+          y2="190"
+          gradientUnits="userSpaceOnUse"
+        >
+          <stop offset="0" stopColor="#39FF88" stopOpacity="0.2" />
+          <stop offset="0.14" stopColor="#9DFFC9" stopOpacity="0.86" />
+          <stop offset="0.3" stopColor="#FFFFFF" stopOpacity="0.98" />
+          <stop offset="0.5" stopColor="#39FF88" stopOpacity="0.98" />
+          <stop offset="0.7" stopColor="#FFFFFF" stopOpacity="0.98" />
+          <stop offset="0.86" stopColor="#A7FFD0" stopOpacity="0.84" />
+          <stop offset="1" stopColor="#39FF88" stopOpacity="0.18" />
+        </linearGradient>
 
-          {/* متن خوش‌آمدگویی */}
-          <h1 className="text-3xl md:text-4xl font-bold text-center mb-2">
-            Hello, I'm <span className="text-[#39FF88]">Mass Diamond</span>
-          </h1>
-          <p className="text-gray-400 text-sm md:text-base mb-8 text-center">
-            Your Intelligent Assistant for a Bigger Tomorrow
-          </p>
+        {/* Soft glow */}
+        <filter
+          id={glowFilter}
+          x="-50%"
+          y="-80%"
+          width="200%"
+          height="260%"
+          colorInterpolationFilters="sRGB"
+        >
+          <feGaussianBlur
+            stdDeviation="7"
+            result="blur"
+          />
+          <feMerge>
+            <feMergeNode in="blur" />
+            <feMergeNode in="SourceGraphic" />
+          </feMerge>
+        </filter>
 
-          {/* دکمه‌های میانبر (۶ دکمه) */}
-          <div className="grid grid-cols-2 md:grid-cols-3 gap-3 w-full max-w-2xl px-4">
-            <QuickButton icon="💬" text="Ask me anything" />
-            <QuickButton icon="🔍" text="Search the web" />
-            <QuickButton icon="🖼️" text="Create images" />
-            <QuickButton icon="🎓" text="Get learning help" />
-            <QuickButton icon="🛍️" text="Find products" />
-            <QuickButton icon="💡" text="Explore more" />
-          </div>
-        </div>
+        {/* Strong crystal glow */}
+        <filter
+          id={strongGlowFilter}
+          x="-60%"
+          y="-70%"
+          width="220%"
+          height="240%"
+          colorInterpolationFilters="sRGB"
+        >
+          <feGaussianBlur
+            stdDeviation="10"
+            result="blur"
+          />
+          <feMerge>
+            <feMergeNode in="blur" />
+            <feMergeNode in="SourceGraphic" />
+          </feMerge>
+        </filter>
 
-        {/* ================= نوار ورودی چت (پایین) ================= */}
-        <div className="p-4 pb-6 w-full max-w-3xl mx-auto z-20">
-          <div className="relative flex items-center bg-[#0d1f17] border border-[#1a2e24] rounded-2xl px-4 py-3 shadow-[0_0_20px_rgba(0,0,0,0.5)] focus-within:border-[#39FF88] transition-all">
-            <button className="text-gray-400 hover:text-[#39FF88] mr-3 text-lg">📎</button>
-            <input 
-              type="text" 
-              placeholder="How can I help you?" 
-              className="flex-1 bg-transparent border-none outline-none text-white placeholder-gray-500 text-sm"
-            />
-            <button className="text-gray-400 hover:text-white mx-2">🎤</button>
-            <button className="w-8 h-8 rounded-full bg-[#39FF88] flex items-center justify-center text-black hover:bg-[#2ae07a] transition-colors">
-              <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="3" strokeLinecap="round" strokeLinejoin="round"><path d="M5 12h14M12 5l7 7-7 7"/></svg>
-            </button>
-          </div>
-        </div>
+        {/* Stars */}
+        <filter
+          id={starGlowFilter}
+          x="-250%"
+          y="-250%"
+          width="500%"
+          height="500%"
+          colorInterpolationFilters="sRGB"
+        >
+          <feGaussianBlur
+            stdDeviation="3.5"
+            result="blur"
+          />
+          <feMerge>
+            <feMergeNode in="blur" />
+            <feMergeNode in="SourceGraphic" />
+          </feMerge>
+        </filter>
+      </defs>
 
-      </main>
-    </div>
-  );
-}
+      {/* =========================================================
+          REAR ORBIT
+          ========================================================= */}
 
-// کامپوننت کوچک برای دکمه‌های میانبر
-function QuickButton({ icon, text }: { icon: string; text: string }) {
-  return (
-    <button className="flex items-center gap-2 bg-[#0a1410] border border-[#1a2e24] hover:border-[#39FF88] text-gray-300 hover:text-white px-4 py-3 rounded-xl text-xs md:text-sm transition-all duration-300 backdrop-blur-sm">
-      <span>{icon}</span>
-      <span>{text}</span>
-    </button>
+      <ellipse
+        cx="490"
+        cy="330"
+        rx="400"
+        ry="142"
+        transform="rotate(-8 490 330)"
+        fill="none"
+        stroke={`url(#${orbitGradient})`}
+        strokeWidth="4"
+        strokeLinecap="round"
+        opacity="0.82"
+        filter={`url(#${glowFilter})`}
+      />
+
+      {/* =========================================================
+          AMBIENT GREEN LIGHT
+          ========================================================= */}
+
+      <ellipse
+        cx="490"
+        cy="350"
+        rx="255"
+        ry="155"
+        fill="#39FF88"
+        opacity="0.055"
+        filter={`url(#${strongGlowFilter})`}
+      />
+
+      {/* =========================================================
+          BACKGROUND STARS
+          ========================================================= */}
+
+      <g filter={`url(#${starGlowFilter})`}>
+        <circle
+          cx="185"
+          cy="265"
+          r="3"
+          fill="#FFFFFF"
+          opacity="0.76"
+        />
+
+        <circle
+          cx="260"
+          cy="165"
+          r="2"
+          fill="#BFFFF0"
+          opacity="0.7"
+        />
+
+        <circle
+          cx="350"
+          cy="105"
+          r="2"
+          fill="#39FF88"
+          opacity="0.62"
+        />
+
+        <circle
+          cx="505"
+          cy="75"
+          r="4"
+          fill="#FFFFFF"
+          opacity="0.94"
+        />
+
+        <circle
+          cx="615"
+          cy="115"
+          r="2.2"
+          fill="#BFFFF0"
+          opacity="0.74"
+        />
+
+        <circle
+          cx="735"
+          cy="185"
+          r="3"
+          fill="#FFFFFF"
+          opacity="0.76"
+        />
+
+        <circle
+          cx="800"
+          cy="290"
+          r="2"
+          fill="#39FF88"
+          opacity="0.72"
+        />
+
+        <circle
+          cx="720"
+          cy="430"
+          r="2.7"
+          fill="#DFFFF0"
+          opacity="0.7"
+        />
+
+        <circle
+          cx="220"
+          cy="430"
+          r="2"
+          fill="#FFFFFF"
+          opacity="0.62"
+        />
+
+        <circle
+          cx="145"
+          cy="350"
+          r="1.8"
+          fill="#39FF88"
+          opacity="0.64"
+        />
+      </g>
+
+      {/* =========================================================
+          LARGE STAR FLARES
+          ========================================================= */}
+
+      <g filter={`url(#${starGlowFilter})`}>
+        <path
+          d="M505 54
+             L509 69
+             L524 74
+             L509 79
+             L505 94
+             L501 79
+             L486 74
+             L501 69 Z"
+          fill="#FFFFFF"
+          opacity="0.92"
+        />
+
+        <path
+          d="M188 246
+             L191 257
+             L202 261
+             L191 265
+             L188 276
+             L185 265
+             L174 261
+             L185 257 Z"
+          fill="#EFFFF7"
+          opacity="0.78"
+        />
+
+        <path
+          d="M742 172
+             L745 182
+             L755 186
+             L745 190
+             L742 200
+             L739 190
+             L729 186
+             L739 182 Z"
+          fill="#BFFFF0"
+          opacity="0.78"
+        />
+
+        <path
+          d="M798 390
+             L800 398
+             L808 401
+             L800 404
+             L798 412
+             L796 404
+             L788 401
+             L796 398 Z"
+          fill="#FFFFFF"
+          opacity="0.66"
+        />
+      </g>
+
+      {/* =========================================================
+          DIAMOND — CLASSIC BRILLIANT CUT
+          ========================================================= */}
+
+      {/* Outer silhouette */}
+      <path
+        d="
+          M252 292
+          L320 202
+          L660 202
+          L728 292
+          L626 365
+          L490 548
+          L354 365
+          Z
+        "
+        fill="#EFFFF7"
+        fillOpacity="0.12"
+        stroke="#F4FFF9"
+        strokeOpacity="0.92"
+        strokeWidth="2.8"
+        strokeLinejoin="round"
+      />
+
+      {/* =========================================================
+          CROWN OUTER FACETS
+          ========================================================= */}
+
+      {/* Far left crown */}
+      <path
+        d="
+          M252 292
+          L320 202
+          L354 250
+          L354 365
+          Z
+        "
+        fill={`url(#${crownGradient})`}
+        fillOpacity="0.9"
+        stroke="#FFFFFF"
+        strokeOpacity="0.68"
+        strokeWidth="1.5"
+      />
+
+      {/* Far right crown */}
+      <path
+        d="
+          M660 202
+          L728 292
+          L626 365
+          L626 250
+          Z
+        "
+        fill={`url(#${greenFacetGradient})`}
+        fillOpacity="0.9"
+        stroke="#FFFFFF"
+        strokeOpacity="0.68"
+        strokeWidth="1.5"
+      />
+
+      {/* =========================================================
+          TABLE
+          ========================================================= */}
+
+      <path
+        d="
+          M354 216
+          L626 216
+          L654 292
+          L326 292
+          Z
+        "
+        fill={`url(#${diamondGradient})`}
+        fillOpacity="0.96"
+        stroke="#FFFFFF"
+        strokeOpacity="0.9"
+        strokeWidth="2"
+        strokeLinejoin="round"
+      />
+
+      {/* Table interior reflection */}
+      <path
+        d="
+          M370 221
+          L610 221
+          L635 286
+          L345 286
+          Z
+        "
+        fill="#FFFFFF"
+        fillOpacity="0.13"
+      />
+
+      {/* =========================================================
+          LEFT CROWN FACETS
+          ========================================================= */}
+
+      <path
+        d="
+          M326 292
+          L354 216
+          L410 292
+          L354 365
+          Z
+        "
+        fill={`url(#${facetLightSafe})`}
+        fillOpacity="0.88"
+        stroke="#EFFFF7"
+        strokeOpacity="0.62"
+        strokeWidth="1.4"
+      />
+
+      {/* Left triangular reflection */}
+      <path
+        d="
+          M410 292
+          L354 216
+          L490 292
+          L354 365
+          Z
+        "
+        fill="#FFFFFF"
+        fillOpacity="0.2"
+      />
+
+      {/* =========================================================
+          RIGHT CROWN FACETS
+          ========================================================= */}
+
+      <path
+        d="
+          M626 216
+          L654 292
+          L626 365
+          L570 292
+          Z
+        "
+        fill={`url(#${greenFacetGradient})`}
+        fillOpacity="0.9"
+        stroke="#EFFFF7"
+        strokeOpacity="0.62"
+        strokeWidth="1.4"
+      />
+
+      {/* Right triangular reflection */}
+      <path
+        d="
+          M490 292
+          L626 216
+          L570 292
+          L626 365
+          Z
+        "
+        fill="#FFFFFF"
+        fillOpacity="0.18"
+      />
+
+      {/* =========================================================
+          CENTRAL GLASS
+          ========================================================= */}
+
+      <path
+        d="
+          M410 292
+          L490 292
+          L570 292
+          L490 365
+          Z
+        "
+        fill={`url(#${darkGlassGradient})`}
+        fillOpacity="0.7"
+        stroke="#DFFFF0"
+        strokeOpacity="0.56"
+        strokeWidth="1.2"
+      />
+
+      {/* Central bright reflection */}
+      <path
+        d="
+          M490 292
+          L570 292
+          L490 365
+          L450 328
+          Z
+        "
+        fill="#FFFFFF"
+        fillOpacity="0.28"
+      />
+
+      {/* Central green reflection */}
+      <path
+        d="
+          M410 292
+          L490 292
+          L450 328
+          L354 365
+          Z
+        "
+        fill="#39FF88"
+        fillOpacity="0.16"
+      />
+
+      {/* =========================================================
+          GIRDLE
+          ========================================================= */}
+
+      <path
+        d="
+          M252 292
+          L728 292
+          L626 365
+          L490 365
+          L354 365
+          Z
+        "
+        fill="none"
+        stroke="#EFFFF7"
+        strokeOpacity="0.84"
+        strokeWidth="2.4"
+        strokeLinejoin="round"
+      />
+
+      {/* Girdle green reflection */}
+      <path
+        d="
+          M252 292
+          L354 365
+          L490 365
+          L410 292
+          Z
+        "
+        fill="#BFFFF0"
+        fillOpacity="0.12"
+      />
+
+      <path
+        d="
+          M490 365
+          L570 292
+          L728 292
+          L626 365
+          Z
+        "
+        fill="#39FF88"
+        fillOpacity="0.1"
+      />
+
+      {/* =========================================================
+          PAVILION
+          ========================================================= */}
+
+      {/* Left pavilion */}
+      <path
+        d="
+          M354 365
+          L490 365
+          L490 548
+          Z
+        "
+        fill={`url(#${pavilionGradient})`}
+        fillOpacity="0.94"
+        stroke="#FFFFFF"
+        strokeOpacity="0.7"
+        strokeWidth="1.5"
+      />
+
+      {/* Right pavilion */}
+      <path
+        d="
+          M490 365
+          L626 365
+          L490 548
+          Z
+        "
+        fill={`url(#${pavilionGradient})`}
+        fillOpacity="0.9"
+        stroke="#FFFFFF"
+        strokeOpacity="0.7"
+        strokeWidth="1.5"
+      />
+
+      {/* Pavilion left glass reflection */}
+      <path
+        d="
+          M354 365
+          L422 405
+          L490 548
+          Z
+        "
+        fill="#FFFFFF"
+        fillOpacity="0.26"
+      />
+
+      {/* Pavilion right green reflection */}
+      <path
+        d="
+          M626 365
+          L558 405
+          L490 548
+          Z
+        "
+        fill="#39FF88"
+        fillOpacity="0.22"
+      />
+
+      {/* Deep inner pavilion */}
+      <path
+        d="
+          M490 365
+          L555 365
+          L490 530
+          L457 430
+          Z
+        "
+        fill="#063321"
+        fillOpacity="0.25"
+      />
+
+      {/* Long central light reflection */}
+      <path
+        d="
+          M410 292
+          L490 365
+          L490 530
+          L448 435
+          Z
+        "
+        fill="#FFFFFF"
+        fillOpacity="0.3"
+      />
+
+      {/* Pavilion center line */}
+      <path
+        d="M490 365 L490 548"
+        stroke="#FFFFFF"
+        strokeOpacity="0.5"
+        strokeWidth="1.5"
+      />
+
+      {/* Lower silhouette */}
+      <path
+        d="
+          M354 365
+          L490 548
+          L626 365
+        "
+        fill="none"
+        stroke="#F4FFF9"
+        strokeOpacity="0.82"
+        strokeWidth="2"
+        strokeLinejoin="round"
+      />
+
+      {/* =========================================================
+          CRYSTAL HIGHLIGHTS
+          ========================================================= */}
+
+      <path
+        d="
+          M320 202
+          L660 202
+        "
+        stroke="#FFFFFF"
+        strokeOpacity="0.92"
+        strokeWidth="2.5"
+        strokeLinecap="round"
+      />
+
+      <path
+        d="
+          M252 292
+          L320 202
+          L660 202
+          L728 292
+        "
+        fill="none"
+        stroke="#FFFFFF"
+        strokeOpacity="0.72"
+        strokeWidth="2"
+        strokeLinejoin="round"
+      />
+
+      {/* Bright left edge */}
+      <path
+        d="
+          M252 292
+          L354 365
+        "
+        stroke="#FFFFFF"
+        strokeOpacity="0.78"
+        strokeWidth="2"
+      />
+
+      {/* Bright right edge */}
+      <path
+        d="
+          M728 292
+          L626 365
+        "
+        stroke="#DFFFF0"
+        strokeOpacity="0.76"
+        strokeWidth="2"
+      />
+
+      {/* =========================================================
+          FRONT ORBIT
+          ========================================================= */}
+
+      <path
+        d="
+          M88 376
+          C130 466 275 500 415 464
+          C555 428 720 342 884 232
+        "
+        fill="none"
+        stroke={`url(#${orbitGradient})`}
+        strokeWidth="4.5"
+        strokeLinecap="round"
+        opacity="0.98"
+        filter={`url(#${glowFilter})`}
+      />
+
+      {/* Bright core of orbit */}
+      <path
+        d="
+          M88 376
+          C130 462 270 492 400 465
+        "
+        fill="none"
+        stroke="#FFFFFF"
+        strokeOpacity="0.52"
+        strokeWidth="1.3"
+        strokeLinecap="round"
+      />
+
+      {/* Orbit endpoint glow */}
+      <g filter={`url(#${starGlowFilter})`}>
+        <circle
+          cx="88"
+          cy="376"
+          r="4"
+          fill="#FFFFFF"
+          opacity="0.92"
+        />
+
+        <circle
+          cx="884"
+          cy="232"
+          r="3"
+          fill="#BFFFF0"
+          opacity="0.82"
+        />
+      </g>
+
+      {/* =========================================================
+          FINAL DIAMOND SPARK
+          ========================================================= */}
+
+      <g filter={`url(#${strongGlowFilter})`}>
+        <path
+          d="
+            M490 528
+            L495 543
+            L510 548
+            L495 553
+            L490 568
+            L485 553
+            L470 548
+            L485 543
+            Z
+          "
+          fill="#FFFFFF"
+          opacity="0.82"
+        />
+      </g>
+    </svg>
   );
 }
