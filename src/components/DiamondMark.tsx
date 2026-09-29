@@ -38,6 +38,7 @@ export default function DiamondMark({
   const greenFacetGradient = `${id}-green-facet`;
   const darkGlassGradient = `${id}-dark-glass`;
   const orbitGradient = `${id}-orbit-gradient`;
+  const facetLightSafe = `${id}-facet-light-safe`;
   const glowFilter = `${id}-glow`;
   const strongGlowFilter = `${id}-strong-glow`;
   const starGlowFilter = `${id}-star-glow`;
@@ -66,14 +67,7 @@ export default function DiamondMark({
 
       <defs>
         {/* Main crystal */}
-        <linearGradient
-          id={diamondGradient}
-          x1="260"
-          y1="185"
-          x2="700"
-          y2="545"
-          gradientUnits="userSpaceOnUse"
-        >
+        <linearGradient id={diamondGradient} x1="260" y1="185" x2="700" y2="545" gradientUnits="userSpaceOnUse">
           <stop offset="0" stopColor="#FFFFFF" stopOpacity="0.98" />
           <stop offset="0.14" stopColor="#DFFFF0" stopOpacity="0.96" />
           <stop offset="0.3" stopColor="#7CFFB5" stopOpacity="0.78" />
@@ -84,14 +78,7 @@ export default function DiamondMark({
         </linearGradient>
 
         {/* Crown glass */}
-        <linearGradient
-          id={crownGradient}
-          x1="300"
-          y1="160"
-          x2="670"
-          y2="350"
-          gradientUnits="userSpaceOnUse"
-        >
+        <linearGradient id={crownGradient} x1="300" y1="160" x2="670" y2="350" gradientUnits="userSpaceOnUse">
           <stop offset="0" stopColor="#FFFFFF" stopOpacity="0.96" />
           <stop offset="0.2" stopColor="#D5FFEA" stopOpacity="0.9" />
           <stop offset="0.42" stopColor="#57FF9E" stopOpacity="0.7" />
@@ -100,15 +87,16 @@ export default function DiamondMark({
           <stop offset="1" stopColor="#FFFFFF" stopOpacity="0.96" />
         </linearGradient>
 
+        {/* Left crown facet (light glass) */}
+        <linearGradient id={facetLightSafe} x1="326" y1="216" x2="410" y2="365" gradientUnits="userSpaceOnUse">
+          <stop offset="0" stopColor="#FFFFFF" stopOpacity="0.96" />
+          <stop offset="0.3" stopColor="#D8FFEB" stopOpacity="0.9" />
+          <stop offset="0.62" stopColor="#79FFB5" stopOpacity="0.7" />
+          <stop offset="1" stopColor="#FFFFFF" stopOpacity="0.9" />
+        </linearGradient>
+
         {/* Green glass reflections */}
-        <linearGradient
-          id={greenFacetGradient}
-          x1="530"
-          y1="180"
-          x2="700"
-          y2="490"
-          gradientUnits="userSpaceOnUse"
-        >
+        <linearGradient id={greenFacetGradient} x1="530" y1="180" x2="700" y2="490" gradientUnits="userSpaceOnUse">
           <stop offset="0" stopColor="#FFFFFF" stopOpacity="0.96" />
           <stop offset="0.22" stopColor="#BFFFF0" stopOpacity="0.9" />
           <stop offset="0.45" stopColor="#39FF88" stopOpacity="0.7" />
@@ -117,14 +105,7 @@ export default function DiamondMark({
         </linearGradient>
 
         {/* Pavilion */}
-        <linearGradient
-          id={pavilionGradient}
-          x1="350"
-          y1="330"
-          x2="620"
-          y2="570"
-          gradientUnits="userSpaceOnUse"
-        >
+        <linearGradient id={pavilionGradient} x1="350" y1="330" x2="620" y2="570" gradientUnits="userSpaceOnUse">
           <stop offset="0" stopColor="#FFFFFF" stopOpacity="0.95" />
           <stop offset="0.2" stopColor="#CFFFF0" stopOpacity="0.82" />
           <stop offset="0.4" stopColor="#39FF88" stopOpacity="0.58" />
@@ -134,14 +115,7 @@ export default function DiamondMark({
         </linearGradient>
 
         {/* Transparent internal depth */}
-        <linearGradient
-          id={darkGlassGradient}
-          x1="390"
-          y1="210"
-          x2="590"
-          y2="510"
-          gradientUnits="userSpaceOnUse"
-        >
+        <linearGradient id={darkGlassGradient} x1="390" y1="210" x2="590" y2="510" gradientUnits="userSpaceOnUse">
           <stop offset="0" stopColor="#BFFFF0" stopOpacity="0.28" />
           <stop offset="0.35" stopColor="#0B4B34" stopOpacity="0.34" />
           <stop offset="0.55" stopColor="#031E15" stopOpacity="0.42" />
@@ -150,14 +124,7 @@ export default function DiamondMark({
         </linearGradient>
 
         {/* Orbit */}
-        <linearGradient
-          id={orbitGradient}
-          x1="90"
-          y1="410"
-          x2="890"
-          y2="190"
-          gradientUnits="userSpaceOnUse"
-        >
+        <linearGradient id={orbitGradient} x1="90" y1="410" x2="890" y2="190" gradientUnits="userSpaceOnUse">
           <stop offset="0" stopColor="#39FF88" stopOpacity="0.2" />
           <stop offset="0.14" stopColor="#9DFFC9" stopOpacity="0.86" />
           <stop offset="0.3" stopColor="#FFFFFF" stopOpacity="0.98" />
@@ -168,18 +135,8 @@ export default function DiamondMark({
         </linearGradient>
 
         {/* Soft glow */}
-        <filter
-          id={glowFilter}
-          x="-50%"
-          y="-80%"
-          width="200%"
-          height="260%"
-          colorInterpolationFilters="sRGB"
-        >
-          <feGaussianBlur
-            stdDeviation="7"
-            result="blur"
-          />
+        <filter id={glowFilter} x="-50%" y="-80%" width="200%" height="260%" colorInterpolationFilters="sRGB">
+          <feGaussianBlur stdDeviation="7" result="blur" />
           <feMerge>
             <feMergeNode in="blur" />
             <feMergeNode in="SourceGraphic" />
@@ -187,18 +144,8 @@ export default function DiamondMark({
         </filter>
 
         {/* Strong crystal glow */}
-        <filter
-          id={strongGlowFilter}
-          x="-60%"
-          y="-70%"
-          width="220%"
-          height="240%"
-          colorInterpolationFilters="sRGB"
-        >
-          <feGaussianBlur
-            stdDeviation="10"
-            result="blur"
-          />
+        <filter id={strongGlowFilter} x="-60%" y="-70%" width="220%" height="240%" colorInterpolationFilters="sRGB">
+          <feGaussianBlur stdDeviation="10" result="blur" />
           <feMerge>
             <feMergeNode in="blur" />
             <feMergeNode in="SourceGraphic" />
@@ -206,18 +153,8 @@ export default function DiamondMark({
         </filter>
 
         {/* Stars */}
-        <filter
-          id={starGlowFilter}
-          x="-250%"
-          y="-250%"
-          width="500%"
-          height="500%"
-          colorInterpolationFilters="sRGB"
-        >
-          <feGaussianBlur
-            stdDeviation="3.5"
-            result="blur"
-          />
+        <filter id={starGlowFilter} x="-250%" y="-250%" width="500%" height="500%" colorInterpolationFilters="sRGB">
+          <feGaussianBlur stdDeviation="3.5" result="blur" />
           <feMerge>
             <feMergeNode in="blur" />
             <feMergeNode in="SourceGraphic" />
@@ -225,10 +162,7 @@ export default function DiamondMark({
         </filter>
       </defs>
 
-      {/* =========================================================
-          REAR ORBIT
-          ========================================================= */}
-
+      {/* REAR ORBIT */}
       <ellipse
         cx="490"
         cy="330"
@@ -243,10 +177,7 @@ export default function DiamondMark({
         filter={`url(#${glowFilter})`}
       />
 
-      {/* =========================================================
-          AMBIENT GREEN LIGHT
-          ========================================================= */}
-
+      {/* AMBIENT GREEN LIGHT */}
       <ellipse
         cx="490"
         cy="350"
@@ -257,166 +188,31 @@ export default function DiamondMark({
         filter={`url(#${strongGlowFilter})`}
       />
 
-      {/* =========================================================
-          BACKGROUND STARS
-          ========================================================= */}
-
+      {/* BACKGROUND STARS */}
       <g filter={`url(#${starGlowFilter})`}>
-        <circle
-          cx="185"
-          cy="265"
-          r="3"
-          fill="#FFFFFF"
-          opacity="0.76"
-        />
-
-        <circle
-          cx="260"
-          cy="165"
-          r="2"
-          fill="#BFFFF0"
-          opacity="0.7"
-        />
-
-        <circle
-          cx="350"
-          cy="105"
-          r="2"
-          fill="#39FF88"
-          opacity="0.62"
-        />
-
-        <circle
-          cx="505"
-          cy="75"
-          r="4"
-          fill="#FFFFFF"
-          opacity="0.94"
-        />
-
-        <circle
-          cx="615"
-          cy="115"
-          r="2.2"
-          fill="#BFFFF0"
-          opacity="0.74"
-        />
-
-        <circle
-          cx="735"
-          cy="185"
-          r="3"
-          fill="#FFFFFF"
-          opacity="0.76"
-        />
-
-        <circle
-          cx="800"
-          cy="290"
-          r="2"
-          fill="#39FF88"
-          opacity="0.72"
-        />
-
-        <circle
-          cx="720"
-          cy="430"
-          r="2.7"
-          fill="#DFFFF0"
-          opacity="0.7"
-        />
-
-        <circle
-          cx="220"
-          cy="430"
-          r="2"
-          fill="#FFFFFF"
-          opacity="0.62"
-        />
-
-        <circle
-          cx="145"
-          cy="350"
-          r="1.8"
-          fill="#39FF88"
-          opacity="0.64"
-        />
+        <circle cx="185" cy="265" r="3" fill="#FFFFFF" opacity="0.76" />
+        <circle cx="260" cy="165" r="2" fill="#BFFFF0" opacity="0.7" />
+        <circle cx="350" cy="105" r="2" fill="#39FF88" opacity="0.62" />
+        <circle cx="505" cy="75" r="4" fill="#FFFFFF" opacity="0.94" />
+        <circle cx="615" cy="115" r="2.2" fill="#BFFFF0" opacity="0.74" />
+        <circle cx="735" cy="185" r="3" fill="#FFFFFF" opacity="0.76" />
+        <circle cx="800" cy="290" r="2" fill="#39FF88" opacity="0.72" />
+        <circle cx="720" cy="430" r="2.7" fill="#DFFFF0" opacity="0.7" />
+        <circle cx="220" cy="430" r="2" fill="#FFFFFF" opacity="0.62" />
+        <circle cx="145" cy="350" r="1.8" fill="#39FF88" opacity="0.64" />
       </g>
 
-      {/* =========================================================
-          LARGE STAR FLARES
-          ========================================================= */}
-
+      {/* LARGE STAR FLARES */}
       <g filter={`url(#${starGlowFilter})`}>
-        <path
-          d="M505 54
-             L509 69
-             L524 74
-             L509 79
-             L505 94
-             L501 79
-             L486 74
-             L501 69 Z"
-          fill="#FFFFFF"
-          opacity="0.92"
-        />
-
-        <path
-          d="M188 246
-             L191 257
-             L202 261
-             L191 265
-             L188 276
-             L185 265
-             L174 261
-             L185 257 Z"
-          fill="#EFFFF7"
-          opacity="0.78"
-        />
-
-        <path
-          d="M742 172
-             L745 182
-             L755 186
-             L745 190
-             L742 200
-             L739 190
-             L729 186
-             L739 182 Z"
-          fill="#BFFFF0"
-          opacity="0.78"
-        />
-
-        <path
-          d="M798 390
-             L800 398
-             L808 401
-             L800 404
-             L798 412
-             L796 404
-             L788 401
-             L796 398 Z"
-          fill="#FFFFFF"
-          opacity="0.66"
-        />
+        <path d="M505 54 L509 69 L524 74 L509 79 L505 94 L501 79 L486 74 L501 69 Z" fill="#FFFFFF" opacity="0.92" />
+        <path d="M188 246 L191 257 L202 261 L191 265 L188 276 L185 265 L174 261 L185 257 Z" fill="#EFFFF7" opacity="0.78" />
+        <path d="M742 172 L745 182 L755 186 L745 190 L742 200 L739 190 L729 186 L739 182 Z" fill="#BFFFF0" opacity="0.78" />
+        <path d="M798 390 L800 398 L808 401 L800 404 L798 412 L796 404 L788 401 L796 398 Z" fill="#FFFFFF" opacity="0.66" />
       </g>
 
-      {/* =========================================================
-          DIAMOND — CLASSIC BRILLIANT CUT
-          ========================================================= */}
-
-      {/* Outer silhouette */}
+      {/* DIAMOND — CLASSIC BRILLIANT CUT: outer silhouette */}
       <path
-        d="
-          M252 292
-          L320 202
-          L660 202
-          L728 292
-          L626 365
-          L490 548
-          L354 365
-          Z
-        "
+        d="M252 292 L320 202 L660 202 L728 292 L626 365 L490 548 L354 365 Z"
         fill="#EFFFF7"
         fillOpacity="0.12"
         stroke="#F4FFF9"
@@ -425,19 +221,9 @@ export default function DiamondMark({
         strokeLinejoin="round"
       />
 
-      {/* =========================================================
-          CROWN OUTER FACETS
-          ========================================================= */}
-
       {/* Far left crown */}
       <path
-        d="
-          M252 292
-          L320 202
-          L354 250
-          L354 365
-          Z
-        "
+        d="M252 292 L320 202 L354 250 L354 365 Z"
         fill={`url(#${crownGradient})`}
         fillOpacity="0.9"
         stroke="#FFFFFF"
@@ -447,13 +233,7 @@ export default function DiamondMark({
 
       {/* Far right crown */}
       <path
-        d="
-          M660 202
-          L728 292
-          L626 365
-          L626 250
-          Z
-        "
+        d="M660 202 L728 292 L626 365 L626 250 Z"
         fill={`url(#${greenFacetGradient})`}
         fillOpacity="0.9"
         stroke="#FFFFFF"
@@ -461,18 +241,9 @@ export default function DiamondMark({
         strokeWidth="1.5"
       />
 
-      {/* =========================================================
-          TABLE
-          ========================================================= */}
-
+      {/* TABLE */}
       <path
-        d="
-          M354 216
-          L626 216
-          L654 292
-          L326 292
-          Z
-        "
+        d="M354 216 L626 216 L654 292 L326 292 Z"
         fill={`url(#${diamondGradient})`}
         fillOpacity="0.96"
         stroke="#FFFFFF"
@@ -482,30 +253,11 @@ export default function DiamondMark({
       />
 
       {/* Table interior reflection */}
-      <path
-        d="
-          M370 221
-          L610 221
-          L635 286
-          L345 286
-          Z
-        "
-        fill="#FFFFFF"
-        fillOpacity="0.13"
-      />
+      <path d="M370 221 L610 221 L635 286 L345 286 Z" fill="#FFFFFF" fillOpacity="0.13" />
 
-      {/* =========================================================
-          LEFT CROWN FACETS
-          ========================================================= */}
-
+      {/* LEFT CROWN FACET */}
       <path
-        d="
-          M326 292
-          L354 216
-          L410 292
-          L354 365
-          Z
-        "
+        d="M326 292 L354 216 L410 292 L354 365 Z"
         fill={`url(#${facetLightSafe})`}
         fillOpacity="0.88"
         stroke="#EFFFF7"
@@ -514,30 +266,11 @@ export default function DiamondMark({
       />
 
       {/* Left triangular reflection */}
-      <path
-        d="
-          M410 292
-          L354 216
-          L490 292
-          L354 365
-          Z
-        "
-        fill="#FFFFFF"
-        fillOpacity="0.2"
-      />
+      <path d="M410 292 L354 216 L490 292 L354 365 Z" fill="#FFFFFF" fillOpacity="0.2" />
 
-      {/* =========================================================
-          RIGHT CROWN FACETS
-          ========================================================= */}
-
+      {/* RIGHT CROWN FACET */}
       <path
-        d="
-          M626 216
-          L654 292
-          L626 365
-          L570 292
-          Z
-        "
+        d="M626 216 L654 292 L626 365 L570 292 Z"
         fill={`url(#${greenFacetGradient})`}
         fillOpacity="0.9"
         stroke="#EFFFF7"
@@ -546,30 +279,11 @@ export default function DiamondMark({
       />
 
       {/* Right triangular reflection */}
-      <path
-        d="
-          M490 292
-          L626 216
-          L570 292
-          L626 365
-          Z
-        "
-        fill="#FFFFFF"
-        fillOpacity="0.18"
-      />
+      <path d="M490 292 L626 216 L570 292 L626 365 Z" fill="#FFFFFF" fillOpacity="0.18" />
 
-      {/* =========================================================
-          CENTRAL GLASS
-          ========================================================= */}
-
+      {/* CENTRAL GLASS */}
       <path
-        d="
-          M410 292
-          L490 292
-          L570 292
-          L490 365
-          Z
-        "
+        d="M410 292 L490 292 L570 292 L490 365 Z"
         fill={`url(#${darkGlassGradient})`}
         fillOpacity="0.7"
         stroke="#DFFFF0"
@@ -578,44 +292,14 @@ export default function DiamondMark({
       />
 
       {/* Central bright reflection */}
-      <path
-        d="
-          M490 292
-          L570 292
-          L490 365
-          L450 328
-          Z
-        "
-        fill="#FFFFFF"
-        fillOpacity="0.28"
-      />
+      <path d="M490 292 L570 292 L490 365 L450 328 Z" fill="#FFFFFF" fillOpacity="0.28" />
 
       {/* Central green reflection */}
-      <path
-        d="
-          M410 292
-          L490 292
-          L450 328
-          L354 365
-          Z
-        "
-        fill="#39FF88"
-        fillOpacity="0.16"
-      />
+      <path d="M410 292 L490 292 L450 328 L354 365 Z" fill="#39FF88" fillOpacity="0.16" />
 
-      {/* =========================================================
-          GIRDLE
-          ========================================================= */}
-
+      {/* GIRDLE */}
       <path
-        d="
-          M252 292
-          L728 292
-          L626 365
-          L490 365
-          L354 365
-          Z
-        "
+        d="M252 292 L728 292 L626 365 L490 365 L354 365 Z"
         fill="none"
         stroke="#EFFFF7"
         strokeOpacity="0.84"
@@ -624,42 +308,12 @@ export default function DiamondMark({
       />
 
       {/* Girdle green reflection */}
-      <path
-        d="
-          M252 292
-          L354 365
-          L490 365
-          L410 292
-          Z
-        "
-        fill="#BFFFF0"
-        fillOpacity="0.12"
-      />
+      <path d="M252 292 L354 365 L490 365 L410 292 Z" fill="#BFFFF0" fillOpacity="0.12" />
+      <path d="M490 365 L570 292 L728 292 L626 365 Z" fill="#39FF88" fillOpacity="0.1" />
 
+      {/* PAVILION — left */}
       <path
-        d="
-          M490 365
-          L570 292
-          L728 292
-          L626 365
-          Z
-        "
-        fill="#39FF88"
-        fillOpacity="0.1"
-      />
-
-      {/* =========================================================
-          PAVILION
-          ========================================================= */}
-
-      {/* Left pavilion */}
-      <path
-        d="
-          M354 365
-          L490 365
-          L490 548
-          Z
-        "
+        d="M354 365 L490 365 L490 548 Z"
         fill={`url(#${pavilionGradient})`}
         fillOpacity="0.94"
         stroke="#FFFFFF"
@@ -667,14 +321,9 @@ export default function DiamondMark({
         strokeWidth="1.5"
       />
 
-      {/* Right pavilion */}
+      {/* PAVILION — right */}
       <path
-        d="
-          M490 365
-          L626 365
-          L490 548
-          Z
-        "
+        d="M490 365 L626 365 L490 548 Z"
         fill={`url(#${pavilionGradient})`}
         fillOpacity="0.9"
         stroke="#FFFFFF"
@@ -683,70 +332,23 @@ export default function DiamondMark({
       />
 
       {/* Pavilion left glass reflection */}
-      <path
-        d="
-          M354 365
-          L422 405
-          L490 548
-          Z
-        "
-        fill="#FFFFFF"
-        fillOpacity="0.26"
-      />
+      <path d="M354 365 L422 405 L490 548 Z" fill="#FFFFFF" fillOpacity="0.26" />
 
       {/* Pavilion right green reflection */}
-      <path
-        d="
-          M626 365
-          L558 405
-          L490 548
-          Z
-        "
-        fill="#39FF88"
-        fillOpacity="0.22"
-      />
+      <path d="M626 365 L558 405 L490 548 Z" fill="#39FF88" fillOpacity="0.22" />
 
       {/* Deep inner pavilion */}
-      <path
-        d="
-          M490 365
-          L555 365
-          L490 530
-          L457 430
-          Z
-        "
-        fill="#063321"
-        fillOpacity="0.25"
-      />
+      <path d="M490 365 L555 365 L490 530 L457 430 Z" fill="#063321" fillOpacity="0.25" />
 
       {/* Long central light reflection */}
-      <path
-        d="
-          M410 292
-          L490 365
-          L490 530
-          L448 435
-          Z
-        "
-        fill="#FFFFFF"
-        fillOpacity="0.3"
-      />
+      <path d="M410 292 L490 365 L490 530 L448 435 Z" fill="#FFFFFF" fillOpacity="0.3" />
 
       {/* Pavilion center line */}
-      <path
-        d="M490 365 L490 548"
-        stroke="#FFFFFF"
-        strokeOpacity="0.5"
-        strokeWidth="1.5"
-      />
+      <path d="M490 365 L490 548" stroke="#FFFFFF" strokeOpacity="0.5" strokeWidth="1.5" />
 
       {/* Lower silhouette */}
       <path
-        d="
-          M354 365
-          L490 548
-          L626 365
-        "
+        d="M354 365 L490 548 L626 365"
         fill="none"
         stroke="#F4FFF9"
         strokeOpacity="0.82"
@@ -754,28 +356,11 @@ export default function DiamondMark({
         strokeLinejoin="round"
       />
 
-      {/* =========================================================
-          CRYSTAL HIGHLIGHTS
-          ========================================================= */}
+      {/* CRYSTAL HIGHLIGHTS */}
+      <path d="M320 202 L660 202" stroke="#FFFFFF" strokeOpacity="0.92" strokeWidth="2.5" strokeLinecap="round" />
 
       <path
-        d="
-          M320 202
-          L660 202
-        "
-        stroke="#FFFFFF"
-        strokeOpacity="0.92"
-        strokeWidth="2.5"
-        strokeLinecap="round"
-      />
-
-      <path
-        d="
-          M252 292
-          L320 202
-          L660 202
-          L728 292
-        "
+        d="M252 292 L320 202 L660 202 L728 292"
         fill="none"
         stroke="#FFFFFF"
         strokeOpacity="0.72"
@@ -784,37 +369,14 @@ export default function DiamondMark({
       />
 
       {/* Bright left edge */}
-      <path
-        d="
-          M252 292
-          L354 365
-        "
-        stroke="#FFFFFF"
-        strokeOpacity="0.78"
-        strokeWidth="2"
-      />
+      <path d="M252 292 L354 365" stroke="#FFFFFF" strokeOpacity="0.78" strokeWidth="2" />
 
       {/* Bright right edge */}
-      <path
-        d="
-          M728 292
-          L626 365
-        "
-        stroke="#DFFFF0"
-        strokeOpacity="0.76"
-        strokeWidth="2"
-      />
+      <path d="M728 292 L626 365" stroke="#DFFFF0" strokeOpacity="0.76" strokeWidth="2" />
 
-      {/* =========================================================
-          FRONT ORBIT
-          ========================================================= */}
-
+      {/* FRONT ORBIT */}
       <path
-        d="
-          M88 376
-          C130 466 275 500 415 464
-          C555 428 720 342 884 232
-        "
+        d="M88 376 C130 466 275 500 415 464 C555 428 720 342 884 232"
         fill="none"
         stroke={`url(#${orbitGradient})`}
         strokeWidth="4.5"
@@ -825,10 +387,7 @@ export default function DiamondMark({
 
       {/* Bright core of orbit */}
       <path
-        d="
-          M88 376
-          C130 462 270 492 400 465
-        "
+        d="M88 376 C130 462 270 492 400 465"
         fill="none"
         stroke="#FFFFFF"
         strokeOpacity="0.52"
@@ -838,40 +397,14 @@ export default function DiamondMark({
 
       {/* Orbit endpoint glow */}
       <g filter={`url(#${starGlowFilter})`}>
-        <circle
-          cx="88"
-          cy="376"
-          r="4"
-          fill="#FFFFFF"
-          opacity="0.92"
-        />
-
-        <circle
-          cx="884"
-          cy="232"
-          r="3"
-          fill="#BFFFF0"
-          opacity="0.82"
-        />
+        <circle cx="88" cy="376" r="4" fill="#FFFFFF" opacity="0.92" />
+        <circle cx="884" cy="232" r="3" fill="#BFFFF0" opacity="0.82" />
       </g>
 
-      {/* =========================================================
-          FINAL DIAMOND SPARK
-          ========================================================= */}
-
+      {/* FINAL DIAMOND SPARK */}
       <g filter={`url(#${strongGlowFilter})`}>
         <path
-          d="
-            M490 528
-            L495 543
-            L510 548
-            L495 553
-            L490 568
-            L485 553
-            L470 548
-            L485 543
-            Z
-          "
+          d="M490 528 L495 543 L510 548 L495 553 L490 568 L485 553 L470 548 L485 543 Z"
           fill="#FFFFFF"
           opacity="0.82"
         />
