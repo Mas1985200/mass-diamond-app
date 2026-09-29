@@ -1,245 +1,343 @@
-<!DOCTYPE html>
-<html lang="fa" dir="rtl">
-<head>
-    <meta charset="UTF-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Mass Diamond AI</title>
-    <style>
-        /* تنظیمات کلی */
-        * {
-            margin: 0;
-            padding: 0;
-            box-sizing: border-box;
-            font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
-        }
+import type { SVGProps } from "react";
+import { useId } from "react";
 
-        body {
-            background-color: #050a08; /* پس زمینه بسیار تیره */
-            color: #ffffff;
-            display: flex;
-            justify-content: center;
-            align-items: center;
-            min-height: 100vh;
-            overflow: hidden; /* جلوگیری از اسکرول اضافه */
-            position: relative;
-        }
+type DiamondMarkProps = {
+  size: number | string;
+  title?: string;
+  className?: string;
+  style?: SVGProps<SVGSVGElement>["style"];
+} & Omit<SVGProps<SVGSVGElement>, "width" | "height" | "title" | "className" | "style">;
 
-        /* افکت ستاره‌های پس زمینه */
-        body::before {
-            content: '';
-            position: absolute;
-            top: 0; left: 0; right: 0; bottom: 0;
-            background-image: radial-gradient(circle, rgba(0, 255, 136, 0.1) 1px, transparent 1px);
-            background-size: 50px 50px;
-            z-index: -1;
-        }
+const WIDTH_SCALE = 2.4;
 
-        /* کانتینر اصلی موبایل */
-        .app-container {
-            width: 100%;
-            max-width: 400px;
-            height: 100vh;
-            display: flex;
-            flex-direction: column;
-            justify-content: space-between;
-            padding: 40px 20px 20px 20px;
-            position: relative;
-        }
+export default function DiamondMark({
+  size,
+  title,
+  className,
+  style,
+  ...rest
+}: DiamondMarkProps) {
+  const uid = useId().replace(/:/g, "");
 
-        /* بخش بالایی: لوگو و متن */
-        .hero-section {
-            display: flex;
-            flex-direction: column;
-            align-items: center;
-            text-align: center;
-            margin-top: 10vh;
-        }
+  const gradientId = `${uid}-diamond-gradient`;
+  const tableGradientId = `${uid}-table-gradient`;
+  const facetGradientId = `${uid}-facet-gradient`;
+  const darkFacetGradientId = `${uid}-dark-facet-gradient`;
+  const pavilionGradientId = `${uid}-pavilion-gradient`;
+  const orbitGradientId = `${uid}-orbit-gradient`;
+  const glowFilterId = `${uid}-glow`;
+  const softGlowFilterId = `${uid}-soft-glow`;
+  const titleId = `${uid}-title`;
 
-        /* شبیه‌سازی الماس با CSS */
-        .diamond-container {
-            position: relative;
-            width: 150px;
-            height: 150px;
-            margin-bottom: 40px;
-            display: flex;
-            justify-content: center;
-            align-items: center;
-        }
+  const resolvedWidth = typeof size === "number" ? size * WIDTH_SCALE : size;
 
-        .diamond {
-            width: 80px;
-            height: 80px;
-            background: linear-gradient(135deg, #00ff88, #00b36b);
-            transform: rotate(45deg);
-            border-radius: 10px;
-            box-shadow: 0 0 30px rgba(0, 255, 136, 0.6), inset 0 0 20px rgba(255, 255, 255, 0.5);
-            animation: float 3s ease-in-out infinite;
-        }
+  return (
+    <svg
+      {...rest}
+      width={resolvedWidth}
+      viewBox="50 100 700 400"
+      fill="none"
+      xmlns="http://www.w3.org/2000/svg"
+      className={className}
+      style={{
+        display: "block",
+        overflow: "visible",
+        maxWidth: "100%",
+        height: "auto",
+        ...style,
+      }}
+      role={title ? "img" : undefined}
+      aria-labelledby={title ? titleId : undefined}
+      aria-hidden={title ? undefined : true}
+      preserveAspectRatio="xMidYMid meet"
+    >
+      {title ? <title id={titleId}>{title}</title> : null}
 
-        /* حلقه دور الماس */
-        .diamond-ring {
-            position: absolute;
-            width: 140px;
-            height: 40px;
-            border: 2px solid rgba(0, 255, 136, 0.4);
-            border-radius: 50%;
-            transform: rotate(-15deg);
-            box-shadow: 0 0 15px rgba(0, 255, 136, 0.2);
-            animation: orbit 4s linear infinite;
-        }
+      <defs>
+        <linearGradient id={gradientId} x1="270" y1="205" x2="520" y2="470" gradientUnits="userSpaceOnUse">
+          <stop offset="0" stopColor="#FFFFFF" stopOpacity="0.98" />
+          <stop offset="0.18" stopColor="#DFFFF0" stopOpacity="0.92" />
+          <stop offset="0.42" stopColor="#7DFFBD" stopOpacity="0.72" />
+          <stop offset="0.65" stopColor="#D8FFF0" stopOpacity="0.88" />
+          <stop offset="0.86" stopColor="#45FF98" stopOpacity="0.52" />
+          <stop offset="1" stopColor="#FFFFFF" stopOpacity="0.9" />
+        </linearGradient>
 
-        /* انیمیشن‌ها */
-        @keyframes float {
-            0%, 100% { transform: rotate(45deg) translateY(0); }
-            50% { transform: rotate(45deg) translateY(-10px); }
-        }
+        <linearGradient id={tableGradientId} x1="310" y1="215" x2="500" y2="265" gradientUnits="userSpaceOnUse">
+          <stop offset="0" stopColor="#FFFFFF" stopOpacity="0.94" />
+          <stop offset="0.35" stopColor="#C9FFE6" stopOpacity="0.76" />
+          <stop offset="0.58" stopColor="#62FFA7" stopOpacity="0.5" />
+          <stop offset="1" stopColor="#FFFFFF" stopOpacity="0.86" />
+        </linearGradient>
 
-        @keyframes orbit {
-            0% { transform: rotate(-15deg) scale(1); opacity: 0.5; }
-            50% { transform: rotate(-15deg) scale(1.05); opacity: 1; }
-            100% { transform: rotate(-15deg) scale(1); opacity: 0.5; }
-        }
+        <linearGradient id={facetGradientId} x1="275" y1="250" x2="405" y2="475" gradientUnits="userSpaceOnUse">
+          <stop offset="0" stopColor="#FFFFFF" stopOpacity="0.88" />
+          <stop offset="0.3" stopColor="#B7FFDB" stopOpacity="0.72" />
+          <stop offset="0.62" stopColor="#48FF9A" stopOpacity="0.46" />
+          <stop offset="1" stopColor="#E8FFF5" stopOpacity="0.82" />
+        </linearGradient>
 
-        /* متن‌ها */
-        .title {
-            font-size: 28px;
-            font-weight: bold;
-            margin-bottom: 10px;
-            letter-spacing: 1px;
-        }
+        <linearGradient id={darkFacetGradientId} x1="325" y1="250" x2="475" y2="450" gradientUnits="userSpaceOnUse">
+          <stop offset="0" stopColor="#0A392A" stopOpacity="0.84" />
+          <stop offset="0.38" stopColor="#123E31" stopOpacity="0.68" />
+          <stop offset="0.7" stopColor="#061C17" stopOpacity="0.88" />
+          <stop offset="1" stopColor="#02100D" stopOpacity="0.96" />
+        </linearGradient>
 
-        .title span {
-            color: #00ff88;
-            text-shadow: 0 0 10px rgba(0, 255, 136, 0.5);
-        }
+        <linearGradient id={pavilionGradientId} x1="300" y1="300" x2="500" y2="480" gradientUnits="userSpaceOnUse">
+          <stop offset="0" stopColor="#DFFFF0" stopOpacity="0.7" />
+          <stop offset="0.2" stopColor="#45FF98" stopOpacity="0.36" />
+          <stop offset="0.5" stopColor="#071C16" stopOpacity="0.9" />
+          <stop offset="0.76" stopColor="#A9FFD3" stopOpacity="0.48" />
+          <stop offset="1" stopColor="#FFFFFF" stopOpacity="0.84" />
+        </linearGradient>
 
-        .subtitle {
-            font-size: 12px;
-            color: #889990;
-            max-width: 250px;
-            line-height: 1.5;
-        }
+        <linearGradient id={orbitGradientId} x1="90" y1="350" x2="710" y2="230" gradientUnits="userSpaceOnUse">
+          <stop offset="0" stopColor="#39FF88" stopOpacity="0.18" />
+          <stop offset="0.18" stopColor="#BFFFF0" stopOpacity="0.95" />
+          <stop offset="0.5" stopColor="#39FF88" stopOpacity="0.95" />
+          <stop offset="0.82" stopColor="#E8FFF5" stopOpacity="0.9" />
+          <stop offset="1" stopColor="#39FF88" stopOpacity="0.18" />
+        </linearGradient>
 
-        /* بخش پایینی: دکمه‌ها */
-        .bottom-section {
-            display: flex;
-            flex-direction: column;
-            gap: 15px;
-            padding-bottom: 20px;
-        }
+        <filter id={glowFilterId} x="-40%" y="-60%" width="180%" height="220%" colorInterpolationFilters="sRGB">
+          <feGaussianBlur stdDeviation="7" result="blur" />
+          <feMerge>
+            <feMergeNode in="blur" />
+            <feMergeNode in="SourceGraphic" />
+          </feMerge>
+        </filter>
 
-        /* ردیف دکمه‌ها */
-        .button-row {
-            display: flex;
-            gap: 10px;
-            justify-content: center;
-        }
+        <filter id={softGlowFilterId} x="-100%" y="-100%" width="300%" height="300%" colorInterpolationFilters="sRGB">
+          <feGaussianBlur stdDeviation="3.5" result="blur" />
+          <feMerge>
+            <feMergeNode in="blur" />
+            <feMergeNode in="SourceGraphic" />
+          </feMerge>
+        </filter>
+      </defs>
 
-        /* دکمه‌های شیشه‌ای */
-        .glass-btn {
-            background: rgba(0, 255, 136, 0.05);
-            border: 1px solid rgba(0, 255, 136, 0.2);
-            border-radius: 25px;
-            padding: 12px 20px;
-            color: #a0b0a8;
-            font-size: 13px;
-            display: flex;
-            align-items: center;
-            justify-content: center;
-            gap: 8px;
-            flex: 1;
-            cursor: pointer;
-            transition: all 0.3s ease;
-            backdrop-filter: blur(5px);
-        }
+      {/* Orbit behind the diamond */}
+      <ellipse
+        cx="400"
+        cy="285"
+        rx="345"
+        ry="104"
+        transform="rotate(-8 400 285)"
+        stroke={`url(#${orbitGradientId})`}
+        strokeWidth="2.8"
+        opacity="0.72"
+        filter={`url(#${softGlowFilterId})`}
+      />
 
-        .glass-btn:hover {
-            background: rgba(0, 255, 136, 0.15);
-            border-color: rgba(0, 255, 136, 0.5);
-            color: #ffffff;
-            box-shadow: 0 0 15px rgba(0, 255, 136, 0.2);
-        }
+      {/* Ambient light */}
+      <ellipse
+        cx="400"
+        cy="305"
+        rx="205"
+        ry="120"
+        fill="#39FF88"
+        opacity="0.055"
+        filter={`url(#${glowFilterId})`}
+      />
 
-        /* دکمه وسط (مداد) */
-        .center-btn {
-            position: absolute;
-            bottom: 90px;
-            left: 50%;
-            transform: translateX(-50%);
-            width: 60px;
-            height: 60px;
-            background: #e0eaff;
-            border-radius: 50%;
-            display: flex;
-            justify-content: center;
-            align-items: center;
-            box-shadow: 0 0 20px rgba(224, 234, 255, 0.4);
-            cursor: pointer;
-            z-index: 10;
-            border: none;
-        }
+      {/* Light particles */}
+      <g filter={`url(#${softGlowFilterId})`}>
+        <circle cx="177" cy="300" r="2.4" fill="#FFFFFF" opacity="0.82" />
+        <circle cx="235" cy="214" r="1.7" fill="#BFFFF0" opacity="0.7" />
+        <circle cx="300" cy="166" r="1.3" fill="#39FF88" opacity="0.5" />
+        <circle cx="413" cy="128" r="3.2" fill="#FFFFFF" opacity="0.9" />
+        <circle cx="505" cy="170" r="1.8" fill="#8DFFC3" opacity="0.72" />
+        <circle cx="595" cy="226" r="2.2" fill="#FFFFFF" opacity="0.62" />
+        <circle cx="636" cy="315" r="1.5" fill="#39FF88" opacity="0.65" />
+        <circle cx="555" cy="382" r="2.3" fill="#DFFFF0" opacity="0.72" />
+        <circle cx="228" cy="378" r="1.4" fill="#FFFFFF" opacity="0.58" />
+        <circle cx="142" cy="348" r="1.2" fill="#39FF88" opacity="0.55" />
+        <circle cx="658" cy="270" r="1.1" fill="#BFFFF0" opacity="0.55" />
+      </g>
 
-        .center-btn svg {
-            width: 24px;
-            height: 24px;
-            fill: #1a2b3c;
-        }
+      {/* Four-point light stars */}
+      <g filter={`url(#${softGlowFilterId})`}>
+        <path d="M413 116 L416 126 L426 129 L416 132 L413 142 L410 132 L400 129 L410 126 Z" fill="#FFFFFF" opacity="0.88" />
+        <path d="M592 213 L594 220 L601 222 L594 224 L592 231 L590 224 L583 222 L590 220 Z" fill="#BFFFF0" opacity="0.72" />
+        <path d="M176 286 L178 293 L185 295 L178 297 L176 304 L174 297 L167 295 L174 293 Z" fill="#FFFFFF" opacity="0.64" />
+      </g>
 
-        /* آیکون‌های SVG ساده */
-        .icon {
-            width: 16px;
-            height: 16px;
-            fill: currentColor;
-        }
-    </style>
-</head>
-<body>
+      {/* Diamond outer silhouette */}
+      <path
+        d="M250 255 L300 205 L500 205 L550 255 L500 300 L400 485 L300 300 Z"
+        fill="#071B15"
+        fillOpacity="0.82"
+        stroke="#CFFFF0"
+        strokeOpacity="0.82"
+        strokeWidth="2.2"
+        strokeLinejoin="round"
+      />
 
-    <div class="app-container">
-        
-        <!-- بخش اصلی (لوگو و متن) -->
-        <div class="hero-section">
-            <div class="diamond-container">
-                <div class="diamond-ring"></div>
-                <div class="diamond"></div>
-            </div>
-            
-            <h1 class="title">Hello, I'm <span>Mass Diamond</span></h1>
-            <p class="subtitle">Your Intelligent Assistant for a Bigger Tomorrow</p>
-        </div>
+      {/* Dark internal depth */}
+      <path
+        d="M300 255 L500 255 L500 300 L400 470 L300 300 Z"
+        fill={`url(#${darkFacetGradientId})`}
+        opacity="0.9"
+      />
 
-        <!-- دکمه وسط (مداد) -->
-        <button class="center-btn">
-            <svg viewBox="0 0 24 24">
-                <path d="M3 17.25V21h3.75L17.81 9.94l-3.75-3.75L3 17.25zM20.71 7.04c.39-.39.39-1.02 0-1.41l-2.34-2.34c-.39-.39-1.02-.39-1.41 0l-1.83 1.83 3.75 3.75 1.83-1.83z"/>
-            </svg>
-        </button>
+      {/* Crown left main facet */}
+      <path
+        d="M250 255 L300 205 L315 220 L290 255 L300 300 Z"
+        fill={`url(#${facetGradientId})`}
+        opacity="0.86"
+        stroke="#E8FFF5"
+        strokeOpacity="0.48"
+        strokeWidth="1.2"
+      />
 
-        <!-- بخش پایینی (دکمه‌ها) -->
-        <div class="bottom-section">
-            <div class="button-row">
-                <button class="glass-btn">
-                    <svg class="icon" viewBox="0 0 24 24"><path d="M15.5 14h-.79l-.28-.27C15.41 12.59 16 11.11 16 9.5 16 5.91 13.09 3 9.5 3S3 5.91 3 9.5 5.91 16 9.5 16c1.61 0 3.09-.59 4.23-1.57l.27.28v.79l5 4.99L20.49 19l-4.99-5zm-6 0C7.01 14 5 11.99 5 9.5S7.01 5 9.5 5 14 7.01 14 9.5 11.99 14 9.5 14z"/></svg>
-                    Search
-                </button>
-                <button class="glass-btn">
-                    <svg class="icon" viewBox="0 0 24 24"><path d="M21 19V5c0-1.1-.9-2-2-2H5c-1.1 0-2 .9-2 2v14c0 1.1.9 2 2 2h14c1.1 0 2-.9 2-2zM8.5 13.5l2.5 3.01L14.5 12l4.5 6H5l3.5-4.5z"/></svg>
-                    Images
-                </button>
-            </div>
-            
-            <div class="button-row">
-                <button class="glass-btn">
-                    <svg class="icon" viewBox="0 0 24 24"><path d="M18 6h-2c0-2.21-1.79-4-4-4S8 3.79 8 6H6c-1.1 0-2 .9-2 2v12c0 1.1.9 2 2 2h12c1.1 0 2-.9 2-2V8c0-1.1-.9-2-2-2zm-6-2c1.1 0 2 .9 2 2h-4c0-1.1.9-2 2-2zm6 16H6V8h2v2c0 1.1.9 2 2 2s2-.9 2-2V8h4v2c0 1.1.9 2 2 2s2-.9 2-2V8h2v12z"/></svg>
-                    Products
-                </button>
-                <button class="glass-btn">
-                    <svg class="icon" viewBox="0 0 24 24"><path d="M10 20v-6h4v6h5v-8h3L12 3 2 12h3v8z"/></svg>
-                    Home
-                </button>
-            </div>
-        </div>
-    </div>
+      {/* Crown right main facet */}
+      <path
+        d="M500 205 L550 255 L500 300 L510 255 L485 220 Z"
+        fill={`url(#${facetGradientId})`}
+        opacity="0.86"
+        stroke="#E8FFF5"
+        strokeOpacity="0.48"
+        strokeWidth="1.2"
+      />
 
-</body>
-</html>
+      {/* Table */}
+      <path
+        d="M315 220 L485 220 L510 255 L290 255 Z"
+        fill={`url(#${tableGradientId})`}
+        fillOpacity="0.88"
+        stroke="#FFFFFF"
+        strokeOpacity="0.72"
+        strokeWidth="1.5"
+        strokeLinejoin="round"
+      />
+
+      {/* Table internal reflection */}
+      <path d="M330 225 L470 225 L492 251 L308 251 Z" fill="#FFFFFF" fillOpacity="0.11" />
+
+      {/* Left star / bezel facets */}
+      <path
+        d="M290 255 L315 220 L350 255 L300 300 Z"
+        fill={`url(#${facetGradientId})`}
+        fillOpacity="0.82"
+        stroke="#DFFFF0"
+        strokeOpacity="0.5"
+        strokeWidth="1.1"
+      />
+      <path d="M350 255 L315 220 L400 255 L300 300 Z" fill="#DFFFF0" fillOpacity="0.16" />
+
+      {/* Right star / bezel facets */}
+      <path
+        d="M485 220 L510 255 L500 300 L450 255 Z"
+        fill={`url(#${facetGradientId})`}
+        fillOpacity="0.82"
+        stroke="#DFFFF0"
+        strokeOpacity="0.5"
+        strokeWidth="1.1"
+      />
+      <path d="M400 255 L485 220 L450 255 L500 300 Z" fill="#DFFFFF" fillOpacity="0.14" />
+
+      {/* Central dark star facet */}
+      <path
+        d="M350 255 L400 255 L450 255 L400 300 Z"
+        fill="#061610"
+        fillOpacity="0.88"
+        stroke="#9DFFCC"
+        strokeOpacity="0.32"
+        strokeWidth="1"
+      />
+
+      {/* Central upper reflection */}
+      <path d="M400 255 L450 255 L400 300 L375 275 Z" fill="#BFFFF0" fillOpacity="0.23" />
+
+      {/* Left pavilion facet */}
+      <path
+        d="M300 300 L400 300 L400 485 Z"
+        fill={`url(#${pavilionGradientId})`}
+        fillOpacity="0.86"
+        stroke="#E8FFF5"
+        strokeOpacity="0.42"
+        strokeWidth="1.1"
+      />
+
+      {/* Right pavilion facet */}
+      <path
+        d="M400 300 L500 300 L400 485 Z"
+        fill={`url(#${pavilionGradientId})`}
+        fillOpacity="0.8"
+        stroke="#E8FFF5"
+        strokeOpacity="0.42"
+        strokeWidth="1.1"
+      />
+
+      {/* Deep central pavilion */}
+      <path d="M400 300 L455 300 L400 465 L365 365 Z" fill="#02110C" fillOpacity="0.76" />
+
+      {/* Pavilion reflection facets */}
+      <path d="M300 300 L365 365 L400 485 Z" fill="#DFFFF0" fillOpacity="0.2" />
+      <path d="M500 300 L435 365 L400 485 Z" fill="#39FF88" fillOpacity="0.14" />
+
+      {/* Long white-green internal reflection */}
+      <path d="M365 270 L400 300 L400 455 L382 390 Z" fill="#FFFFFF" fillOpacity="0.34" />
+
+      {/* Girdle highlight */}
+      <path
+        d="M250 255 L550 255 L500 300 L400 300 L300 300 Z"
+        fill="none"
+        stroke="#DFFFF0"
+        strokeOpacity="0.72"
+        strokeWidth="2"
+        strokeLinejoin="round"
+      />
+
+      {/* Crisp upper silhouette */}
+      <path
+        d="M250 255 L300 205 L500 205 L550 255"
+        fill="none"
+        stroke="#FFFFFF"
+        strokeOpacity="0.78"
+        strokeWidth="2"
+        strokeLinejoin="round"
+      />
+
+      {/* Culet highlight */}
+      <path d="M400 300 L400 485" stroke="#FFFFFF" strokeOpacity="0.38" strokeWidth="1.4" />
+
+      <path
+        d="M300 300 L400 485 L500 300"
+        fill="none"
+        stroke="#9DFFCC"
+        strokeOpacity="0.42"
+        strokeWidth="1.3"
+      />
+
+      {/* Front half of orbital ring */}
+      <path
+        d="M72 326 C95 398 222 429 374 398 C526 367 665 294 728 238"
+        stroke={`url(#${orbitGradientId})`}
+        strokeWidth="3"
+        strokeLinecap="round"
+        fill="none"
+        opacity="0.9"
+        filter={`url(#${softGlowFilterId})`}
+      />
+
+      {/* Small orbital highlight */}
+      <path
+        d="M74 326 C98 392 214 419 342 400"
+        stroke="#FFFFFF"
+        strokeWidth="1.2"
+        strokeLinecap="round"
+        fill="none"
+        opacity="0.48"
+      />
+
+      {/* Foreground sparkles */}
+      <g filter={`url(#${softGlowFilterId})`}>
+        <circle cx="118" cy="337" r="2.2" fill="#39FF88" opacity="0.76" />
+        <circle cx="684" cy="245" r="2" fill="#FFFFFF" opacity="0.72" />
+        <circle cx="624" cy="358" r="1.6" fill="#BFFFF0" opacity="0.65" />
+      </g>
+    </svg>
+  );
+}
