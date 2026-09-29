@@ -1,812 +1,245 @@
-import { useId, type SVGProps } from "react";
-
-export interface DiamondMarkProps
-  extends Omit<
-    SVGProps<SVGSVGElement>,
-    "width" | "height" | "children"
-  > {
-  readonly size: number | string;
-  readonly title?: string;
-}
-
-export default function DiamondMark({
-  size,
-  className,
-  style,
-  title,
-  ...svgProps
-}: DiamondMarkProps) {
-  const rawId = useId();
-  const id = rawId.replace(/:/g, "");
-
-  const auraId = `${id}-aura`;
-  const auraStrongId = `${id}-aura-strong`;
-  const diamondGlowId = `${id}-diamond-glow`;
-  const orbitGlowId = `${id}-orbit-glow`;
-  const starGlowId = `${id}-star-glow`;
-
-  const crownGradientId = `${id}-crown`;
-  const leftGradientId = `${id}-left`;
-  const rightGradientId = `${id}-right`;
-  const centerGradientId = `${id}-center`;
-  const deepGradientId = `${id}-deep`;
-  const orbitGradientId = `${id}-orbit`;
-
-  const titleId = `${id}-title`;
-
-  const resolvedSize =
-    typeof size === "number" ? `${size}px` : size;
-
-  return (
-    <svg
-      {...svgProps}
-      width={resolvedSize}
-      height={resolvedSize}
-      viewBox="0 0 360 300"
-      fill="none"
-      xmlns="http://www.w3.org/2000/svg"
-      className={className}
-      style={{
-        display: "block",
-        overflow: "visible",
-        ...style,
-      }}
-      role={title ? "img" : undefined}
-      aria-labelledby={title ? titleId : undefined}
-      aria-hidden={title ? undefined : true}
-      focusable="false"
-    >
-      {title ? <title id={titleId}>{title}</title> : null}
-
-      <defs>
-        {/* =========================================================
-            SOFT GREEN ATMOSPHERE
-        ========================================================== */}
-
-        <radialGradient
-          id={auraId}
-          cx="180"
-          cy="145"
-          r="145"
-          gradientUnits="userSpaceOnUse"
-        >
-          <stop
-            offset="0"
-            stopColor="#39FF88"
-            stopOpacity="0.34"
-          />
-          <stop
-            offset="0.28"
-            stopColor="#39FF88"
-            stopOpacity="0.18"
-          />
-          <stop
-            offset="0.56"
-            stopColor="#39FF88"
-            stopOpacity="0.06"
-          />
-          <stop
-            offset="1"
-            stopColor="#39FF88"
-            stopOpacity="0"
-          />
-        </radialGradient>
-
-        <radialGradient
-          id={auraStrongId}
-          cx="180"
-          cy="145"
-          r="92"
-          gradientUnits="userSpaceOnUse"
-        >
-          <stop
-            offset="0"
-            stopColor="#CFFFF0"
-            stopOpacity="0.26"
-          />
-          <stop
-            offset="0.3"
-            stopColor="#39FF88"
-            stopOpacity="0.18"
-          />
-          <stop
-            offset="0.72"
-            stopColor="#39FF88"
-            stopOpacity="0.04"
-          />
-          <stop
-            offset="1"
-            stopColor="#39FF88"
-            stopOpacity="0"
-          />
-        </radialGradient>
-
-        {/* =========================================================
-            DIAMOND GRADIENTS
-        ========================================================== */}
-
-        <linearGradient
-          id={crownGradientId}
-          x1="72"
-          y1="82"
-          x2="282"
-          y2="126"
-          gradientUnits="userSpaceOnUse"
-        >
-          <stop offset="0" stopColor="#9DFFBE" />
-          <stop offset="0.18" stopColor="#F5FFFA" />
-          <stop offset="0.38" stopColor="#B8FFD5" />
-          <stop offset="0.52" stopColor="#FFFFFF" />
-          <stop offset="0.68" stopColor="#82FFB4" />
-          <stop offset="0.86" stopColor="#DFFFF0" />
-          <stop offset="1" stopColor="#32EA7B" />
-        </linearGradient>
-
-        <linearGradient
-          id={leftGradientId}
-          x1="90"
-          y1="112"
-          x2="176"
-          y2="266"
-          gradientUnits="userSpaceOnUse"
-        >
-          <stop offset="0" stopColor="#EFFFF7" />
-          <stop offset="0.18" stopColor="#B9FFD7" />
-          <stop offset="0.4" stopColor="#72FFA9" />
-          <stop offset="0.66" stopColor="#28E878" />
-          <stop offset="1" stopColor="#087A40" />
-        </linearGradient>
-
-        <linearGradient
-          id={rightGradientId}
-          x1="270"
-          y1="111"
-          x2="181"
-          y2="266"
-          gradientUnits="userSpaceOnUse"
-        >
-          <stop offset="0" stopColor="#DFFFF0" />
-          <stop offset="0.2" stopColor="#A5FFCA" />
-          <stop offset="0.42" stopColor="#5AFF9C" />
-          <stop offset="0.68" stopColor="#1CD66B" />
-          <stop offset="1" stopColor="#056E39" />
-        </linearGradient>
-
-        <linearGradient
-          id={centerGradientId}
-          x1="180"
-          y1="105"
-          x2="180"
-          y2="270"
-          gradientUnits="userSpaceOnUse"
-        >
-          <stop offset="0" stopColor="#FFFFFF" />
-          <stop offset="0.16" stopColor="#DFFFF0" />
-          <stop offset="0.36" stopColor="#8BFFB9" />
-          <stop offset="0.6" stopColor="#39FF88" />
-          <stop offset="0.82" stopColor="#14C965" />
-          <stop offset="1" stopColor="#056E39" />
-        </linearGradient>
-
-        <linearGradient
-          id={deepGradientId}
-          x1="180"
-          y1="111"
-          x2="180"
-          y2="267"
-          gradientUnits="userSpaceOnUse"
-        >
-          <stop
-            offset="0"
-            stopColor="#F4FFF8"
-            stopOpacity="0.9"
-          />
-          <stop
-            offset="0.32"
-            stopColor="#6DFFA7"
-            stopOpacity="0.76"
-          />
-          <stop
-            offset="0.72"
-            stopColor="#17D66D"
-            stopOpacity="0.72"
-          />
-          <stop
-            offset="1"
-            stopColor="#056C38"
-            stopOpacity="0.96"
-          />
-        </linearGradient>
-
-        {/* =========================================================
-            ORBIT GRADIENT
-        ========================================================== */}
-
-        <linearGradient
-          id={orbitGradientId}
-          x1="42"
-          y1="204"
-          x2="315"
-          y2="90"
-          gradientUnits="userSpaceOnUse"
-        >
-          <stop
-            offset="0"
-            stopColor="#39FF88"
-            stopOpacity="0"
-          />
-          <stop
-            offset="0.11"
-            stopColor="#39FF88"
-            stopOpacity="0.72"
-          />
-          <stop
-            offset="0.27"
-            stopColor="#8DFFBB"
-            stopOpacity="0.95"
-          />
-          <stop
-            offset="0.5"
-            stopColor="#FFFFFF"
-            stopOpacity="1"
-          />
-          <stop
-            offset="0.73"
-            stopColor="#8DFFBB"
-            stopOpacity="0.95"
-          />
-          <stop
-            offset="0.89"
-            stopColor="#39FF88"
-            stopOpacity="0.72"
-          />
-          <stop
-            offset="1"
-            stopColor="#39FF88"
-            stopOpacity="0"
-          />
-        </linearGradient>
-
-        {/* =========================================================
-            GLOWS
-        ========================================================== */}
-
-        <filter
-          id={diamondGlowId}
-          x="-70%"
-          y="-70%"
-          width="240%"
-          height="240%"
-        >
-          <feGaussianBlur stdDeviation="8" />
-        </filter>
-
-        <filter
-          id={orbitGlowId}
-          x="-60%"
-          y="-120%"
-          width="220%"
-          height="340%"
-        >
-          <feGaussianBlur stdDeviation="4.5" />
-        </filter>
-
-        <filter
-          id={starGlowId}
-          x="-600%"
-          y="-600%"
-          width="1300%"
-          height="1300%"
-        >
-          <feGaussianBlur stdDeviation="2.5" />
-        </filter>
-      </defs>
-
-      {/* ===========================================================
-          AMBIENT LIGHT
-      ============================================================ */}
-
-      <ellipse
-        cx="180"
-        cy="145"
-        rx="150"
-        ry="138"
-        fill={`url(#${auraId})`}
-      />
-
-      <ellipse
-        cx="180"
-        cy="151"
-        rx="94"
-        ry="100"
-        fill={`url(#${auraStrongId})`}
-      />
-
-      {/* ===========================================================
-          BACK HALF OF SATURN-LIKE ORBIT
-      ============================================================ */}
-
-      <path
-        d="
-          M42 184
-          C69 135 120 92 177 83
-          C228 75 283 94 314 123
-        "
-        stroke="#39FF88"
-        strokeWidth="8"
-        strokeLinecap="round"
-        opacity="0.25"
-        filter={`url(#${orbitGlowId})`}
-      />
-
-      <path
-        d="
-          M42 184
-          C69 135 120 92 177 83
-          C228 75 283 94 314 123
-        "
-        stroke={`url(#${orbitGradientId})`}
-        strokeWidth="2.5"
-        strokeLinecap="round"
-      />
-
-      {/* ===========================================================
-          STARS / LIGHT PARTICLES
-      ============================================================ */}
-
-      <g>
-        <circle
-          cx="76"
-          cy="106"
-          r="1.4"
-          fill="#FFFFFF"
-        />
-        <circle
-          cx="76"
-          cy="106"
-          r="6"
-          fill="#39FF88"
-          opacity="0.28"
-          filter={`url(#${starGlowId})`}
-        />
-
-        <circle
-          cx="104"
-          cy="72"
-          r="1"
-          fill="#39FF88"
-          opacity="0.8"
-        />
-
-        <circle
-          cx="206"
-          cy="55"
-          r="1.5"
-          fill="#FFFFFF"
-          opacity="0.95"
-        />
-        <circle
-          cx="206"
-          cy="55"
-          r="7"
-          fill="#39FF88"
-          opacity="0.3"
-          filter={`url(#${starGlowId})`}
-        />
-
-        <circle
-          cx="253"
-          cy="72"
-          r="1"
-          fill="#39FF88"
-          opacity="0.82"
-        />
-
-        <circle
-          cx="292"
-          cy="109"
-          r="1.2"
-          fill="#FFFFFF"
-          opacity="0.84"
-        />
-
-        <circle
-          cx="60"
-          cy="160"
-          r="1"
-          fill="#DFFFF0"
-          opacity="0.76"
-        />
-
-        <circle
-          cx="84"
-          cy="216"
-          r="1.1"
-          fill="#39FF88"
-          opacity="0.82"
-        />
-
-        <circle
-          cx="268"
-          cy="220"
-          r="1.1"
-          fill="#FFFFFF"
-          opacity="0.72"
-        />
-
-        <circle
-          cx="296"
-          cy="181"
-          r="1"
-          fill="#39FF88"
-          opacity="0.78"
-        />
-      </g>
-
-      {/* ===========================================================
-          DIAMOND OUTER GLOW
-      ============================================================ */}
-
-      <path
-        d="
-          M73 105
-          L107 78
-          L180 66
-          L253 78
-          L287 105
-          L263 133
-          L239 202
-          L180 270
-          L121 202
-          L97 133
-          Z
-        "
-        fill="#39FF88"
-        opacity="0.22"
-        filter={`url(#${diamondGlowId})`}
-      />
-
-      {/* ===========================================================
-          MAIN DIAMOND BODY
-      ============================================================ */}
-
-      <path
-        d="
-          M73 105
-          L107 78
-          L180 66
-          L253 78
-          L287 105
-          L263 133
-          L239 202
-          L180 270
-          L121 202
-          L97 133
-          Z
-        "
-        fill={`url(#${centerGradientId})`}
-        stroke="#EFFFF7"
-        strokeWidth="1.4"
-        strokeLinejoin="round"
-      />
-
-      {/* ===========================================================
-          UPPER CROWN
-      ============================================================ */}
-
-      <polygon
-        points="
-          73,105
-          107,78
-          180,66
-          253,78
-          287,105
-          263,128
-          180,137
-          97,128
-        "
-        fill={`url(#${crownGradientId})`}
-      />
-
-      {/* Left crown facets */}
-      <polygon
-        points="73,105 107,78 135,121 97,128"
-        fill="#EFFFF7"
-        opacity="0.72"
-      />
-
-      <polygon
-        points="107,78 180,66 155,123 135,121"
-        fill="#FFFFFF"
-        opacity="0.56"
-      />
-
-      {/* Upper center facet */}
-      <polygon
-        points="180,66 205,123 155,123"
-        fill="#CFFFF0"
-        opacity="0.76"
-      />
-
-      {/* Right upper facets */}
-      <polygon
-        points="180,66 253,78 225,121 205,123"
-        fill="#8BFFB9"
-        opacity="0.58"
-      />
-
-      <polygon
-        points="253,78 287,105 263,128 225,121"
-        fill="#5CFFA0"
-        opacity="0.68"
-      />
-
-      {/* ===========================================================
-          UPPER INTERNAL FACETS
-      ============================================================ */}
-
-      <polygon
-        points="97,128 135,121 180,137"
-        fill="#39FF88"
-        opacity="0.38"
-      />
-
-      <polygon
-        points="135,121 155,123 180,137"
-        fill="#FFFFFF"
-        opacity="0.48"
-      />
-
-      <polygon
-        points="155,123 205,123 180,137"
-        fill="#EFFFF7"
-        opacity="0.38"
-      />
-
-      <polygon
-        points="205,123 225,121 263,128 180,137"
-        fill="#39FF88"
-        opacity="0.38"
-      />
-
-      {/* ===========================================================
-          LEFT LOWER CRYSTAL
-      ============================================================ */}
-
-      <polygon
-        points="97,128 180,137 180,270 121,202"
-        fill={`url(#${leftGradientId})`}
-      />
-
-      <polygon
-        points="97,128 135,121 180,270 121,202"
-        fill="#DFFFF0"
-        opacity="0.34"
-      />
-
-      <polygon
-        points="97,128 121,202 151,238 135,121"
-        fill="#72FFAA"
-        opacity="0.46"
-      />
-
-      <polygon
-        points="135,121 155,123 180,270"
-        fill="#FFFFFF"
-        opacity="0.23"
-      />
-
-      {/* ===========================================================
-          RIGHT LOWER CRYSTAL
-      ============================================================ */}
-
-      <polygon
-        points="180,137 263,128 239,202 180,270"
-        fill={`url(#${rightGradientId})`}
-      />
-
-      <polygon
-        points="225,121 263,128 239,202 180,270"
-        fill="#B7FFD5"
-        opacity="0.28"
-      />
-
-      <polygon
-        points="205,123 225,121 180,270"
-        fill="#F1FFF7"
-        opacity="0.28"
-      />
-
-      <polygon
-        points="180,137 239,202 208,239 180,270"
-        fill="#12C762"
-        opacity="0.4"
-      />
-
-      {/* ===========================================================
-          CENTRAL DEEP FACET
-      ============================================================ */}
-
-      <polygon
-        points="155,123 205,123 180,270"
-        fill={`url(#${deepGradientId})`}
-        opacity="0.94"
-      />
-
-      <polygon
-        points="180,137 205,123 180,270"
-        fill="#056D39"
-        opacity="0.46"
-      />
-
-      <polygon
-        points="155,123 180,137 180,270"
-        fill="#B5FFD3"
-        opacity="0.22"
-      />
-
-      {/* ===========================================================
-          CRYSTAL EDGE LINES
-      ============================================================ */}
-
-      <path
-        d="M73 105L107 78L180 66L253 78L287 105"
-        stroke="#FFFFFF"
-        strokeWidth="1.9"
-        strokeLinecap="round"
-        strokeLinejoin="round"
-        opacity="0.96"
-      />
-
-      <path
-        d="M73 105L97 128L180 137L263 128L287 105"
-        stroke="#F2FFF8"
-        strokeWidth="1.15"
-        strokeLinejoin="round"
-        opacity="0.72"
-      />
-
-      <path
-        d="M107 78L135 121L180 137"
-        stroke="#FFFFFF"
-        strokeWidth="1"
-        opacity="0.7"
-      />
-
-      <path
-        d="M180 66L155 123L180 137"
-        stroke="#FFFFFF"
-        strokeWidth="1"
-        opacity="0.62"
-      />
-
-      <path
-        d="M180 66L205 123L180 137"
-        stroke="#FFFFFF"
-        strokeWidth="1"
-        opacity="0.54"
-      />
-
-      <path
-        d="M253 78L225 121L180 137"
-        stroke="#FFFFFF"
-        strokeWidth="1"
-        opacity="0.58"
-      />
-
-      <path
-        d="M97 128L121 202L180 270"
-        stroke="#FFFFFF"
-        strokeWidth="0.9"
-        opacity="0.48"
-      />
-
-      <path
-        d="M263 128L239 202L180 270"
-        stroke="#FFFFFF"
-        strokeWidth="0.9"
-        opacity="0.42"
-      />
-
-      <path
-        d="M180 137V270"
-        stroke="#FFFFFF"
-        strokeWidth="1"
-        opacity="0.5"
-      />
-
-      {/* ===========================================================
-          GLASS HIGHLIGHTS
-      ============================================================ */}
-
-      <path
-        d="
-          M107 78
-          L180 66
-          L155 123
-          L135 121
-          Z
-        "
-        fill="#FFFFFF"
-        opacity="0.18"
-      />
-
-      <path
-        d="
-          M73 105
-          L107 78
-          L135 121
-          L97 128
-          Z
-        "
-        fill="#FFFFFF"
-        opacity="0.2"
-      />
-
-      <path
-        d="M101 96L127 81"
-        stroke="#FFFFFF"
-        strokeWidth="2.8"
-        strokeLinecap="round"
-        opacity="0.72"
-      />
-
-      <path
-        d="M109 91L127 81"
-        stroke="#FFFFFF"
-        strokeWidth="1.1"
-        strokeLinecap="round"
-        opacity="0.96"
-      />
-
-      {/* ===========================================================
-          FRONT HALF OF ORBIT
-          This creates the same wrapped-around-depth feeling.
-      ============================================================ */}
-
-      <path
-        d="
-          M42 184
-          C70 218 122 226 174 209
-          C226 192 271 157 314 123
-        "
-        stroke="#39FF88"
-        strokeWidth="8"
-        strokeLinecap="round"
-        opacity="0.27"
-        filter={`url(#${orbitGlowId})`}
-      />
-
-      <path
-        d="
-          M42 184
-          C70 218 122 226 174 209
-          C226 192 271 157 314 123
-        "
-        stroke={`url(#${orbitGradientId})`}
-        strokeWidth="2.5"
-        strokeLinecap="round"
-      />
-
-      {/* ===========================================================
-          BRIGHT ORBIT TIP
-      ============================================================ */}
-
-      <circle
-        cx="314"
-        cy="123"
-        r="2.4"
-        fill="#FFFFFF"
-      />
-
-      <circle
-        cx="314"
-        cy="123"
-        r="8"
-        fill="#39FF88"
-        opacity="0.35"
-        filter={`url(#${starGlowId})`}
-      />
-    </svg>
-  );
-}
+<!DOCTYPE html>
+<html lang="fa" dir="rtl">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Mass Diamond AI</title>
+    <style>
+        /* تنظیمات کلی */
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+            font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+        }
+
+        body {
+            background-color: #050a08; /* پس زمینه بسیار تیره */
+            color: #ffffff;
+            display: flex;
+            justify-content: center;
+            align-items: center;
+            min-height: 100vh;
+            overflow: hidden; /* جلوگیری از اسکرول اضافه */
+            position: relative;
+        }
+
+        /* افکت ستاره‌های پس زمینه */
+        body::before {
+            content: '';
+            position: absolute;
+            top: 0; left: 0; right: 0; bottom: 0;
+            background-image: radial-gradient(circle, rgba(0, 255, 136, 0.1) 1px, transparent 1px);
+            background-size: 50px 50px;
+            z-index: -1;
+        }
+
+        /* کانتینر اصلی موبایل */
+        .app-container {
+            width: 100%;
+            max-width: 400px;
+            height: 100vh;
+            display: flex;
+            flex-direction: column;
+            justify-content: space-between;
+            padding: 40px 20px 20px 20px;
+            position: relative;
+        }
+
+        /* بخش بالایی: لوگو و متن */
+        .hero-section {
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            text-align: center;
+            margin-top: 10vh;
+        }
+
+        /* شبیه‌سازی الماس با CSS */
+        .diamond-container {
+            position: relative;
+            width: 150px;
+            height: 150px;
+            margin-bottom: 40px;
+            display: flex;
+            justify-content: center;
+            align-items: center;
+        }
+
+        .diamond {
+            width: 80px;
+            height: 80px;
+            background: linear-gradient(135deg, #00ff88, #00b36b);
+            transform: rotate(45deg);
+            border-radius: 10px;
+            box-shadow: 0 0 30px rgba(0, 255, 136, 0.6), inset 0 0 20px rgba(255, 255, 255, 0.5);
+            animation: float 3s ease-in-out infinite;
+        }
+
+        /* حلقه دور الماس */
+        .diamond-ring {
+            position: absolute;
+            width: 140px;
+            height: 40px;
+            border: 2px solid rgba(0, 255, 136, 0.4);
+            border-radius: 50%;
+            transform: rotate(-15deg);
+            box-shadow: 0 0 15px rgba(0, 255, 136, 0.2);
+            animation: orbit 4s linear infinite;
+        }
+
+        /* انیمیشن‌ها */
+        @keyframes float {
+            0%, 100% { transform: rotate(45deg) translateY(0); }
+            50% { transform: rotate(45deg) translateY(-10px); }
+        }
+
+        @keyframes orbit {
+            0% { transform: rotate(-15deg) scale(1); opacity: 0.5; }
+            50% { transform: rotate(-15deg) scale(1.05); opacity: 1; }
+            100% { transform: rotate(-15deg) scale(1); opacity: 0.5; }
+        }
+
+        /* متن‌ها */
+        .title {
+            font-size: 28px;
+            font-weight: bold;
+            margin-bottom: 10px;
+            letter-spacing: 1px;
+        }
+
+        .title span {
+            color: #00ff88;
+            text-shadow: 0 0 10px rgba(0, 255, 136, 0.5);
+        }
+
+        .subtitle {
+            font-size: 12px;
+            color: #889990;
+            max-width: 250px;
+            line-height: 1.5;
+        }
+
+        /* بخش پایینی: دکمه‌ها */
+        .bottom-section {
+            display: flex;
+            flex-direction: column;
+            gap: 15px;
+            padding-bottom: 20px;
+        }
+
+        /* ردیف دکمه‌ها */
+        .button-row {
+            display: flex;
+            gap: 10px;
+            justify-content: center;
+        }
+
+        /* دکمه‌های شیشه‌ای */
+        .glass-btn {
+            background: rgba(0, 255, 136, 0.05);
+            border: 1px solid rgba(0, 255, 136, 0.2);
+            border-radius: 25px;
+            padding: 12px 20px;
+            color: #a0b0a8;
+            font-size: 13px;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            gap: 8px;
+            flex: 1;
+            cursor: pointer;
+            transition: all 0.3s ease;
+            backdrop-filter: blur(5px);
+        }
+
+        .glass-btn:hover {
+            background: rgba(0, 255, 136, 0.15);
+            border-color: rgba(0, 255, 136, 0.5);
+            color: #ffffff;
+            box-shadow: 0 0 15px rgba(0, 255, 136, 0.2);
+        }
+
+        /* دکمه وسط (مداد) */
+        .center-btn {
+            position: absolute;
+            bottom: 90px;
+            left: 50%;
+            transform: translateX(-50%);
+            width: 60px;
+            height: 60px;
+            background: #e0eaff;
+            border-radius: 50%;
+            display: flex;
+            justify-content: center;
+            align-items: center;
+            box-shadow: 0 0 20px rgba(224, 234, 255, 0.4);
+            cursor: pointer;
+            z-index: 10;
+            border: none;
+        }
+
+        .center-btn svg {
+            width: 24px;
+            height: 24px;
+            fill: #1a2b3c;
+        }
+
+        /* آیکون‌های SVG ساده */
+        .icon {
+            width: 16px;
+            height: 16px;
+            fill: currentColor;
+        }
+    </style>
+</head>
+<body>
+
+    <div class="app-container">
+        
+        <!-- بخش اصلی (لوگو و متن) -->
+        <div class="hero-section">
+            <div class="diamond-container">
+                <div class="diamond-ring"></div>
+                <div class="diamond"></div>
+            </div>
+            
+            <h1 class="title">Hello, I'm <span>Mass Diamond</span></h1>
+            <p class="subtitle">Your Intelligent Assistant for a Bigger Tomorrow</p>
+        </div>
+
+        <!-- دکمه وسط (مداد) -->
+        <button class="center-btn">
+            <svg viewBox="0 0 24 24">
+                <path d="M3 17.25V21h3.75L17.81 9.94l-3.75-3.75L3 17.25zM20.71 7.04c.39-.39.39-1.02 0-1.41l-2.34-2.34c-.39-.39-1.02-.39-1.41 0l-1.83 1.83 3.75 3.75 1.83-1.83z"/>
+            </svg>
+        </button>
+
+        <!-- بخش پایینی (دکمه‌ها) -->
+        <div class="bottom-section">
+            <div class="button-row">
+                <button class="glass-btn">
+                    <svg class="icon" viewBox="0 0 24 24"><path d="M15.5 14h-.79l-.28-.27C15.41 12.59 16 11.11 16 9.5 16 5.91 13.09 3 9.5 3S3 5.91 3 9.5 5.91 16 9.5 16c1.61 0 3.09-.59 4.23-1.57l.27.28v.79l5 4.99L20.49 19l-4.99-5zm-6 0C7.01 14 5 11.99 5 9.5S7.01 5 9.5 5 14 7.01 14 9.5 11.99 14 9.5 14z"/></svg>
+                    Search
+                </button>
+                <button class="glass-btn">
+                    <svg class="icon" viewBox="0 0 24 24"><path d="M21 19V5c0-1.1-.9-2-2-2H5c-1.1 0-2 .9-2 2v14c0 1.1.9 2 2 2h14c1.1 0 2-.9 2-2zM8.5 13.5l2.5 3.01L14.5 12l4.5 6H5l3.5-4.5z"/></svg>
+                    Images
+                </button>
+            </div>
+            
+            <div class="button-row">
+                <button class="glass-btn">
+                    <svg class="icon" viewBox="0 0 24 24"><path d="M18 6h-2c0-2.21-1.79-4-4-4S8 3.79 8 6H6c-1.1 0-2 .9-2 2v12c0 1.1.9 2 2 2h12c1.1 0 2-.9 2-2V8c0-1.1-.9-2-2-2zm-6-2c1.1 0 2 .9 2 2h-4c0-1.1.9-2 2-2zm6 16H6V8h2v2c0 1.1.9 2 2 2s2-.9 2-2V8h4v2c0 1.1.9 2 2 2s2-.9 2-2V8h2v12z"/></svg>
+                    Products
+                </button>
+                <button class="glass-btn">
+                    <svg class="icon" viewBox="0 0 24 24"><path d="M10 20v-6h4v6h5v-8h3L12 3 2 12h3v8z"/></svg>
+                    Home
+                </button>
+            </div>
+        </div>
+    </div>
+
+</body>
+</html>
