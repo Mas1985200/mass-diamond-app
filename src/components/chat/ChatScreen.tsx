@@ -29,6 +29,7 @@ interface QuickAction {
   readonly label: string;
   readonly prompt: string;
   readonly enabled: boolean;
+  readonly highlight?: boolean;
   readonly icon: ReactNode;
 }
 
@@ -45,6 +46,7 @@ const QUICK_ACTIONS: readonly QuickAction[] = [
     label: "جستجو در وب",
     prompt: "",
     enabled: false,
+    highlight: true,
     icon: <SearchIcon />,
   },
   {
@@ -76,6 +78,13 @@ const QUICK_ACTIONS: readonly QuickAction[] = [
     icon: <HomeIcon />,
   },
 ];
+
+const HIGHLIGHT_STYLE = {
+  background:
+    "linear-gradient(135deg, rgba(57,255,136,0.16), rgba(57,255,136,0.03))",
+  borderColor: "rgba(57,255,136,0.45)",
+  boxShadow: "0 0 18px rgba(57,255,136,0.18)",
+} as const;
 
 export default function ChatScreen() {
   const { messages, isSending, error, canRetry, sendMessage, retry, reset } =
@@ -221,6 +230,13 @@ export default function ChatScreen() {
               <p className="mt-2 text-text-subtle">
                 Your Intelligent Assistant for a Bigger Tomorrow
               </p>
+              <p
+                dir="rtl"
+                className="mx-auto mt-3 max-w-xs text-xs leading-6 text-text-subtle"
+              >
+                به سؤال‌هایت پاسخ می‌دهم، در یادگیری کمکت می‌کنم و محصول یا ملک
+                مناسب را پیدا می‌کنم. برای شروع، پیامت را در کادر پایین بنویس.
+              </p>
             </div>
 
             <div className="mt-2 grid w-full max-w-md grid-cols-2 gap-3">
@@ -230,7 +246,10 @@ export default function ChatScreen() {
                   type="button"
                   onClick={() => handleQuickAction(action)}
                   disabled={!action.enabled}
-                  className="md-glass flex items-center gap-2 rounded-full px-4 py-3 text-sm text-text transition-colors duration-180 hover:border-[rgba(57,255,136,0.4)] disabled:cursor-not-allowed disabled:opacity-40"
+                  style={action.highlight ? HIGHLIGHT_STYLE : undefined}
+                  className={`md-glass flex items-center gap-2 rounded-full px-4 py-3 text-sm text-text transition-colors duration-180 hover:border-[rgba(57,255,136,0.4)] disabled:cursor-not-allowed ${
+                    action.highlight ? "disabled:opacity-70" : "disabled:opacity-40"
+                  }`}
                 >
                   <span className="shrink-0 text-primary">{action.icon}</span>
                   <span className="truncate">{action.label}</span>
@@ -380,8 +399,13 @@ function ChatIcon() {
 function SearchIcon() {
   return (
     <svg {...iconProps()}>
-      <circle cx="11" cy="11" r="6" />
-      <path d="m20 20-3.2-3.2" />
+      <circle cx="10.5" cy="10.5" r="7" />
+      <path d="m20.5 20.5-5.1-5.1" />
+      <path
+        d="M10.5 6.8l.95 2.75 2.75.95-2.75.95-.95 2.75-.95-2.75-2.75-.95 2.75-.95.95-2.75Z"
+        fill="currentColor"
+        stroke="none"
+      />
     </svg>
   );
 }
