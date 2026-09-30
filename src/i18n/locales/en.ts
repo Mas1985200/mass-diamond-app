@@ -9,13 +9,18 @@ export const en: TranslationSchema = {
 
     email: "Email",
     password: "Password",
+    confirmPassword: "Confirm password",
 
     emailPlaceholder: "example@email.com",
     passwordPlaceholder: "••••••••",
+    confirmPasswordPlaceholder: "••••••••",
 
     login: "Sign in",
     signup: "Sign up",
     loading: "Please wait...",
+
+    continueWithGoogle: "Continue with Google",
+    orDivider: "or use email",
 
     signupSuccess:
       "Your account was created successfully. Please check your email to confirm your account.",
@@ -29,6 +34,8 @@ export const en: TranslationSchema = {
 
     passwordTooShort: "Password must be at least 6 characters.",
 
+    passwordMismatch: "Passwords do not match.",
+
     invalidEmail: "Please enter a valid email address.",
 
     rateLimit:
@@ -36,6 +43,8 @@ export const en: TranslationSchema = {
 
     networkError:
       "Unable to connect to the server. Please check your internet connection.",
+
+    providerDisabled: "Google sign-in is not enabled yet.",
 
     genericError:
       "An authentication error occurred. Please try again.",
