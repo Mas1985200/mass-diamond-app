@@ -107,9 +107,43 @@ export default function ChatScreen() {
   const [activeId, setActiveId] = useState<string | null>(null);
   const inputRef = useRef<HTMLTextAreaElement | null>(null);
   const bottomRef = useRef<HTMLDivElement | null>(null);
+  const chatHistoryPushedRef = useRef(false);
+
+  const hasMessages = messages.length > 0;
+  const canSend = draft.trim().length > 0 && !isSending;
 
   const activeAction =
     QUICK_ACTIONS.find((action) => action.id === activeId) ?? null;
+
+  useEffect(() => {
+    if (hasMessages && !chatHistoryPushedRef.current) {
+      window.history.pushState({ mdChat: true }, "");
+      chatHistoryPushedRef.current = true;
+    }
+
+    if (!hasMessages) {
+      chatHistoryPushedRef.current = false;
+    }
+  }, [hasMessages]);
+
+  useEffect(() => {
+    const handlePopState = () => {
+      if (!chatHistoryPushedRef.current) {
+        return;
+      }
+
+      chatHistoryPushedRef.current = false;
+      reset();
+      setDraft("");
+      setActiveId(null);
+    };
+
+    window.addEventListener("popstate", handlePopState);
+
+    return () => {
+      window.removeEventListener("popstate", handlePopState);
+    };
+  }, [reset]);
 
   useEffect(() => {
     const element = inputRef.current;
@@ -159,6 +193,11 @@ export default function ChatScreen() {
   };
 
   const handleNewChat = () => {
+    if (chatHistoryPushedRef.current) {
+      window.history.back();
+      return;
+    }
+
     reset();
     setDraft("");
     setActiveId(null);
@@ -167,9 +206,6 @@ export default function ChatScreen() {
   const handleSignOut = () => {
     void supabase.auth.signOut();
   };
-
-  const hasMessages = messages.length > 0;
-  const canSend = draft.trim().length > 0 && !isSending;
 
   return (
     <div
@@ -197,7 +233,7 @@ export default function ChatScreen() {
           <button
             type="button"
             onClick={handleNewChat}
-            aria-label="گفتگوی جدید"
+            aria-label="بازگشت به صفحه اصلی"
             className="flex h-10 w-10 items-center justify-center rounded-full text-text-subtle transition-colors hover:text-primary"
           >
             <NewChatIcon />
