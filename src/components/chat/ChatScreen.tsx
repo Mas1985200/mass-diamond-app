@@ -79,12 +79,23 @@ const QUICK_ACTIONS: readonly QuickAction[] = [
   },
 ];
 
-const HIGHLIGHT_STYLE = {
-  background:
-    "linear-gradient(135deg, rgba(57,255,136,0.16), rgba(57,255,136,0.03))",
-  borderColor: "rgba(57,255,136,0.45)",
-  boxShadow: "0 0 18px rgba(57,255,136,0.18)",
-} as const;
+const DIAMOND_FADE_MASK =
+  "radial-gradient(ellipse at center, #000 58%, transparent 100%)";
+
+const SEARCH_GLOW_CSS = `
+@keyframes md-search-glow {
+  0%, 100% { box-shadow: 0 0 10px rgba(57,255,136,0.18); }
+  50% { box-shadow: 0 0 22px rgba(57,255,136,0.42); }
+}
+.md-search-highlight {
+  background: linear-gradient(135deg, rgba(57,255,136,0.20), rgba(57,255,136,0.04));
+  border-color: rgba(57,255,136,0.55);
+  animation: md-search-glow 2.6s ease-in-out infinite;
+}
+@media (prefers-reduced-motion: reduce) {
+  .md-search-highlight { animation: none; }
+}
+`;
 
 export default function ChatScreen() {
   const { messages, isSending, error, canRetry, sendMessage, retry, reset } =
@@ -157,6 +168,8 @@ export default function ChatScreen() {
       className="relative flex flex-col overflow-hidden"
       style={{ height: "100dvh" }}
     >
+      <style>{SEARCH_GLOW_CSS}</style>
+
       <div className="pointer-events-none absolute inset-0 bg-[radial-gradient(circle_at_50%_20%,rgba(57,255,136,0.10),transparent_60%)]" />
 
       <header
@@ -220,35 +233,43 @@ export default function ChatScreen() {
             <div ref={bottomRef} />
           </ul>
         ) : (
-          <div className="flex min-h-full flex-col items-center justify-center gap-6 py-6 text-center">
-            <DiamondMark size={110} />
+          <div className="flex min-h-full flex-col items-center justify-center gap-4 py-3 text-center">
+            <div
+              style={{
+                WebkitMaskImage: DIAMOND_FADE_MASK,
+                maskImage: DIAMOND_FADE_MASK,
+              }}
+            >
+              <DiamondMark size={92} />
+            </div>
 
             <div>
-              <h1 className="text-3xl font-bold leading-tight">
+              <h1 className="text-2xl font-bold leading-tight">
                 Hello, I'm <span className="text-primary">Mass Diamond</span>
               </h1>
-              <p className="mt-2 text-text-subtle">
+              <p className="mt-1.5 text-sm text-text-subtle">
                 Your Intelligent Assistant for a Bigger Tomorrow
               </p>
               <p
                 dir="rtl"
-                className="mx-auto mt-3 max-w-xs text-xs leading-6 text-text-subtle"
+                className="mx-auto mt-2 max-w-xs text-xs leading-5 text-text-subtle"
               >
-                به سؤال‌هایت پاسخ می‌دهم، در یادگیری کمکت می‌کنم و محصول یا ملک
-                مناسب را پیدا می‌کنم. برای شروع، پیامت را در کادر پایین بنویس.
+                سؤال بپرس، یاد بگیر، محصول و ملک پیدا کن. پیامت را در کادر پایین
+                بنویس.
               </p>
             </div>
 
-            <div className="mt-2 grid w-full max-w-md grid-cols-2 gap-3">
+            <div className="grid w-full max-w-md grid-cols-2 gap-2.5">
               {QUICK_ACTIONS.map((action) => (
                 <button
                   key={action.id}
                   type="button"
                   onClick={() => handleQuickAction(action)}
                   disabled={!action.enabled}
-                  style={action.highlight ? HIGHLIGHT_STYLE : undefined}
-                  className={`md-glass flex items-center gap-2 rounded-full px-4 py-3 text-sm text-text transition-colors duration-180 hover:border-[rgba(57,255,136,0.4)] disabled:cursor-not-allowed ${
-                    action.highlight ? "disabled:opacity-70" : "disabled:opacity-40"
+                  className={`md-glass flex items-center gap-2 rounded-full px-3.5 py-2.5 text-[13px] text-text transition-colors duration-180 hover:border-[rgba(57,255,136,0.4)] disabled:cursor-not-allowed ${
+                    action.highlight
+                      ? "md-search-highlight disabled:opacity-90"
+                      : "disabled:opacity-40"
                   }`}
                 >
                   <span className="shrink-0 text-primary">{action.icon}</span>
@@ -400,12 +421,9 @@ function SearchIcon() {
   return (
     <svg {...iconProps()}>
       <circle cx="10.5" cy="10.5" r="7" />
+      <ellipse cx="10.5" cy="10.5" rx="3" ry="7" />
+      <path d="M3.5 10.5h14" />
       <path d="m20.5 20.5-5.1-5.1" />
-      <path
-        d="M10.5 6.8l.95 2.75 2.75.95-2.75.95-.95 2.75-.95-2.75-2.75-.95 2.75-.95.95-2.75Z"
-        fill="currentColor"
-        stroke="none"
-      />
     </svg>
   );
 }
