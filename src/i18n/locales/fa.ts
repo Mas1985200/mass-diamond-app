@@ -9,13 +9,18 @@ export const fa: TranslationSchema = {
 
     email: "ایمیل",
     password: "رمز عبور",
+    confirmPassword: "تکرار رمز عبور",
 
     emailPlaceholder: "example@email.com",
     passwordPlaceholder: "••••••••",
+    confirmPasswordPlaceholder: "••••••••",
 
     login: "ورود",
     signup: "ثبت‌نام",
     loading: "لطفاً صبر کنید...",
+
+    continueWithGoogle: "ادامه با Google",
+    orDivider: "یا با ایمیل",
 
     signupSuccess:
       "حساب کاربری با موفقیت ساخته شد. لطفاً ایمیلتان را برای تأیید بررسی کنید.",
@@ -29,6 +34,8 @@ export const fa: TranslationSchema = {
 
     passwordTooShort: "رمز عبور باید حداقل ۶ کاراکتر باشد.",
 
+    passwordMismatch: "رمزهای عبور یکسان نیستند.",
+
     invalidEmail: "لطفاً یک ایمیل معتبر وارد کنید.",
 
     rateLimit:
@@ -36,6 +43,8 @@ export const fa: TranslationSchema = {
 
     networkError:
       "اتصال به سرور برقرار نشد. لطفاً اتصال اینترنت خود را بررسی کنید.",
+
+    providerDisabled: "ورود با Google هنوز فعال نشده است.",
 
     genericError:
       "خطایی در احراز هویت رخ داد. لطفاً دوباره تلاش کنید.",
