@@ -24,10 +24,12 @@ const ERROR_MESSAGES: Record<ChatErrorCode, string> = {
   UNKNOWN_ERROR: "خطای ناشناخته‌ای رخ داد. لطفاً دوباره تلاش کنید.",
 };
 
+const DEFAULT_PLACEHOLDER = "چطور می‌تونم کمکت کنم؟";
+
 interface QuickAction {
   readonly id: string;
   readonly label: string;
-  readonly prompt: string;
+  readonly hint: string;
   readonly enabled: boolean;
   readonly highlight?: boolean;
   readonly icon: ReactNode;
@@ -37,14 +39,14 @@ const QUICK_ACTIONS: readonly QuickAction[] = [
   {
     id: "ask",
     label: "هر چیزی بپرس",
-    prompt: "",
+    hint: DEFAULT_PLACEHOLDER,
     enabled: true,
     icon: <ChatIcon />,
   },
   {
     id: "web",
     label: "جستجو در وب",
-    prompt: "",
+    hint: "چه چیزی را در وب جستجو کنم؟",
     enabled: false,
     highlight: true,
     icon: <SearchIcon />,
@@ -52,28 +54,28 @@ const QUICK_ACTIONS: readonly QuickAction[] = [
   {
     id: "image",
     label: "ساخت تصویر",
-    prompt: "",
+    hint: "چه تصویری بسازم؟",
     enabled: false,
     icon: <ImageIcon />,
   },
   {
     id: "learn",
     label: "کمک آموزشی",
-    prompt: "می‌خواهم درباره‌ی این موضوع یاد بگیرم: ",
+    hint: "چه موضوعی را می‌خواهی یاد بگیری؟",
     enabled: true,
     icon: <LearnIcon />,
   },
   {
     id: "product",
     label: "پیدا کردن محصول",
-    prompt: "دنبال این محصول هستم: ",
+    hint: "دنبال چه محصولی هستی؟",
     enabled: true,
     icon: <BagIcon />,
   },
   {
     id: "property",
     label: "جستجوی ملک",
-    prompt: "دنبال ملکی با این مشخصات هستم: ",
+    hint: "دنبال چه ملکی هستی؟ شهر، متراژ، بودجه...",
     enabled: true,
     icon: <HomeIcon />,
   },
@@ -102,8 +104,12 @@ export default function ChatScreen() {
     useChat();
 
   const [draft, setDraft] = useState("");
+  const [activeId, setActiveId] = useState<string | null>(null);
   const inputRef = useRef<HTMLTextAreaElement | null>(null);
   const bottomRef = useRef<HTMLDivElement | null>(null);
+
+  const activeAction =
+    QUICK_ACTIONS.find((action) => action.id === activeId) ?? null;
 
   useEffect(() => {
     const element = inputRef.current;
@@ -128,6 +134,7 @@ export default function ChatScreen() {
     }
 
     setDraft("");
+    setActiveId(null);
     await sendMessage(text);
   };
 
@@ -147,13 +154,14 @@ export default function ChatScreen() {
       return;
     }
 
-    setDraft(action.prompt);
+    setActiveId(action.id === "ask" ? null : action.id);
     inputRef.current?.focus();
   };
 
   const handleNewChat = () => {
     reset();
     setDraft("");
+    setActiveId(null);
   };
 
   const handleSignOut = () => {
@@ -173,7 +181,7 @@ export default function ChatScreen() {
       <div className="pointer-events-none absolute inset-0 bg-[radial-gradient(circle_at_50%_20%,rgba(57,255,136,0.10),transparent_60%)]" />
 
       <header
-        className="z-10 flex items-center justify-between px-3 py-2"
+        className="z-10 flex items-center justify-between px-3 py-1"
         dir="ltr"
       >
         <button
@@ -233,30 +241,32 @@ export default function ChatScreen() {
             <div ref={bottomRef} />
           </ul>
         ) : (
-          <div className="flex min-h-full flex-col items-center justify-center gap-4 py-3 text-center">
-            <div
-              style={{
-                WebkitMaskImage: DIAMOND_FADE_MASK,
-                maskImage: DIAMOND_FADE_MASK,
-              }}
-            >
-              <DiamondMark size={92} />
-            </div>
-
-            <div>
-              <h1 className="text-2xl font-bold leading-tight">
-                Hello, I'm <span className="text-primary">Mass Diamond</span>
-              </h1>
-              <p className="mt-1.5 text-sm text-text-subtle">
-                Your Intelligent Assistant for a Bigger Tomorrow
-              </p>
-              <p
-                dir="rtl"
-                className="mx-auto mt-2 max-w-xs text-xs leading-5 text-text-subtle"
+          <div className="flex min-h-full flex-col items-center justify-between gap-3 pb-2 text-center">
+            <div className="flex flex-col items-center gap-3">
+              <div
+                style={{
+                  WebkitMaskImage: DIAMOND_FADE_MASK,
+                  maskImage: DIAMOND_FADE_MASK,
+                }}
               >
-                سؤال بپرس، یاد بگیر، محصول و ملک پیدا کن. پیامت را در کادر پایین
-                بنویس.
-              </p>
+                <DiamondMark size={92} />
+              </div>
+
+              <div>
+                <h1 className="text-2xl font-bold leading-tight">
+                  Hello, I'm <span className="text-primary">Mass Diamond</span>
+                </h1>
+                <p className="mt-1.5 text-sm text-text-subtle">
+                  Your Intelligent Assistant for a Bigger Tomorrow
+                </p>
+                <p
+                  dir="rtl"
+                  className="mx-auto mt-2 max-w-xs text-xs leading-5 text-text-subtle"
+                >
+                  سؤال بپرس، یاد بگیر، محصول و ملک پیدا کن. پیامت را در کادر
+                  پایین بنویس.
+                </p>
+              </div>
             </div>
 
             <div className="grid w-full max-w-md grid-cols-2 gap-2.5">
@@ -304,48 +314,68 @@ export default function ChatScreen() {
         )}
 
         <div
-          className="md-glass mx-auto flex w-full max-w-xl items-end gap-2 rounded-3xl px-3 py-2"
+          className="md-glass mx-auto w-full max-w-xl rounded-3xl px-3 py-2"
           dir="rtl"
         >
-          <button
-            type="button"
-            disabled
-            aria-label="پیوست فایل"
-            className="flex h-9 w-9 shrink-0 items-center justify-center text-text-subtle opacity-40"
-          >
-            <AttachIcon />
-          </button>
+          {activeAction && (
+            <div className="flex items-center pb-1">
+              <span className="inline-flex items-center gap-2 rounded-full border border-[rgba(57,255,136,0.35)] bg-[rgba(57,255,136,0.08)] px-3 py-1 text-xs text-primary">
+                <span className="shrink-0">{activeAction.icon}</span>
+                <span>{activeAction.label}</span>
+                <button
+                  type="button"
+                  onClick={() => setActiveId(null)}
+                  aria-label="لغو انتخاب"
+                  className="flex h-5 w-5 items-center justify-center rounded-full text-base leading-none text-text-subtle transition-colors hover:text-primary"
+                >
+                  ×
+                </button>
+              </span>
+            </div>
+          )}
 
-          <textarea
-            ref={inputRef}
-            value={draft}
-            onChange={(event) => setDraft(event.target.value)}
-            onKeyDown={handleKeyDown}
-            rows={1}
-            dir="auto"
-            enterKeyHint="send"
-            placeholder="چطور می‌تونم کمکت کنم؟"
-            className="max-h-40 flex-1 resize-none bg-transparent py-2 text-sm leading-6 text-text outline-none placeholder:text-text-subtle"
-          />
+          <div className="flex items-end gap-2">
+            <button
+              type="button"
+              disabled
+              aria-label="پیوست فایل"
+              className="flex h-9 w-9 shrink-0 items-center justify-center text-text-subtle opacity-40"
+            >
+              <AttachIcon />
+            </button>
 
-          <button
-            type="button"
-            disabled
-            aria-label="ورودی صوتی"
-            className="flex h-9 w-9 shrink-0 items-center justify-center text-text-subtle opacity-40"
-          >
-            <MicIcon />
-          </button>
+            <textarea
+              ref={inputRef}
+              value={draft}
+              onChange={(event) => setDraft(event.target.value)}
+              onKeyDown={handleKeyDown}
+              rows={1}
+              dir="auto"
+              enterKeyHint="send"
+              placeholder={activeAction?.hint ?? DEFAULT_PLACEHOLDER}
+              style={{ outline: "none", boxShadow: "none" }}
+              className="max-h-40 flex-1 resize-none bg-transparent py-2 text-sm leading-6 text-text placeholder:text-text-subtle"
+            />
 
-          <button
-            type="button"
-            onClick={() => void handleSend()}
-            disabled={!canSend}
-            aria-label="ارسال"
-            className="flex h-10 w-10 shrink-0 items-center justify-center rounded-full bg-primary text-background transition disabled:cursor-not-allowed disabled:opacity-40"
-          >
-            <SendIcon />
-          </button>
+            <button
+              type="button"
+              disabled
+              aria-label="ورودی صوتی"
+              className="flex h-9 w-9 shrink-0 items-center justify-center text-text-subtle opacity-40"
+            >
+              <MicIcon />
+            </button>
+
+            <button
+              type="button"
+              onClick={() => void handleSend()}
+              disabled={!canSend}
+              aria-label="ارسال"
+              className="flex h-10 w-10 shrink-0 items-center justify-center rounded-full bg-primary text-background transition disabled:cursor-not-allowed disabled:opacity-40"
+            >
+              <SendIcon />
+            </button>
+          </div>
         </div>
       </footer>
     </div>
