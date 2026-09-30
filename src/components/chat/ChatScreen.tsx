@@ -46,7 +46,7 @@ const QUICK_ACTIONS: readonly QuickAction[] = [
   {
     id: "web",
     label: "جستجو در وب",
-    hint: "چه چیزی را در وب جستجو کنم؟",
+    hint: "چه چیزی را جستجو کنم؟",
     enabled: false,
     highlight: true,
     icon: <SearchIcon />,
@@ -61,7 +61,7 @@ const QUICK_ACTIONS: readonly QuickAction[] = [
   {
     id: "learn",
     label: "کمک آموزشی",
-    hint: "چه موضوعی را می‌خواهی یاد بگیری؟",
+    hint: "چه چیزی یاد بگیریم؟",
     enabled: true,
     icon: <LearnIcon />,
   },
@@ -75,7 +75,7 @@ const QUICK_ACTIONS: readonly QuickAction[] = [
   {
     id: "property",
     label: "جستجوی ملک",
-    hint: "دنبال چه ملکی هستی؟ شهر، متراژ، بودجه...",
+    hint: "دنبال چه ملکی هستی؟",
     enabled: true,
     icon: <HomeIcon />,
   },
@@ -154,7 +154,7 @@ export default function ChatScreen() {
 
     element.style.height = "auto";
     element.style.height = `${Math.min(element.scrollHeight, 160)}px`;
-  }, [draft]);
+  }, [draft, activeId]);
 
   useEffect(() => {
     bottomRef.current?.scrollIntoView({ behavior: "smooth", block: "end" });
@@ -192,7 +192,7 @@ export default function ChatScreen() {
     inputRef.current?.focus();
   };
 
-  const handleNewChat = () => {
+  const handleBack = () => {
     if (chatHistoryPushedRef.current) {
       window.history.back();
       return;
@@ -232,11 +232,12 @@ export default function ChatScreen() {
         {hasMessages ? (
           <button
             type="button"
-            onClick={handleNewChat}
+            onClick={handleBack}
             aria-label="بازگشت به صفحه اصلی"
-            className="flex h-10 w-10 items-center justify-center rounded-full text-text-subtle transition-colors hover:text-primary"
+            className="md-glass flex h-10 items-center gap-2 rounded-full px-4 text-sm text-primary transition-colors hover:border-[rgba(57,255,136,0.4)]"
           >
-            <NewChatIcon />
+            <span>بازگشت</span>
+            <BackIcon />
           </button>
         ) : (
           <span className="h-10 w-10" />
@@ -278,7 +279,7 @@ export default function ChatScreen() {
           </ul>
         ) : (
           <div className="flex min-h-full flex-col items-center justify-between gap-3 pb-2 text-center">
-            <div className="flex flex-col items-center gap-3">
+            <div className="-mt-4 flex flex-col items-center gap-3">
               <div
                 style={{
                   WebkitMaskImage: DIAMOND_FADE_MASK,
@@ -390,7 +391,7 @@ export default function ChatScreen() {
               enterKeyHint="send"
               placeholder={activeAction?.hint ?? DEFAULT_PLACEHOLDER}
               style={{ outline: "none", boxShadow: "none" }}
-              className="max-h-40 flex-1 resize-none bg-transparent py-2 text-sm leading-6 text-text placeholder:text-text-subtle"
+              className="max-h-40 min-w-0 flex-1 resize-none bg-transparent py-2 text-sm leading-6 text-text placeholder:text-text-subtle"
             />
 
             <button
@@ -466,11 +467,11 @@ function SignOutIcon() {
   );
 }
 
-function NewChatIcon() {
+function BackIcon() {
   return (
     <svg {...iconProps()}>
-      <path d="M12 5v14" />
       <path d="M5 12h14" />
+      <path d="m13 6 6 6-6 6" />
     </svg>
   );
 }
