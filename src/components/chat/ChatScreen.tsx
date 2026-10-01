@@ -105,7 +105,9 @@ export default function ChatScreen() {
 
   const [draft, setDraft] = useState("");
   const [activeId, setActiveId] = useState<string | null>(null);
+  const [viewportHeight, setViewportHeight] = useState<number | null>(null);
   const inputRef = useRef<HTMLTextAreaElement | null>(null);
+  const mainRef = useRef<HTMLElement | null>(null);
   const bottomRef = useRef<HTMLDivElement | null>(null);
   const chatHistoryPushedRef = useRef(false);
 
@@ -114,6 +116,41 @@ export default function ChatScreen() {
 
   const activeAction =
     QUICK_ACTIONS.find((action) => action.id === activeId) ?? null;
+
+  useEffect(() => {
+    const viewport = window.visualViewport;
+
+    if (!viewport) {
+      return;
+    }
+
+    const update = () => {
+      setViewportHeight(viewport.height);
+      window.scrollTo(0, 0);
+    };
+
+    update();
+
+    viewport.addEventListener("resize", update);
+    viewport.addEventListener("scroll", update);
+
+    return () => {
+      viewport.removeEventListener("resize", update);
+      viewport.removeEventListener("scroll", update);
+    };
+  }, []);
+
+  useEffect(() => {
+    if (hasMessages) {
+      return;
+    }
+
+    const element = mainRef.current;
+
+    if (element) {
+      element.scrollTop = element.scrollHeight;
+    }
+  }, [viewportHeight, hasMessages]);
 
   useEffect(() => {
     if (hasMessages && !chatHistoryPushedRef.current) {
@@ -210,7 +247,9 @@ export default function ChatScreen() {
   return (
     <div
       className="relative flex flex-col overflow-hidden"
-      style={{ height: "100dvh" }}
+      style={{
+        height: viewportHeight !== null ? `${viewportHeight}px` : "100dvh",
+      }}
     >
       <style>{SEARCH_GLOW_CSS}</style>
 
@@ -244,7 +283,7 @@ export default function ChatScreen() {
         )}
       </header>
 
-      <main className="z-10 flex-1 overflow-y-auto px-4">
+      <main ref={mainRef} className="z-10 flex-1 overflow-y-auto px-4">
         {hasMessages ? (
           <ul dir="ltr" className="flex flex-col gap-3 py-4">
             {messages.map((message) => (
