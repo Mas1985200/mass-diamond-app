@@ -27,6 +27,7 @@ const ERROR_MESSAGES: Record<ChatErrorCode, string> = {
 
 const DEFAULT_PLACEHOLDER = "چطور می‌تونم کمکت کنم؟";
 const STICK_THRESHOLD_PX = 80;
+const SEND_IMAGE_SRC = "/send-diamond-full.png";
 
 interface QuickAction {
   readonly id: string;
@@ -349,21 +350,24 @@ export default function ChatScreen() {
         {hasMessages ? (
           <ul
             dir="ltr"
-            className="mx-auto flex w-full max-w-2xl flex-col gap-6 py-4"
+            className="mx-auto flex w-full max-w-2xl flex-col gap-5 py-4"
           >
             {messages.map((message) =>
               message.role === "user" ? (
                 <li key={message.id} className="flex justify-end">
                   <div
                     dir="auto"
-                    className="max-w-[85%] whitespace-pre-wrap break-words rounded-2xl bg-primary px-4 py-2.5 text-[15px] leading-7 text-background"
+                    className="max-w-[85%] whitespace-pre-wrap break-words rounded-2xl border border-[rgba(57,255,136,0.35)] bg-[rgba(57,255,136,0.08)] px-4 py-2.5 text-[15px] leading-7 text-text"
                   >
                     {message.content}
                   </div>
                 </li>
               ) : (
-                <li key={message.id} className="flex w-full justify-start">
-                  <div className="w-full px-1 text-[15px] leading-8 text-text">
+                <li key={message.id} className="flex w-full items-start gap-2">
+                  <span className="mt-1 shrink-0">
+                    <DiamondMark size={28} />
+                  </span>
+                  <div className="min-w-0 flex-1 px-1 text-[15px] leading-7 text-text">
                     <MarkdownText text={message.content} />
                   </div>
                 </li>
@@ -371,8 +375,14 @@ export default function ChatScreen() {
             )}
 
             {showThinking && (
-              <li className="flex justify-start px-1" aria-live="polite">
-                <div className="flex items-center gap-1.5 py-2" dir="ltr">
+              <li
+                className="flex w-full items-center gap-2"
+                aria-live="polite"
+              >
+                <span className="shrink-0">
+                  <DiamondMark size={28} />
+                </span>
+                <div className="flex items-center gap-1.5 px-1 py-2" dir="ltr">
                   <span
                     className="md-thinking-dot h-2 w-2 rounded-full bg-primary"
                     style={{ animationDelay: "0ms" }}
@@ -531,9 +541,14 @@ export default function ChatScreen() {
               onClick={() => void handleSend()}
               disabled={!canSend}
               aria-label="ارسال"
-              className="flex h-10 w-10 shrink-0 items-center justify-center rounded-full bg-primary text-background transition disabled:cursor-not-allowed disabled:opacity-40"
+              className="flex h-10 w-[70px] shrink-0 items-center justify-center transition disabled:cursor-not-allowed disabled:opacity-40"
             >
-              <SendIcon />
+              <img
+                src={SEND_IMAGE_SRC}
+                alt=""
+                draggable={false}
+                className="h-full w-full select-none object-contain"
+              />
             </button>
           </div>
         </div>
@@ -568,14 +583,6 @@ function MicIcon() {
       <rect x="9" y="3" width="6" height="11" rx="3" />
       <path d="M5 11a7 7 0 0 0 14 0" />
       <path d="M12 18v3" />
-    </svg>
-  );
-}
-
-function SendIcon() {
-  return (
-    <svg viewBox="0 0 24 24" fill="currentColor" className="w-5 h-5 -rotate-90">
-      <path d="M3 11.5 20 3l-4.5 17-4-7-7.5-1.5Z" />
     </svg>
   );
 }
