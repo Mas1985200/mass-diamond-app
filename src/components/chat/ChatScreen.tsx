@@ -1,7 +1,9 @@
 import {
+  useCallback,
   useEffect,
   useRef,
   useState,
+  type ChangeEvent,
   type KeyboardEvent,
   type ReactNode,
 } from "react";
@@ -27,6 +29,7 @@ const ERROR_MESSAGES: Record<ChatErrorCode, string> = {
 
 const DEFAULT_PLACEHOLDER = "چطور می‌تونم کمکت کنم؟";
 const STICK_THRESHOLD_PX = 80;
+const RESIZE_GRACE_MS = 400;
 const SEND_IMAGE_SRC = "/send-diamond-full.png";
 
 interface QuickAction {
@@ -405,8 +408,12 @@ export default function ChatScreen() {
   const [showJump, setShowJump] = useState(false);
   const inputRef = useRef<HTMLTextAreaElement | null>(null);
   const mainRef = useRef<HTMLElement | null>(null);
+  const listRef = useRef<HTMLUListElement | null>(null);
   const chatHistoryPushedRef = useRef(false);
   const stickToBottomRef = useRef(true);
+  const lastScrollTopRef = useRef(0);
+  const lastResizeAtRef = useRef(0);
+  const shiftHeldRef = useRef(false);
 
   const hasMessages = messages.length > 0;
   const canSend = draft.trim().length > 0 && !isSending;
@@ -414,6 +421,17 @@ export default function ChatScreen() {
 
   const activeAction =
     QUICK_ACTIONS.find((action) => action.id === activeId) ?? null;
+
+  const scrollToBottom = useCallback((): void => {
+    const element = mainRef.current;
+
+    if (!element) {
+      return;
+    }
+
+    element.scrollTop = element.scrollHeight;
+    lastScrollTopRef.current = element.scrollTop;
+  }, []);
 
   useEffect(() => {
     const viewport = window.visualViewport;
@@ -423,6 +441,7 @@ export default function ChatScreen() {
     }
 
     const update = () => {
+      lastResizeAtRef.current = Date.now();
       setViewportHeight(viewport.height);
       window.scrollTo(0, 0);
     };
@@ -459,6 +478,7 @@ export default function ChatScreen() {
     if (!hasMessages) {
       chatHistoryPushedRef.current = false;
       stickToBottomRef.current = true;
+      lastScrollTopRef.current = 0;
       setShowJump(false);
     }
   }, [hasMessages]);
@@ -498,12 +518,57 @@ export default function ChatScreen() {
       return;
     }
 
-    const element = mainRef.current;
+    scrollToBottom();
 
-    if (element) {
-      element.scrollTop = element.scrollHeight;
+    const frame = requestAnimationFrame(() => {
+      if (stickToBottomRef.current) {
+        scrollToBottom();
+      }
+    });
+
+    return () => {
+      cancelAnimationFrame(frame);
+    };
+  }, [
+    messages,
+    showThinking,
+    error,
+    hasMessages,
+    viewportHeight,
+    scrollToBottom,
+  ]);
+
+  useEffect(() => {
+    if (!hasMessages || typeof ResizeObserver === "undefined") {
+      return;
     }
-  }, [messages, showThinking, error, hasMessages, viewportHeight]);
+
+    const main = mainRef.current;
+    const list = listRef.current;
+
+    if (!main || !list) {
+      return;
+    }
+
+    const observer = new ResizeObserver((entries) => {
+      for (const entry of entries) {
+        if (entry.target === main) {
+          lastResizeAtRef.current = Date.now();
+        }
+      }
+
+      if (stickToBottomRef.current) {
+        scrollToBottom();
+      }
+    });
+
+    observer.observe(main);
+    observer.observe(list);
+
+    return () => {
+      observer.disconnect();
+    };
+  }, [hasMessages, scrollToBottom]);
 
   const handleScroll = () => {
     const element = mainRef.current;
@@ -512,27 +577,45 @@ export default function ChatScreen() {
       return;
     }
 
+    const previousTop = lastScrollTopRef.current;
+    const currentTop = element.scrollTop;
+
+    lastScrollTopRef.current = currentTop;
+
     const distance =
-      element.scrollHeight - element.scrollTop - element.clientHeight;
-    const atBottom = distance < STICK_THRESHOLD_PX;
+      element.scrollHeight - currentTop - element.clientHeight;
 
-    stickToBottomRef.current = atBottom;
-    setShowJump(!atBottom);
-  };
+    if (distance < STICK_THRESHOLD_PX) {
+      stickToBottomRef.current = true;
+      setShowJump(false);
+      return;
+    }
 
-  const handleJumpToBottom = () => {
-    const element = mainRef.current;
+    const scrolledUp = currentTop < previousTop - 1;
+    const resizedRecently =
+      Date.now() - lastResizeAtRef.current < RESIZE_GRACE_MS;
 
-    stickToBottomRef.current = true;
-    setShowJump(false);
+    if (scrolledUp && !resizedRecently) {
+      stickToBottomRef.current = false;
+      setShowJump(true);
+      return;
+    }
 
-    if (element) {
-      element.scrollTop = element.scrollHeight;
+    if (stickToBottomRef.current) {
+      scrollToBottom();
+    } else {
+      setShowJump(true);
     }
   };
 
-  const handleSend = async () => {
-    const text = draft.trim();
+  const handleJumpToBottom = () => {
+    stickToBottomRef.current = true;
+    setShowJump(false);
+    scrollToBottom();
+  };
+
+  const submit = async (raw: string) => {
+    const text = raw.trim();
 
     if (!text || isSending) {
       return;
@@ -545,15 +628,41 @@ export default function ChatScreen() {
     await sendMessage(text);
   };
 
+  const handleSend = async () => {
+    await submit(draft);
+  };
+
+  const handleChange = (event: ChangeEvent<HTMLTextAreaElement>) => {
+    const native = event.nativeEvent as InputEvent;
+
+    if (native.inputType === "insertLineBreak" && !shiftHeldRef.current) {
+      const { value, selectionStart } = event.target;
+      const cut = selectionStart - 1;
+      const cleaned =
+        cut >= 0 && value[cut] === "\n"
+          ? value.slice(0, cut) + value.slice(cut + 1)
+          : value;
+
+      void submit(cleaned);
+      return;
+    }
+
+    setDraft(event.target.value);
+  };
+
   const handleKeyDown = (event: KeyboardEvent<HTMLTextAreaElement>) => {
-    if (
-      event.key === "Enter" &&
-      !event.shiftKey &&
-      !event.nativeEvent.isComposing
-    ) {
+    shiftHeldRef.current = event.shiftKey;
+
+    const isEnter = event.key === "Enter" || event.keyCode === 13;
+
+    if (isEnter && !event.shiftKey && !event.nativeEvent.isComposing) {
       event.preventDefault();
       void handleSend();
     }
+  };
+
+  const handleKeyUp = (event: KeyboardEvent<HTMLTextAreaElement>) => {
+    shiftHeldRef.current = event.shiftKey;
   };
 
   const handleQuickAction = (action: QuickAction) => {
@@ -626,6 +735,7 @@ export default function ChatScreen() {
       >
         {hasMessages ? (
           <ul
+            ref={listRef}
             dir="ltr"
             className="mx-auto flex w-full max-w-2xl flex-col gap-5 py-4"
           >
@@ -797,8 +907,9 @@ export default function ChatScreen() {
             <textarea
               ref={inputRef}
               value={draft}
-              onChange={(event) => setDraft(event.target.value)}
+              onChange={handleChange}
               onKeyDown={handleKeyDown}
+              onKeyUp={handleKeyUp}
               rows={1}
               dir="auto"
               enterKeyHint="send"
