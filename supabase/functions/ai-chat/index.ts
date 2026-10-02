@@ -186,6 +186,34 @@ function safeFormat(
   }
 }
 
+function persianDateText(now: Date, zone: string): string {
+  try {
+    const parts = new Intl.DateTimeFormat("fa-IR-u-ca-persian", {
+      timeZone: zone,
+      weekday: "long",
+      day: "numeric",
+      month: "long",
+      year: "numeric",
+    }).formatToParts(now);
+
+    const pick = (type: string): string =>
+      parts.find((part) => part.type === type)?.value ?? "";
+
+    const weekday = pick("weekday");
+    const core = [pick("day"), pick("month"), pick("year")]
+      .filter(Boolean)
+      .join(" ");
+
+    if (!core) {
+      return "";
+    }
+
+    return weekday ? `${weekday}، ${core}` : core;
+  } catch {
+    return "";
+  }
+}
+
 function normalizeForIntent(text: string): string {
   return text
     .replace(/\u200c/g, " ")
@@ -197,40 +225,60 @@ function normalizeForIntent(text: string): string {
     .toLowerCase();
 }
 
-const DATE_TIME_PATTERNS: readonly RegExp[] = [
+const TIME_PATTERNS: readonly RegExp[] = [
   /ساعت\s*(الان|الآن|اکنون)/,
   /ساعت\s*چنده/,
   /ساعت\s*چند\s*(است|هست|شده)/,
-  /(الان|الآن|اکنون)\s*(ساعت|تاریخ|چه\s*ساعت|چه\s*روز)/,
+  /(الان|الآن|اکنون)\s*(ساعت|چه\s*ساعت)/,
+  /\bwhat\s+time\b(?!\s+(complexity|zone|format|limit))/,
+  /\bwhat('?s|\s+is)?\s+(the\s+)?(current\s+)?time\b(?!\s+(complexity|of|format|zone|limit))/,
+  /\bcurrent\s+time\b/,
+];
+
+const DATE_PATTERNS: readonly RegExp[] = [
   /چند\s*شنبه/,
   /چندمه/,
   /چندم\s*(است|هست)/,
   /امروز\s*چه\s*روز/,
   /امروز\s*چندم/,
+  /امروز\s*چنده/,
   /چه\s*روزیه/,
+  /چه\s*روزی\s*(است|هست)/,
+  /(الان|الآن|اکنون)\s*(تاریخ|چه\s*روز)/,
   /تاریخ\s*(امروز|الان|الآن)/,
-  /\bwhat\s+time\b/,
-  /\bwhat('?s|\s+is)?\s+(the\s+)?(current\s+)?(time|date)\b(?!\s+(complexity|of|format|zone|limit))/,
   /\bwhat\s+day\b/,
-  /\bcurrent\s+(time|date)\b/,
+  /\bwhat('?s|\s+is)?\s+(the\s+)?(current\s+)?(today'?s\s+)?date\b(?!\s+(of|format|picker))/,
+  /\bcurrent\s+date\b/,
   /\btoday'?s\s+date\b/,
+  /\bwhat\s+is\s+today\b/,
 ];
 
-function detectDateTimeIntent(message: string): "fa" | "en" | null {
+type DateTimeIntent = {
+  readonly kind: "time" | "date";
+  readonly lang: "fa" | "en";
+};
+
+function detectDateTimeIntent(message: string): DateTimeIntent | null {
   const normalized = normalizeForIntent(message);
 
   if (normalized.length > 80 || normalized.split(" ").length > 9) {
     return null;
   }
 
-  if (!DATE_TIME_PATTERNS.some((pattern) => pattern.test(normalized))) {
-    return null;
+  const lang: "fa" | "en" = /[\u0600-\u06FF]/.test(message) ? "fa" : "en";
+
+  if (TIME_PATTERNS.some((pattern) => pattern.test(normalized))) {
+    return { kind: "time", lang };
   }
 
-  return /[\u0600-\u06FF]/.test(message) ? "fa" : "en";
+  if (DATE_PATTERNS.some((pattern) => pattern.test(normalized))) {
+    return { kind: "date", lang };
+  }
+
+  return null;
 }
 
-function buildDateTimeReply(
+function buildTimeReply(
   now: Date,
   timeZone: string | null,
   lang: "fa" | "en",
@@ -247,17 +295,7 @@ function buildDateTimeReply(
       now,
     );
 
-    const date = safeFormat(
-      "fa-IR-u-ca-persian",
-      {
-        timeZone: zone,
-        weekday: "long",
-        day: "numeric",
-        month: "long",
-        year: "numeric",
-      },
-      now,
-    );
+    const date = persianDateText(now, zone);
 
     sentence = date
       ? `الان ساعت ${time} است و امروز ${date} ⏰`
@@ -293,6 +331,60 @@ function buildDateTimeReply(
   }
 
   return `${sentence}\n\n${marker}`;
+}
+
+function buildDateReply(
+  now: Date,
+  timeZone: string | null,
+  lang: "fa" | "en",
+): string {
+  const zone = timeZone ?? "UTC";
+
+  if (lang === "fa") {
+    const date = persianDateText(now, zone);
+
+    const gregorian = safeFormat(
+      "fa-IR-u-ca-gregory",
+      { timeZone: zone, day: "numeric", month: "long", year: "numeric" },
+      now,
+    );
+
+    let text = date
+      ? `امروز **${date}** است 📅`
+      : `امروز ${now.toISOString().slice(0, 10)} است 📅`;
+
+    if (gregorian) {
+      text += `\n(${gregorian})`;
+    }
+
+    if (!timeZone) {
+      text +=
+        "\n(بر اساس UTC؛ تاریخ محلی شما ممکن است یک روز فرق کند)";
+    }
+
+    return text;
+  }
+
+  const date =
+    safeFormat(
+      "en-US",
+      {
+        timeZone: zone,
+        weekday: "long",
+        month: "long",
+        day: "numeric",
+        year: "numeric",
+      },
+      now,
+    ) || now.toISOString().slice(0, 10);
+
+  let text = `Today is **${date}** 📅`;
+
+  if (!timeZone) {
+    text += "\n(UTC; your local date may differ by a day)";
+  }
+
+  return text;
 }
 
 async function* singleChunk(
@@ -1111,7 +1203,7 @@ Deno.serve(async (request: Request): Promise<Response> => {
 
     const timeZone = resolveTimeZone(body.timeZone);
     const now = new Date();
-    const dateTimeLang = detectDateTimeIntent(message);
+    const dateTimeIntent = detectDateTimeIntent(message);
 
     const aiMessages: AIMessage[] = [
       {
@@ -1131,9 +1223,16 @@ Deno.serve(async (request: Request): Promise<Response> => {
     let opened: StreamOpenResult;
 
     try {
-      opened = dateTimeLang
-        ? createLocalResult(buildDateTimeReply(now, timeZone, dateTimeLang))
-        : await openStream(aiMessages, master.signal);
+      if (dateTimeIntent) {
+        const localText =
+          dateTimeIntent.kind === "time"
+            ? buildTimeReply(now, timeZone, dateTimeIntent.lang)
+            : buildDateReply(now, timeZone, dateTimeIntent.lang);
+
+        opened = createLocalResult(localText);
+      } else {
+        opened = await openStream(aiMessages, master.signal);
+      }
     } catch (error) {
       clearTimeout(totalTimer);
       throw error;
