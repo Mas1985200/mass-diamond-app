@@ -10,6 +10,7 @@ import { supabase } from "../../lib/supabase";
 import { useChat } from "../../hooks/useChat";
 import type { ChatErrorCode } from "../../lib/chatClient";
 import DiamondMark from "../DiamondMark";
+import MarkdownText from "./MarkdownText";
 
 const ERROR_MESSAGES: Record<ChatErrorCode, string> = {
   AUTH_REQUIRED: "نشست شما منقضی شده است. لطفاً دوباره وارد شوید.",
@@ -25,6 +26,7 @@ const ERROR_MESSAGES: Record<ChatErrorCode, string> = {
 };
 
 const DEFAULT_PLACEHOLDER = "چطور می‌تونم کمکت کنم؟";
+const STICK_THRESHOLD_PX = 80;
 
 interface QuickAction {
   readonly id: string;
@@ -94,25 +96,43 @@ const SEARCH_GLOW_CSS = `
   border-color: rgba(57,255,136,0.55);
   animation: md-search-glow 2.6s ease-in-out infinite;
 }
+@keyframes md-thinking {
+  0%, 80%, 100% { opacity: 0.25; transform: scale(0.85); }
+  40% { opacity: 1; transform: scale(1); }
+}
+.md-thinking-dot {
+  animation: md-thinking 1.2s ease-in-out infinite;
+}
 @media (prefers-reduced-motion: reduce) {
   .md-search-highlight { animation: none; }
+  .md-thinking-dot { animation: none; opacity: 0.7; }
 }
 `;
 
 export default function ChatScreen() {
-  const { messages, isSending, error, canRetry, sendMessage, retry, reset } =
-    useChat();
+  const {
+    messages,
+    isSending,
+    isStreaming,
+    error,
+    canRetry,
+    sendMessage,
+    retry,
+    reset,
+  } = useChat();
 
   const [draft, setDraft] = useState("");
   const [activeId, setActiveId] = useState<string | null>(null);
   const [viewportHeight, setViewportHeight] = useState<number | null>(null);
+  const [showJump, setShowJump] = useState(false);
   const inputRef = useRef<HTMLTextAreaElement | null>(null);
   const mainRef = useRef<HTMLElement | null>(null);
-  const bottomRef = useRef<HTMLDivElement | null>(null);
   const chatHistoryPushedRef = useRef(false);
+  const stickToBottomRef = useRef(true);
 
   const hasMessages = messages.length > 0;
   const canSend = draft.trim().length > 0 && !isSending;
+  const showThinking = isSending && !isStreaming;
 
   const activeAction =
     QUICK_ACTIONS.find((action) => action.id === activeId) ?? null;
@@ -160,6 +180,8 @@ export default function ChatScreen() {
 
     if (!hasMessages) {
       chatHistoryPushedRef.current = false;
+      stickToBottomRef.current = true;
+      setShowJump(false);
     }
   }, [hasMessages]);
 
@@ -194,8 +216,42 @@ export default function ChatScreen() {
   }, [draft, activeId]);
 
   useEffect(() => {
-    bottomRef.current?.scrollIntoView({ behavior: "smooth", block: "end" });
-  }, [messages, isSending, error]);
+    if (!hasMessages || !stickToBottomRef.current) {
+      return;
+    }
+
+    const element = mainRef.current;
+
+    if (element) {
+      element.scrollTop = element.scrollHeight;
+    }
+  }, [messages, showThinking, error, hasMessages, viewportHeight]);
+
+  const handleScroll = () => {
+    const element = mainRef.current;
+
+    if (!element || !hasMessages) {
+      return;
+    }
+
+    const distance =
+      element.scrollHeight - element.scrollTop - element.clientHeight;
+    const atBottom = distance < STICK_THRESHOLD_PX;
+
+    stickToBottomRef.current = atBottom;
+    setShowJump(!atBottom);
+  };
+
+  const handleJumpToBottom = () => {
+    const element = mainRef.current;
+
+    stickToBottomRef.current = true;
+    setShowJump(false);
+
+    if (element) {
+      element.scrollTop = element.scrollHeight;
+    }
+  };
 
   const handleSend = async () => {
     const text = draft.trim();
@@ -204,6 +260,8 @@ export default function ChatScreen() {
       return;
     }
 
+    stickToBottomRef.current = true;
+    setShowJump(false);
     setDraft("");
     setActiveId(null);
     await sendMessage(text);
@@ -283,38 +341,53 @@ export default function ChatScreen() {
         )}
       </header>
 
-      <main ref={mainRef} className="z-10 flex-1 overflow-y-auto px-4">
+      <main
+        ref={mainRef}
+        onScroll={handleScroll}
+        className="z-10 flex-1 overflow-y-auto px-4"
+      >
         {hasMessages ? (
-          <ul dir="ltr" className="flex flex-col gap-3 py-4">
-            {messages.map((message) => (
-              <li
-                key={message.id}
-                className={`flex ${
-                  message.role === "user" ? "justify-end" : "justify-start"
-                }`}
-              >
-                <div
-                  dir="auto"
-                  className={`max-w-[85%] whitespace-pre-wrap break-words rounded-2xl px-4 py-3 text-sm leading-7 ${
-                    message.role === "user"
-                      ? "bg-primary text-background"
-                      : "md-glass text-text"
-                  }`}
-                >
-                  {message.content}
-                </div>
-              </li>
-            ))}
+          <ul
+            dir="ltr"
+            className="mx-auto flex w-full max-w-2xl flex-col gap-6 py-4"
+          >
+            {messages.map((message) =>
+              message.role === "user" ? (
+                <li key={message.id} className="flex justify-end">
+                  <div
+                    dir="auto"
+                    className="max-w-[85%] whitespace-pre-wrap break-words rounded-2xl bg-primary px-4 py-2.5 text-[15px] leading-7 text-background"
+                  >
+                    {message.content}
+                  </div>
+                </li>
+              ) : (
+                <li key={message.id} className="flex w-full justify-start">
+                  <div className="w-full px-1 text-[15px] leading-8 text-text">
+                    <MarkdownText text={message.content} />
+                  </div>
+                </li>
+              ),
+            )}
 
-            {isSending && (
-              <li className="flex justify-start" aria-live="polite">
-                <div className="md-glass animate-pulse rounded-2xl px-4 py-3 text-sm text-text-subtle">
-                  ...
+            {showThinking && (
+              <li className="flex justify-start px-1" aria-live="polite">
+                <div className="flex items-center gap-1.5 py-2" dir="ltr">
+                  <span
+                    className="md-thinking-dot h-2 w-2 rounded-full bg-primary"
+                    style={{ animationDelay: "0ms" }}
+                  />
+                  <span
+                    className="md-thinking-dot h-2 w-2 rounded-full bg-primary"
+                    style={{ animationDelay: "180ms" }}
+                  />
+                  <span
+                    className="md-thinking-dot h-2 w-2 rounded-full bg-primary"
+                    style={{ animationDelay: "360ms" }}
+                  />
                 </div>
               </li>
             )}
-
-            <div ref={bottomRef} />
           </ul>
         ) : (
           <div className="flex min-h-full flex-col items-center justify-between gap-3 pb-2 text-center">
@@ -367,7 +440,18 @@ export default function ChatScreen() {
         )}
       </main>
 
-      <footer className="z-10 px-4 pb-4 pt-2">
+      <footer className="relative z-10 px-4 pb-4 pt-2">
+        {showJump && hasMessages && (
+          <button
+            type="button"
+            onClick={handleJumpToBottom}
+            aria-label="رفتن به آخرین پیام"
+            className="md-glass absolute -top-12 left-1/2 flex h-9 w-9 -translate-x-1/2 items-center justify-center rounded-full text-primary transition-colors hover:border-[rgba(57,255,136,0.4)]"
+          >
+            <DownIcon />
+          </button>
+        )}
+
         {error && (
           <div
             role="alert"
@@ -511,6 +595,15 @@ function BackIcon() {
     <svg {...iconProps()}>
       <path d="M5 12h14" />
       <path d="m13 6 6 6-6 6" />
+    </svg>
+  );
+}
+
+function DownIcon() {
+  return (
+    <svg {...iconProps()}>
+      <path d="M12 5v14" />
+      <path d="m6 13 6 6 6-6" />
     </svg>
   );
 }
