@@ -104,11 +104,288 @@ const SEARCH_GLOW_CSS = `
 .md-thinking-dot {
   animation: md-thinking 1.2s ease-in-out infinite;
 }
+.md-prose { width: 100%; }
+.md-prose ol,
+.md-prose ul {
+  padding-inline-start: 1.5rem !important;
+  margin-inline-start: 0 !important;
+  margin-block: 0.4rem !important;
+}
+.md-prose li {
+  padding-inline-start: 0.1rem !important;
+  margin-block: 0.2rem !important;
+}
+.md-prose p,
+.md-prose li {
+  line-height: 1.75 !important;
+}
+.md-prose p {
+  margin-block: 0.4rem !important;
+}
 @media (prefers-reduced-motion: reduce) {
   .md-search-highlight { animation: none; }
   .md-thinking-dot { animation: none; opacity: 0.7; }
 }
 `;
+
+const CLOCK_RE =
+  /:::md-clock~([^~\s]+)~([A-Za-z0-9_\/+-]+)~(fa|en):::/g;
+const PENDING_MARKER_RE = /:{2,3}(?:m[^\n]*)?$/;
+
+type ContentPart =
+  | { readonly kind: "text"; readonly text: string }
+  | {
+      readonly kind: "clock";
+      readonly iso: string;
+      readonly zone: string;
+      readonly lang: "fa" | "en";
+    };
+
+function splitAssistantContent(raw: string): ContentPart[] {
+  const parts: ContentPart[] = [];
+  let cursor = 0;
+
+  for (const match of raw.matchAll(CLOCK_RE)) {
+    const index = match.index ?? 0;
+    const before = raw.slice(cursor, index).trim();
+
+    if (before) {
+      parts.push({ kind: "text", text: before });
+    }
+
+    parts.push({
+      kind: "clock",
+      iso: match[1],
+      zone: match[2],
+      lang: match[3] === "en" ? "en" : "fa",
+    });
+
+    cursor = index + match[0].length;
+  }
+
+  const rest = raw.slice(cursor).replace(PENDING_MARKER_RE, "").trim();
+
+  if (rest) {
+    parts.push({ kind: "text", text: rest });
+  }
+
+  return parts;
+}
+
+interface ClockInfo {
+  readonly hours: number;
+  readonly minutes: number;
+  readonly seconds: number;
+  readonly digital: string;
+  readonly primaryDate: string;
+  readonly secondaryDate: string;
+  readonly zone: string;
+}
+
+function describeClock(
+  iso: string,
+  zone: string,
+  lang: "fa" | "en",
+): ClockInfo | null {
+  try {
+    const date = new Date(iso);
+
+    if (Number.isNaN(date.getTime())) {
+      return null;
+    }
+
+    let timeZone = zone;
+
+    try {
+      new Intl.DateTimeFormat("en-US", { timeZone });
+    } catch {
+      timeZone = "UTC";
+    }
+
+    const parts = new Intl.DateTimeFormat("en-GB", {
+      timeZone,
+      hour: "2-digit",
+      minute: "2-digit",
+      second: "2-digit",
+      hourCycle: "h23",
+    }).formatToParts(date);
+
+    const read = (type: string): number =>
+      Number(parts.find((part) => part.type === type)?.value ?? "0");
+
+    const digital = new Intl.DateTimeFormat(
+      lang === "fa" ? "fa-IR" : "en-GB",
+      { timeZone, hour: "2-digit", minute: "2-digit", hourCycle: "h23" },
+    ).format(date);
+
+    const primaryDate =
+      lang === "fa"
+        ? new Intl.DateTimeFormat("fa-IR-u-ca-persian", {
+            timeZone,
+            weekday: "long",
+            day: "numeric",
+            month: "long",
+            year: "numeric",
+          }).format(date)
+        : new Intl.DateTimeFormat("en-US", {
+            timeZone,
+            weekday: "long",
+            month: "long",
+            day: "numeric",
+            year: "numeric",
+          }).format(date);
+
+    const secondaryDate =
+      lang === "fa"
+        ? new Intl.DateTimeFormat("fa-IR-u-ca-gregory", {
+            timeZone,
+            day: "numeric",
+            month: "long",
+            year: "numeric",
+          }).format(date)
+        : "";
+
+    return {
+      hours: read("hour"),
+      minutes: read("minute"),
+      seconds: read("second"),
+      digital,
+      primaryDate,
+      secondaryDate,
+      zone: timeZone,
+    };
+  } catch {
+    return null;
+  }
+}
+
+function ClockFace({
+  hours,
+  minutes,
+  seconds,
+}: {
+  readonly hours: number;
+  readonly minutes: number;
+  readonly seconds: number;
+}) {
+  const hourAngle = ((hours % 12) + minutes / 60) * 30;
+  const minuteAngle = (minutes + seconds / 60) * 6;
+  const secondAngle = seconds * 6;
+  const ticks = Array.from({ length: 12 }, (_, index) => index);
+
+  return (
+    <svg
+      viewBox="0 0 100 100"
+      aria-hidden="true"
+      className="h-24 w-24 shrink-0 text-primary"
+      style={{ filter: "drop-shadow(0 0 6px rgba(57,255,136,0.35))" }}
+    >
+      <circle
+        cx="50"
+        cy="50"
+        r="46"
+        fill="rgba(57,255,136,0.05)"
+        stroke="currentColor"
+        strokeOpacity="0.6"
+        strokeWidth="1.5"
+      />
+
+      {ticks.map((index) => (
+        <line
+          key={index}
+          x1="50"
+          y1="8"
+          x2="50"
+          y2={index % 3 === 0 ? 16 : 12}
+          stroke="currentColor"
+          strokeOpacity="0.85"
+          strokeWidth={index % 3 === 0 ? 2 : 1}
+          strokeLinecap="round"
+          transform={`rotate(${index * 30} 50 50)`}
+        />
+      ))}
+
+      <line
+        x1="50"
+        y1="50"
+        x2="50"
+        y2="29"
+        stroke="currentColor"
+        strokeWidth="3.2"
+        strokeLinecap="round"
+        transform={`rotate(${hourAngle} 50 50)`}
+      />
+      <line
+        x1="50"
+        y1="50"
+        x2="50"
+        y2="18"
+        stroke="currentColor"
+        strokeWidth="2.2"
+        strokeLinecap="round"
+        transform={`rotate(${minuteAngle} 50 50)`}
+      />
+      <line
+        x1="50"
+        y1="56"
+        x2="50"
+        y2="14"
+        stroke="currentColor"
+        strokeOpacity="0.7"
+        strokeWidth="1"
+        strokeLinecap="round"
+        transform={`rotate(${secondAngle} 50 50)`}
+      />
+      <circle cx="50" cy="50" r="2.6" fill="currentColor" />
+    </svg>
+  );
+}
+
+function ClockCard({
+  iso,
+  zone,
+  lang,
+}: {
+  readonly iso: string;
+  readonly zone: string;
+  readonly lang: "fa" | "en";
+}) {
+  const info = describeClock(iso, zone, lang);
+
+  if (!info) {
+    return null;
+  }
+
+  return (
+    <div
+      dir={lang === "fa" ? "rtl" : "ltr"}
+      className="md-glass my-3 flex w-full max-w-xs items-center gap-4 rounded-2xl px-4 py-3"
+    >
+      <ClockFace
+        hours={info.hours}
+        minutes={info.minutes}
+        seconds={info.seconds}
+      />
+
+      <div className="min-w-0">
+        <div className="text-3xl font-bold leading-none tabular-nums text-primary">
+          {info.digital}
+        </div>
+        <div className="mt-2 text-sm leading-6 text-text">
+          {info.primaryDate}
+        </div>
+        {info.secondaryDate && (
+          <div className="text-xs leading-5 text-text-subtle">
+            {info.secondaryDate}
+          </div>
+        )}
+        <div dir="ltr" className="mt-1 text-[11px] text-text-subtle">
+          {info.zone}
+        </div>
+      </div>
+    </div>
+  );
+}
 
 export default function ChatScreen() {
   const {
@@ -363,25 +640,28 @@ export default function ChatScreen() {
                   </div>
                 </li>
               ) : (
-                <li key={message.id} className="flex w-full items-start gap-2">
-                  <span className="mt-1 shrink-0">
-                    <DiamondMark size={28} />
-                  </span>
-                  <div className="min-w-0 flex-1 px-1 text-[15px] leading-7 text-text">
-                    <MarkdownText text={message.content} />
+                <li key={message.id} className="w-full">
+                  <div className="md-prose w-full px-1 text-[15px] text-text">
+                    {splitAssistantContent(message.content).map(
+                      (part, index) =>
+                        part.kind === "clock" ? (
+                          <ClockCard
+                            key={`clock-${index}`}
+                            iso={part.iso}
+                            zone={part.zone}
+                            lang={part.lang}
+                          />
+                        ) : (
+                          <MarkdownText key={`text-${index}`} text={part.text} />
+                        ),
+                    )}
                   </div>
                 </li>
               ),
             )}
 
             {showThinking && (
-              <li
-                className="flex w-full items-center gap-2"
-                aria-live="polite"
-              >
-                <span className="shrink-0">
-                  <DiamondMark size={28} />
-                </span>
+              <li className="flex w-full justify-start" dir="rtl" aria-live="polite">
                 <div className="flex items-center gap-1.5 px-1 py-2" dir="ltr">
                   <span
                     className="md-thinking-dot h-2 w-2 rounded-full bg-primary"
