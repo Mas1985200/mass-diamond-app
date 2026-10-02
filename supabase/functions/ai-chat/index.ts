@@ -33,6 +33,9 @@ const TOTAL_TIMEOUT_MS = 120_000;
 const UUID_PATTERN =
   /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 
+const CLOCK_MARKER_PATTERN =
+  /:::md-clock~[^~\s]+~[A-Za-z0-9_\/+-]+~(?:fa|en):::/g;
+
 type ChatRequestBody = {
   readonly conversationId?: string;
   readonly message?: string;
@@ -53,7 +56,7 @@ type AIMessage = {
   readonly content: string;
 };
 
-type AIProviderId = "groq" | "gemini";
+type AIProviderId = "groq" | "gemini" | "local";
 
 type StreamOpenSuccess = {
   readonly success: true;
@@ -171,57 +174,198 @@ function resolveTimeZone(candidate: string | undefined): string | null {
   }
 }
 
+function safeFormat(
+  locale: string,
+  options: Intl.DateTimeFormatOptions,
+  date: Date,
+): string {
+  try {
+    return new Intl.DateTimeFormat(locale, options).format(date);
+  } catch {
+    return "";
+  }
+}
+
+function normalizeForIntent(text: string): string {
+  return text
+    .replace(/\u200c/g, " ")
+    .replace(/ي/g, "ی")
+    .replace(/ك/g, "ک")
+    .replace(/[؟?!.،,]/g, " ")
+    .replace(/\s+/g, " ")
+    .trim()
+    .toLowerCase();
+}
+
+const DATE_TIME_PATTERNS: readonly RegExp[] = [
+  /ساعت\s*(الان|الآن|اکنون)/,
+  /ساعت\s*چنده/,
+  /ساعت\s*چند\s*(است|هست|شده)/,
+  /(الان|الآن|اکنون)\s*(ساعت|تاریخ|چه\s*ساعت|چه\s*روز)/,
+  /چند\s*شنبه/,
+  /چندمه/,
+  /چندم\s*(است|هست)/,
+  /امروز\s*چه\s*روز/,
+  /امروز\s*چندم/,
+  /چه\s*روزیه/,
+  /تاریخ\s*(امروز|الان|الآن)/,
+  /\bwhat\s+time\b/,
+  /\bwhat('?s|\s+is)?\s+(the\s+)?(current\s+)?(time|date)\b(?!\s+(complexity|of|format|zone|limit))/,
+  /\bwhat\s+day\b/,
+  /\bcurrent\s+(time|date)\b/,
+  /\btoday'?s\s+date\b/,
+];
+
+function detectDateTimeIntent(message: string): "fa" | "en" | null {
+  const normalized = normalizeForIntent(message);
+
+  if (normalized.length > 80 || normalized.split(" ").length > 9) {
+    return null;
+  }
+
+  if (!DATE_TIME_PATTERNS.some((pattern) => pattern.test(normalized))) {
+    return null;
+  }
+
+  return /[\u0600-\u06FF]/.test(message) ? "fa" : "en";
+}
+
+function buildDateTimeReply(
+  now: Date,
+  timeZone: string | null,
+  lang: "fa" | "en",
+): string {
+  const zone = timeZone ?? "UTC";
+  const marker = `:::md-clock~${now.toISOString()}~${zone}~${lang}:::`;
+
+  let sentence: string;
+
+  if (lang === "fa") {
+    const time = safeFormat(
+      "fa-IR",
+      { timeZone: zone, hour: "2-digit", minute: "2-digit", hourCycle: "h23" },
+      now,
+    );
+
+    const date = safeFormat(
+      "fa-IR-u-ca-persian",
+      {
+        timeZone: zone,
+        weekday: "long",
+        day: "numeric",
+        month: "long",
+        year: "numeric",
+      },
+      now,
+    );
+
+    sentence = date
+      ? `الان ساعت ${time} است و امروز ${date} ⏰`
+      : `الان ساعت ${time} است ⏰`;
+
+    if (!timeZone) {
+      sentence += " (به وقت UTC؛ ساعت محلی شما ممکن است فرق کند)";
+    }
+  } else {
+    const time = safeFormat(
+      "en-GB",
+      { timeZone: zone, hour: "2-digit", minute: "2-digit", hourCycle: "h23" },
+      now,
+    );
+
+    const date = safeFormat(
+      "en-US",
+      {
+        timeZone: zone,
+        weekday: "long",
+        month: "long",
+        day: "numeric",
+        year: "numeric",
+      },
+      now,
+    );
+
+    sentence = `It's ${time} on ${date} ⏰`;
+
+    if (!timeZone) {
+      sentence += " (UTC; your local time may differ)";
+    }
+  }
+
+  return `${sentence}\n\n${marker}`;
+}
+
+async function* singleChunk(
+  text: string,
+): AsyncGenerator<string, void, void> {
+  yield text;
+}
+
+function createLocalResult(text: string): StreamOpenSuccess {
+  return {
+    success: true,
+    provider: "local",
+    model: "clock",
+    chunks: singleChunk(text),
+  };
+}
+
 function buildSystemPrompt(now: Date, timeZone: string | null): string {
   const zone = timeZone ?? "UTC";
 
-  let gregorian = now.toISOString();
-  let persian = "";
+  const gregorian =
+    safeFormat(
+      "en-US",
+      {
+        timeZone: zone,
+        weekday: "long",
+        year: "numeric",
+        month: "long",
+        day: "numeric",
+      },
+      now,
+    ) || now.toISOString();
 
-  try {
-    gregorian = new Intl.DateTimeFormat("en-US", {
+  const persian = safeFormat(
+    "fa-IR-u-ca-persian",
+    {
       timeZone: zone,
       weekday: "long",
       year: "numeric",
       month: "long",
       day: "numeric",
-      hour: "2-digit",
-      minute: "2-digit",
-      hourCycle: "h23",
-    }).format(now);
-  } catch {
-    // Keep the ISO fallback.
-  }
+    },
+    now,
+  );
 
-  try {
-    persian = new Intl.DateTimeFormat("fa-IR-u-ca-persian-nu-latn", {
-      timeZone: zone,
-      weekday: "long",
-      year: "numeric",
-      month: "long",
-      day: "numeric",
-    }).format(now);
-  } catch {
-    persian = "";
-  }
+  const time =
+    safeFormat(
+      "en-GB",
+      { timeZone: zone, hour: "2-digit", minute: "2-digit", hourCycle: "h23" },
+      now,
+    ) || now.toISOString();
 
   const lines: string[] = [
     "You are Mass Diamond, an intelligent, accurate and friendly AI assistant inside the Mass Diamond app.",
     "",
-    `Current date and time: ${gregorian} (time zone: ${zone}).`,
+    "Reference data (authoritative and already converted; never recompute, convert or reformat it yourself):",
+    `- Gregorian date: ${gregorian}`,
   ];
 
   if (persian) {
-    lines.push(`Persian (Solar Hijri) date: ${persian}.`);
+    lines.push(`- Persian (Solar Hijri) date: ${persian}`);
   }
+
+  lines.push(`- Local time: ${time} (time zone: ${zone})`);
 
   if (!timeZone) {
     lines.push(
-      "The user's local time zone is unknown, so when asked for the time, say it is in UTC and that the local time may differ.",
+      "- The user's real time zone is unknown, so if the time is requested, say it is UTC and may differ locally.",
     );
   }
 
   lines.push(
-    "Use this information whenever the user asks about today's date, the day of the week or the time. Never guess a different date. When asked for the date or time, always give the full answer in one consistent format: day of the week, date, and the current time.",
+    "Rules for date and time: mention the date or time ONLY when the user explicitly asks, or when the task truly needs it (an age, a deadline, a countdown). Never mention them in greetings or small talk. When you must state them, copy the reference values exactly.",
     "",
     "Language: always reply in the language of the user's latest message, and keep that language consistent through the whole reply.",
     "",
@@ -229,8 +373,8 @@ function buildSystemPrompt(now: Date, timeZone: string | null): string {
     "- You are warm, friendly and lively, like a smart friend who is genuinely happy to help. You are not a stiff, form-filling bot.",
     "- In Persian, write natural, conversational but polite Persian that matches the user's own register. Avoid stiff bureaucratic phrasing such as 'لطفاً اطلاعات زیر را در اختیار بگذارید'.",
     "- Use emojis naturally: usually 1 to 3 per reply, where they add warmth (a greeting, the start of a section, a closing line). Never put emojis inside code blocks. Skip them for serious topics such as illness, grief, legal or financial risk, errors and complaints.",
-    "- When greeted, greet back briefly and warmly, then invite the user to continue.",
-    "- Be proactive. When asked to create something (an ad, a text, a plan, name ideas), deliver a good first draft right away, then ask at most 1 or 2 short questions to refine it. Never answer with a long questionnaire before delivering something useful.",
+    "- When greeted, greet back briefly and warmly, then invite the user to continue. Do not add facts nobody asked for.",
+    "- Be proactive. When asked to create something (an ad, a text, a plan, name ideas), write a concrete, good first draft IMMEDIATELY using sensible assumptions and clear placeholders. Only after the draft, ask at most 2 short questions to refine it, in one or two lines. Never respond with a list of questions before delivering something useful, and never ask more than 2 questions.",
     "- Start with the answer or the draft itself, with no filler opening.",
     "- When it genuinely helps, end with one short, natural follow-up offer or question. Not in every reply.",
     "",
@@ -672,7 +816,7 @@ async function loadHistory(
 
   return rows.map((row) => ({
     role: row.role,
-    content: row.content,
+    content: row.content.replace(CLOCK_MARKER_PATTERN, "").trim(),
   }));
 }
 
@@ -966,11 +1110,13 @@ Deno.serve(async (request: Request): Promise<Response> => {
     await saveUserMessage(adminClient, user.id, conversationId, message);
 
     const timeZone = resolveTimeZone(body.timeZone);
+    const now = new Date();
+    const dateTimeLang = detectDateTimeIntent(message);
 
     const aiMessages: AIMessage[] = [
       {
         role: "system",
-        content: buildSystemPrompt(new Date(), timeZone),
+        content: buildSystemPrompt(now, timeZone),
       },
       ...history,
       {
@@ -985,7 +1131,9 @@ Deno.serve(async (request: Request): Promise<Response> => {
     let opened: StreamOpenResult;
 
     try {
-      opened = await openStream(aiMessages, master.signal);
+      opened = dateTimeLang
+        ? createLocalResult(buildDateTimeReply(now, timeZone, dateTimeLang))
+        : await openStream(aiMessages, master.signal);
     } catch (error) {
       clearTimeout(totalTimer);
       throw error;
