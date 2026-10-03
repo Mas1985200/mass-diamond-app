@@ -18,6 +18,11 @@ type Block =
       readonly items: readonly string[];
     }
   | { readonly kind: "quote"; readonly text: string }
+  | {
+      readonly kind: "table";
+      readonly header: readonly string[];
+      readonly rows: readonly (readonly string[])[];
+    }
   | { readonly kind: "rule" };
 
 const RULE_PATTERN = /^([-*_])(\s*\1){2,}$/;
@@ -25,6 +30,8 @@ const HEADING_PATTERN = /^(#{1,6})\s+(.+)$/;
 const QUOTE_PATTERN = /^>\s?(.*)$/;
 const BULLET_PATTERN = /^[-*•]\s+(.+)$/;
 const ORDERED_PATTERN = /^[0-9۰-۹]+[.)]\s+(.+)$/;
+const TABLE_SEPARATOR_PATTERN =
+  /^\|?\s*:?-{2,}:?\s*(?:\|\s*:?-{2,}:?\s*)*\|?$/;
 
 const RTL_CHAR = /[\u0590-\u08FF\uFB1D-\uFDFF\uFE70-\uFEFF]/;
 const LTR_CHAR = /[A-Za-z\u00C0-\u024F\u0370-\u03FF\u0400-\u04FF]/;
@@ -46,6 +53,31 @@ function detectDirection(texts: readonly string[]): "rtl" | "ltr" {
   }
 
   return "rtl";
+}
+
+function isTableStart(lines: readonly string[], index: number): boolean {
+  const current = (lines[index] ?? "").trim();
+  const next = (lines[index + 1] ?? "").trim();
+
+  return (
+    current.includes("|") &&
+    next.includes("|") &&
+    TABLE_SEPARATOR_PATTERN.test(next)
+  );
+}
+
+function splitTableRow(line: string): string[] {
+  let body = line.trim();
+
+  if (body.startsWith("|")) {
+    body = body.slice(1);
+  }
+
+  if (body.endsWith("|")) {
+    body = body.slice(0, -1);
+  }
+
+  return body.split("|").map((cell) => cell.trim());
 }
 
 function isBlockStart(trimmed: string): boolean {
@@ -87,6 +119,34 @@ function parseBlocks(source: string): Block[] {
 
       index += 1;
       blocks.push({ kind: "code", code: codeLines.join("\n") });
+      continue;
+    }
+
+    if (isTableStart(lines, index)) {
+      const header = splitTableRow(trimmed);
+      const columns = header.length;
+      const rows: string[][] = [];
+
+      index += 2;
+
+      while (index < lines.length) {
+        const rowLine = (lines[index] ?? "").trim();
+
+        if (rowLine === "" || !rowLine.includes("|")) {
+          break;
+        }
+
+        const cells = splitTableRow(rowLine);
+
+        while (cells.length < columns) {
+          cells.push("");
+        }
+
+        rows.push(cells.slice(0, columns));
+        index += 1;
+      }
+
+      blocks.push({ kind: "table", header, rows });
       continue;
     }
 
@@ -151,7 +211,11 @@ function parseBlocks(source: string): Block[] {
     while (index < lines.length) {
       const current = (lines[index] ?? "").trim();
 
-      if (current === "" || isBlockStart(current)) {
+      if (
+        current === "" ||
+        isBlockStart(current) ||
+        (paragraphLines.length > 0 && isTableStart(lines, index))
+      ) {
         break;
       }
 
@@ -314,6 +378,55 @@ function renderBlock(block: Block, key: string): ReactNode {
               </div>
             );
           })}
+        </div>
+      );
+    }
+
+    case "table": {
+      const direction = detectDirection([
+        ...block.header,
+        ...block.rows.flat(),
+      ]);
+
+      return (
+        <div
+          key={key}
+          dir={direction}
+          className="w-full overflow-x-auto rounded-xl border border-white/10"
+        >
+          <table
+            style={{ direction }}
+            className="w-full border-collapse text-sm leading-6"
+          >
+            <thead>
+              <tr>
+                {block.header.map((cell, cellIndex) => (
+                  <th
+                    key={`${key}-h${cellIndex}`}
+                    style={{ textAlign: "start" }}
+                    className="border-b border-white/10 bg-white/5 px-3 py-2 font-semibold text-text"
+                  >
+                    {renderInline(cell, `${key}-h${cellIndex}`)}
+                  </th>
+                ))}
+              </tr>
+            </thead>
+            <tbody>
+              {block.rows.map((row, rowIndex) => (
+                <tr key={`${key}-r${rowIndex}`}>
+                  {row.map((cell, cellIndex) => (
+                    <td
+                      key={`${key}-r${rowIndex}c${cellIndex}`}
+                      style={{ textAlign: "start" }}
+                      className="min-w-[6.5rem] break-words border-b border-white/5 px-3 py-2 align-top"
+                    >
+                      {renderInline(cell, `${key}-r${rowIndex}c${cellIndex}`)}
+                    </td>
+                  ))}
+                </tr>
+              ))}
+            </tbody>
+          </table>
         </div>
       );
     }
