@@ -19,13 +19,25 @@ export interface ChatFailure {
   readonly retryable: boolean;
 }
 
+export interface ChatLocation {
+  readonly lat: number;
+  readonly lon: number;
+}
+
+export interface SendOptions {
+  readonly location?: ChatLocation;
+}
+
 export interface UseChatResult {
   readonly messages: readonly ChatMessage[];
   readonly isSending: boolean;
   readonly isStreaming: boolean;
   readonly error: ChatFailure | null;
   readonly canRetry: boolean;
-  readonly sendMessage: (text: string) => Promise<boolean>;
+  readonly sendMessage: (
+    text: string,
+    options?: SendOptions,
+  ) => Promise<boolean>;
   readonly retry: () => Promise<void>;
   readonly reset: () => void;
 }
@@ -33,6 +45,7 @@ export interface UseChatResult {
 const FRAME_MS = 15;
 const MAX_CHARS_PER_TICK = 4;
 const BACKLOG_DIVISOR = 120;
+const MARKER_SOURCE = ":::md-(?:clock|card)~[^\\s]*?:::";
 
 function createId(): string {
   return crypto.randomUUID();
@@ -56,6 +69,37 @@ function avoidSplitSurrogate(text: string, index: number): number {
   return code >= 0xd800 && code <= 0xdbff ? index + 1 : index;
 }
 
+function skipMarker(text: string, index: number): number {
+  if (index <= 0 || index >= text.length) {
+    return index;
+  }
+
+  const pattern = new RegExp(MARKER_SOURCE, "g");
+
+  for (const match of text.matchAll(pattern)) {
+    const start = match.index ?? 0;
+    const end = start + match[0].length;
+
+    if (start >= index) {
+      break;
+    }
+
+    if (index < end) {
+      return end;
+    }
+  }
+
+  return index;
+}
+
+function withLocationTag(text: string, location: ChatLocation | null): string {
+  if (!location) {
+    return text;
+  }
+
+  return `${text}\n\n:::md-loc~${location.lat.toFixed(4)}~${location.lon.toFixed(4)}:::`;
+}
+
 export function useChat(): UseChatResult {
   const [messages, setMessages] = useState<ChatMessage[]>([]);
   const [isSending, setIsSending] = useState(false);
@@ -65,6 +109,7 @@ export function useChat(): UseChatResult {
   const conversationIdRef = useRef<string | null>(null);
   const sendingRef = useRef(false);
   const failedTextRef = useRef<string | null>(null);
+  const failedLocationRef = useRef<ChatLocation | null>(null);
   const generationRef = useRef(0);
 
   const abortRef = useRef<AbortController | null>(null);
@@ -129,10 +174,12 @@ export function useChat(): UseChatResult {
         Math.max(1, Math.ceil(backlog / BACKLOG_DIVISOR)),
       );
 
-      const next = avoidSplitSurrogate(
+      const afterSurrogate = avoidSplitSurrogate(
         target,
         Math.min(target.length, shown + amount),
       );
+
+      const next = skipMarker(target, afterSurrogate);
 
       shownRef.current = next;
 
@@ -178,7 +225,11 @@ export function useChat(): UseChatResult {
   }, [stopLoop]);
 
   const dispatchMessage = useCallback(
-    async (text: string, appendUserMessage: boolean): Promise<boolean> => {
+    async (
+      text: string,
+      appendUserMessage: boolean,
+      location: ChatLocation | null,
+    ): Promise<boolean> => {
       if (sendingRef.current) {
         return false;
       }
@@ -189,6 +240,7 @@ export function useChat(): UseChatResult {
       sendingRef.current = true;
       abortRef.current = controller;
       failedTextRef.current = null;
+      failedLocationRef.current = null;
       resetStreamState();
       setIsSending(true);
       setIsStreaming(false);
@@ -203,7 +255,7 @@ export function useChat(): UseChatResult {
 
       try {
         const result = await streamChatMessage({
-          message: text,
+          message: withLocationTag(text, location),
           conversationId: conversationIdRef.current,
           signal: controller.signal,
           onMeta: (meta) => {
@@ -291,6 +343,7 @@ export function useChat(): UseChatResult {
         }
 
         failedTextRef.current = text;
+        failedLocationRef.current = location;
         setError(toFailure(caught));
 
         return false;
@@ -308,14 +361,14 @@ export function useChat(): UseChatResult {
   );
 
   const sendMessage = useCallback(
-    async (raw: string): Promise<boolean> => {
+    async (raw: string, options?: SendOptions): Promise<boolean> => {
       const text = raw.trim();
 
       if (!text) {
         return false;
       }
 
-      return dispatchMessage(text, true);
+      return dispatchMessage(text, true, options?.location ?? null);
     },
     [dispatchMessage],
   );
@@ -327,7 +380,7 @@ export function useChat(): UseChatResult {
       return;
     }
 
-    await dispatchMessage(text, false);
+    await dispatchMessage(text, false, failedLocationRef.current);
   }, [dispatchMessage]);
 
   const reset = useCallback((): void => {
@@ -338,6 +391,7 @@ export function useChat(): UseChatResult {
     resolveDrain();
     conversationIdRef.current = null;
     failedTextRef.current = null;
+    failedLocationRef.current = null;
     sendingRef.current = false;
     setMessages([]);
     setError(null);
