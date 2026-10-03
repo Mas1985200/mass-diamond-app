@@ -238,7 +238,9 @@ function extractLocationTag(message: string): {
 
   return {
     text: message.slice(0, match.index).trim(),
-    location: isValidGeo(lat, lon) ? { lat: round4(lat), lon: round4(lon) } : null,
+    location: isValidGeo(lat, lon)
+      ? { lat: round4(lat), lon: round4(lon) }
+      : null,
   };
 }
 
@@ -301,6 +303,14 @@ function getOptionalEnv(name: string): string | undefined {
   const value = Deno.env.get(name)?.trim();
 
   return value || undefined;
+}
+
+function getTavilyKey(): string | undefined {
+  return (
+    getOptionalEnv("TAVILY_API_KEY") ??
+    getOptionalEnv("TAVILY_KEY") ??
+    getOptionalEnv("TAVILY_API")
+  );
 }
 
 function describeError(error: unknown): string {
@@ -483,12 +493,12 @@ const FIND_PLACE_TOOL: ToolDefinition = {
         query: {
           type: "string",
           description:
-            "What to look for, as specific as possible, for example 'برج میلاد تهران' or 'داروخانه'.",
+            "What to look for, as specific as possible, for example 'برج میلاد تهران' or, for a category, the English word such as 'pharmacy'.",
         },
         near_user: {
           type: "boolean",
           description:
-            "true only when the user wants places near their own position. Requires that the user has shared their location.",
+            "true only when the user wants places near their own position. Requires that the user's location is available.",
         },
       },
       required: ["query"],
@@ -501,7 +511,7 @@ const WEB_SEARCH_TOOL: ToolDefinition = {
   function: {
     name: "web_search",
     description:
-      "Search the web for current or recent information such as news, prices, weather, sports results, or anything that may have changed after your training.",
+      "Search the web for current or recent information such as news, prices and exchange rates, weather, sports results, or anything that may have changed after your training.",
     parameters: {
       type: "object",
       properties: {
@@ -537,6 +547,84 @@ function parseToolArguments(raw: string): Record<string, unknown> {
   } catch {
     return {};
   }
+}
+
+function buildReadyAnswer(
+  lang: Lang,
+  showClock: boolean,
+  placeName: string,
+  now: Date,
+  zone: string,
+  unknownUserZone: boolean,
+): string {
+  let text: string;
+
+  if (lang === "fa") {
+    const timeFa = safeFormat(
+      "fa-IR",
+      { timeZone: zone, hour: "2-digit", minute: "2-digit", hourCycle: "h23" },
+      now,
+    );
+
+    if (showClock) {
+      text = placeName
+        ? `در ${placeName} ساعت ${timeFa} است`
+        : `ساعت ${timeFa} است`;
+    } else {
+      const persian = persianDateText(now, zone);
+      const gregorian = safeFormat(
+        "fa-IR-u-ca-gregory",
+        { timeZone: zone, day: "numeric", month: "long", year: "numeric" },
+        now,
+      );
+
+      const base = persian
+        ? `**${persian}**${gregorian ? ` (${gregorian})` : ""}`
+        : gregorian;
+
+      text = placeName
+        ? `در ${placeName} امروز ${base} است`
+        : `امروز ${base} است`;
+    }
+
+    if (unknownUserZone) {
+      text += " (به وقت UTC؛ ساعت محلی شما ممکن است فرق کند)";
+    }
+
+    return text;
+  }
+
+  if (showClock) {
+    const timeEn = safeFormat(
+      "en-GB",
+      { timeZone: zone, hour: "2-digit", minute: "2-digit", hourCycle: "h23" },
+      now,
+    );
+
+    text = placeName ? `It's ${timeEn} in ${placeName}` : `It's ${timeEn}`;
+  } else {
+    const dateEn = safeFormat(
+      "en-US",
+      {
+        timeZone: zone,
+        weekday: "long",
+        month: "long",
+        day: "numeric",
+        year: "numeric",
+      },
+      now,
+    );
+
+    text = placeName
+      ? `Today in ${placeName} is **${dateEn}**`
+      : `Today is **${dateEn}**`;
+  }
+
+  if (unknownUserZone) {
+    text += " (UTC; your local time may differ)";
+  }
+
+  return text;
 }
 
 function runGetDatetime(
@@ -575,7 +663,18 @@ function runGetDatetime(
         ? "tomorrow"
         : "yesterday";
 
+  const isUserZone = zone === userZone;
+  const placeName = label || (isUserZone ? "" : zone);
+
   const data = {
+    ready_answer: buildReadyAnswer(
+      ctx.lang,
+      showClock,
+      placeName,
+      now,
+      zone,
+      isUserZone && ctx.timeZone === null,
+    ),
     time_24h: safeFormat(
       "en-GB",
       { timeZone: zone, hour: "2-digit", minute: "2-digit", hourCycle: "h23" },
@@ -595,10 +694,9 @@ function runGetDatetime(
     date_persian: persianDateText(now, zone),
     time_zone: zone,
     utc_offset: formatOffset(offset),
-    is_user_time_zone: zone === userZone,
+    is_user_time_zone: isUserZone,
     hours_ahead_of_user: diff / 60,
     day_relative_to_user: dayRelation,
-    user_time_zone_known: ctx.timeZone !== null,
   };
 
   if (!showClock) {
@@ -622,6 +720,26 @@ type NominatimAttempt = {
   readonly delta: number;
   readonly bounded: boolean;
 } | null;
+
+function withDistance(
+  ctx: ToolContext,
+  name: string,
+  address: string,
+  lat: number,
+  lon: number,
+): PlaceItem {
+  const km = ctx.location
+    ? Math.round(haversineKm(ctx.location, lat, lon) * 10) / 10
+    : undefined;
+
+  return {
+    name: name.slice(0, 80),
+    address: address.slice(0, 160),
+    lat: round5(lat),
+    lon: round5(lon),
+    ...(km !== undefined ? { km } : {}),
+  };
+}
 
 async function searchNominatim(
   query: string,
@@ -665,7 +783,7 @@ async function searchNominatim(
     );
 
     if (!response.ok) {
-      throw new Error(`Map search failed with status ${response.status}.`);
+      throw new Error(`Nominatim failed with status ${response.status}.`);
     }
 
     const json: unknown = await response.json();
@@ -695,23 +813,121 @@ async function searchNominatim(
           ? raw.name
           : displayName.split(",")[0]?.trim() || query;
 
-      const km = ctx.location
-        ? Math.round(haversineKm(ctx.location, lat, lon) * 10) / 10
-        : undefined;
-
-      items.push({
-        name: name.slice(0, 80),
-        address: displayName.slice(0, 160),
-        lat: round5(lat),
-        lon: round5(lon),
-        ...(km !== undefined ? { km } : {}),
-      });
+      items.push(withDistance(ctx, name, displayName, lat, lon));
     }
 
     return items;
   } finally {
     timed.clearConnectTimer();
   }
+}
+
+async function searchPhoton(
+  query: string,
+  ctx: ToolContext,
+  masterSignal: AbortSignal,
+): Promise<PlaceItem[]> {
+  const params = new URLSearchParams({ q: query, limit: "5" });
+
+  if (ctx.location) {
+    params.set("lat", String(ctx.location.lat));
+    params.set("lon", String(ctx.location.lon));
+  }
+
+  const timed = createAttempt(masterSignal, TOOL_TIMEOUT_MS);
+
+  try {
+    const response = await fetch(
+      `https://photon.komoot.io/api/?${params.toString()}`,
+      {
+        headers: {
+          "User-Agent": NOMINATIM_USER_AGENT,
+          Accept: "application/json",
+        },
+        signal: timed.signal,
+      },
+    );
+
+    if (!response.ok) {
+      throw new Error(`Photon failed with status ${response.status}.`);
+    }
+
+    const json: unknown = await response.json();
+    const features =
+      isRecord(json) && Array.isArray(json.features) ? json.features : [];
+
+    const items: PlaceItem[] = [];
+
+    for (const feature of features) {
+      if (
+        !isRecord(feature) ||
+        !isRecord(feature.geometry) ||
+        !isRecord(feature.properties)
+      ) {
+        continue;
+      }
+
+      const coordinates = feature.geometry.coordinates;
+
+      if (!Array.isArray(coordinates) || coordinates.length < 2) {
+        continue;
+      }
+
+      const lon = Number(coordinates[0]);
+      const lat = Number(coordinates[1]);
+
+      if (!isValidGeo(lat, lon)) {
+        continue;
+      }
+
+      const props = feature.properties;
+      const text = (key: string): string => {
+        const value = props[key];
+
+        return typeof value === "string" ? value : "";
+      };
+
+      const name = text("name") || text("street") || query;
+      const street = [text("street"), text("housenumber")]
+        .filter(Boolean)
+        .join(" ");
+      const address = [
+        street,
+        text("district"),
+        text("city"),
+        text("state"),
+        text("country"),
+      ]
+        .filter(Boolean)
+        .join(", ");
+
+      items.push(withDistance(ctx, name, address, lat, lon));
+    }
+
+    return items;
+  } finally {
+    timed.clearConnectTimer();
+  }
+}
+
+function placesOutcome(
+  items: readonly PlaceItem[],
+  ctx: ToolContext,
+): ToolOutcome {
+  const top = items.slice(0, 3);
+
+  return {
+    data: {
+      results: top.map((item) => ({
+        name: item.name,
+        address: item.address,
+        lat: item.lat,
+        lon: item.lon,
+        distance_km: item.km,
+      })),
+    },
+    card: { t: "places", lang: ctx.lang, items: top },
+  };
 }
 
 async function runFindPlace(
@@ -731,8 +947,8 @@ async function runFindPlace(
   if (nearUser && !ctx.location) {
     return {
       data: {
-        error: "user_location_not_shared",
-        hint: "Tell the user to tap the location pin button at the top of the chat to share their position, then ask again.",
+        error: "user_location_not_available",
+        hint: "The user's location is not available. Tell them to allow location access for this site in the browser, or tap the pin icon at the top of the chat, then ask again.",
       },
     };
   }
@@ -746,25 +962,39 @@ async function runFindPlace(
         ]
       : [null];
 
+  let lastError = "";
+
   for (const attempt of attempts) {
-    const items = await searchNominatim(query, ctx, attempt, signal);
+    try {
+      const items = await searchNominatim(query, ctx, attempt, signal);
+
+      if (items.length > 0) {
+        return placesOutcome(items, ctx);
+      }
+    } catch (error) {
+      lastError = describeError(error);
+      console.error(`find_place nominatim failed: ${lastError}`);
+    }
+  }
+
+  try {
+    const items = await searchPhoton(query, ctx, signal);
 
     if (items.length > 0) {
-      const top = items.slice(0, 3);
-
-      return {
-        data: {
-          results: top.map((item) => ({
-            name: item.name,
-            address: item.address,
-            lat: item.lat,
-            lon: item.lon,
-            distance_km: item.km,
-          })),
-        },
-        card: { t: "places", lang: ctx.lang, items: top },
-      };
+      return placesOutcome(items, ctx);
     }
+  } catch (error) {
+    lastError = describeError(error);
+    console.error(`find_place photon failed: ${lastError}`);
+  }
+
+  if (lastError) {
+    return {
+      data: {
+        error: "map_lookup_failed",
+        detail: lastError.slice(0, 200),
+      },
+    };
   }
 
   return { data: { results: [], note: "No places were found." } };
@@ -805,6 +1035,8 @@ async function runWebSearch(
     });
 
     if (!response.ok) {
+      console.error(`web_search failed with status ${response.status}.`);
+
       return {
         data: { error: `Web search failed with status ${response.status}.` },
       };
@@ -893,6 +1125,8 @@ async function executeTool(
         return { data: { error: `Unknown tool: ${name}` } };
     }
   } catch (error) {
+    console.error(`tool ${name} threw: ${describeError(error)}`);
+
     return { data: { error: describeError(error) } };
   }
 }
@@ -944,11 +1178,11 @@ function buildSystemPrompt(ctx: ToolContext): string {
 
   if (ctx.location) {
     lines.push(
-      `- The user chose to share their location: ${ctx.location.lat}, ${ctx.location.lon}. Use find_place with near_user=true for nearby places.`,
+      "- The user's position is already known automatically. For 'near me' or 'nearest' questions call find_place with near_user=true. Never ask them to share it.",
     );
   } else {
     lines.push(
-      "- The user has NOT shared their location. If an answer needs it (nearby places), ask them to tap the location pin button at the top of the chat.",
+      "- The user's position is NOT available (location permission is off or denied). For 'near me' questions tell them to allow location access for this site in the browser, or tap the pin icon at the top of the chat.",
     );
   }
 
@@ -956,12 +1190,12 @@ function buildSystemPrompt(ctx: ToolContext): string {
     "Rules for date and time: mention the date or time ONLY when the user explicitly asks, or when the task truly needs it (an age, a deadline, a countdown). Never mention them in greetings or small talk.",
     "",
     "Tools:",
-    "- get_datetime: use it for ANY question about today's date, the weekday, the current time, or the time in another city or country. Never answer these from memory. Set show_clock=true only when the user asks for the time of day; use false for date or weekday questions. Use correct IANA time zone ids.",
-    "- find_place: use it when the user asks where something is, wants an address or a location on the map, or wants places near them.",
+    "- get_datetime: use it for ANY question about today's date, the weekday, the current time, or the time in another city or country. Never answer these from memory. Set show_clock=true only when the user asks for the time of day; use false for date or weekday questions. Use correct IANA time zone ids. After it returns, reply with the field ready_answer EXACTLY as given, optionally followed by one fitting emoji. Add nothing else: no extra sentence, no question, no suggestion. Never convert, reformat or rewrite dates and numbers yourself.",
+    "- find_place: call it FIRST for any question about where a place, business, landmark or address is, or for places near the user. Never answer locations from memory. For categories such as pharmacy, restaurant or hospital use the English category word as the query. After it returns, reply with one short sentence only, because the app shows the map card; do not repeat the address. If it reports a failure, say briefly that the map could not be reached right now and offer to retry. Do not tell the user to tap the pin unless they want places near them and their position is not available.",
     ctx.tavilyKey
-      ? "- web_search: use it for current or recent facts (news, prices, weather, sports results, anything that may have changed). Mention site names only, never raw URLs."
+      ? "- web_search: call it FIRST for anything that changes over time: prices and exchange rates (currency, gold, crypto), news, weather, sports results, schedules. Write the query in the language best suited to the topic (Persian for Iranian prices and news). Answer in 1 to 3 short sentences with the key numbers exactly as in the results, and name the source sites. The app shows a sources card, so never paste URLs."
       : "- You cannot browse the internet or check live information (news, prices, weather). If asked, say so briefly and offer what you can do instead.",
-    "- Never mention tools, function names, JSON or internal data to the user. After a tool returns, answer briefly in the user's language and copy values exactly as given. The app already shows a card for clocks, maps and sources, so do not repeat full addresses, coordinates or links at length.",
+    "- Never mention tools, function names, JSON or internal data to the user. If a tool reports an error, say briefly that the lookup failed right now and offer to try again; never invent the answer.",
     "",
     "Language: always reply in the language of the user's latest message, and keep that language consistent through the whole reply.",
     "",
@@ -972,7 +1206,7 @@ function buildSystemPrompt(ctx: ToolContext): string {
     "- When greeted, greet back briefly and warmly, then invite the user to continue. Do not add facts nobody asked for.",
     "- Be proactive. When asked to create something (an ad, a text, a plan, name ideas), write a concrete, good first draft IMMEDIATELY using sensible assumptions and clear placeholders. Only after the draft, ask at most 2 short questions to refine it, in one or two lines. Never respond with a list of questions before delivering something useful, and never ask more than 2 questions.",
     "- Start with the answer or the draft itself, with no filler opening.",
-    "- When it genuinely helps, end with one short, natural follow-up offer or question. Not in every reply.",
+    "- When it genuinely helps, end with one short, natural follow-up offer or question. Not in every reply, and never after a clock, date, map or search answer.",
     "",
     "Templates and examples: when you write ads, texts or samples, never invent facts such as ratings, prices, discount codes, phone numbers, addresses or statistics. Put every unknown specific in [square brackets] as a placeholder.",
     "",
@@ -1402,6 +1636,7 @@ async function openGroqAgent(
   );
 
   if (!round.ok && round.status === 400) {
+    console.error(`Groq rejected the tool request: ${round.error}`);
     withTools = false;
     round = await requestGroqRound(
       apiKey,
@@ -1947,8 +2182,12 @@ Deno.serve(async (request: Request): Promise<Response> => {
       timeZone: resolveTimeZone(body.timeZone),
       location,
       lang: /[\u0600-\u06FF]/.test(message) ? "fa" : "en",
-      tavilyKey: getOptionalEnv("TAVILY_API_KEY"),
+      tavilyKey: getTavilyKey(),
     };
+
+    console.log(
+      `request ${requestId}: web_search=${ctx.tavilyKey ? "on" : "off"}, location=${ctx.location ? "yes" : "no"}`,
+    );
 
     const aiMessages: AIMessage[] = [
       {
