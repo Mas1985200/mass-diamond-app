@@ -390,15 +390,6 @@ function zoneOffsetMinutes(zone: string, date: Date): number {
   return Math.round((asUtc - truncated) / 60000);
 }
 
-function formatOffset(minutes: number): string {
-  const sign = minutes < 0 ? "-" : "+";
-  const abs = Math.abs(minutes);
-  const hours = String(Math.floor(abs / 60)).padStart(2, "0");
-  const rest = String(abs % 60).padStart(2, "0");
-
-  return `${sign}${hours}:${rest}`;
-}
-
 function dateKey(zone: string, date: Date): string {
   return new Intl.DateTimeFormat("en-CA", {
     timeZone: zone,
@@ -408,29 +399,30 @@ function dateKey(zone: string, date: Date): string {
   }).format(date);
 }
 
-function persianDateText(date: Date, zone: string): string {
+function shortDateText(date: Date, zone: string, lang: Lang): string {
   try {
-    const parts = new Intl.DateTimeFormat("fa-IR-u-ca-persian", {
-      timeZone: zone,
-      weekday: "long",
-      day: "numeric",
-      month: "long",
-      year: "numeric",
-    }).formatToParts(date);
+    if (lang === "fa") {
+      const parts = new Intl.DateTimeFormat("fa-IR-u-ca-persian", {
+        timeZone: zone,
+        weekday: "long",
+        day: "numeric",
+        month: "long",
+      }).formatToParts(date);
 
-    const pick = (type: string): string =>
-      parts.find((part) => part.type === type)?.value ?? "";
+      const pick = (type: string): string =>
+        parts.find((part) => part.type === type)?.value ?? "";
 
-    const weekday = pick("weekday");
-    const core = [pick("day"), pick("month"), pick("year")]
-      .filter(Boolean)
-      .join(" ");
-
-    if (!core) {
-      return "";
+      return [pick("weekday"), pick("day"), pick("month")]
+        .filter(Boolean)
+        .join(" ");
     }
 
-    return weekday ? `${weekday}، ${core}` : core;
+    return new Intl.DateTimeFormat("en-US", {
+      timeZone: zone,
+      weekday: "short",
+      month: "short",
+      day: "numeric",
+    }).format(date);
   } catch {
     return "";
   }
@@ -445,23 +437,19 @@ function buildRelation(diff: number, day: DayRelation, lang: Lang): string {
   const number = (value: number): string =>
     value.toLocaleString(lang === "fa" ? "fa-IR" : "en-US");
 
-  const dayWord =
+  const dayPrefix =
     day === "same"
-      ? lang === "fa"
-        ? "امروز"
-        : "Today"
+      ? ""
       : day === "tomorrow"
         ? lang === "fa"
-          ? "فردا"
-          : "Tomorrow"
+          ? "فردا، "
+          : "Tomorrow, "
         : lang === "fa"
-          ? "دیروز"
-          : "Yesterday";
+          ? "دیروز، "
+          : "Yesterday, ";
 
   if (diff === 0) {
-    return lang === "fa"
-      ? `${dayWord} · هم‌ساعت با شما`
-      : `${dayWord} · Same time as you`;
+    return `${dayPrefix}${lang === "fa" ? "هم‌ساعت با شما" : "Same time as you"}`;
   }
 
   if (lang === "fa") {
@@ -475,7 +463,7 @@ function buildRelation(diff: number, day: DayRelation, lang: Lang): string {
       pieces.push(`${number(minutes)} دقیقه`);
     }
 
-    return `${dayWord} · ${pieces.join(" و ")} ${
+    return `${dayPrefix}${pieces.join(" و ")} ${
       diff > 0 ? "جلوتر از شما" : "عقب‌تر از شما"
     }`;
   }
@@ -490,7 +478,7 @@ function buildRelation(diff: number, day: DayRelation, lang: Lang): string {
     pieces.push(`${minutes}m`);
   }
 
-  return `${dayWord} · ${pieces.join(" ")} ${
+  return `${dayPrefix}${pieces.join(" ")} ${
     diff > 0 ? "ahead of you" : "behind you"
   }`;
 }
@@ -500,10 +488,8 @@ interface ClockInfo {
   readonly minutes: number;
   readonly seconds: number;
   readonly digital: string;
-  readonly primaryDate: string;
-  readonly secondaryDate: string;
+  readonly dateLine: string;
   readonly title: string;
-  readonly zoneLine: string;
   readonly relation: string | null;
 }
 
@@ -534,29 +520,8 @@ function describeClock(card: ClockCardData): ClockInfo | null {
     const seconds = read("second");
     const pad = (value: number): string => String(value).padStart(2, "0");
 
-    const primaryDate =
-      card.lang === "fa"
-        ? persianDateText(date, zone)
-        : new Intl.DateTimeFormat("en-US", {
-            timeZone: zone,
-            weekday: "long",
-            month: "long",
-            day: "numeric",
-            year: "numeric",
-          }).format(date);
-
-    const secondaryDate =
-      card.lang === "fa"
-        ? new Intl.DateTimeFormat("fa-IR-u-ca-gregory", {
-            timeZone: zone,
-            day: "numeric",
-            month: "long",
-            year: "numeric",
-          }).format(date)
-        : "";
-
-    const offset = zoneOffsetMinutes(zone, date);
-    const diff = offset - zoneOffsetMinutes(refZone, date);
+    const diff =
+      zoneOffsetMinutes(zone, date) - zoneOffsetMinutes(refZone, date);
     const zoneKey = dateKey(zone, date);
     const refKey = dateKey(refZone, date);
 
@@ -570,10 +535,8 @@ function describeClock(card: ClockCardData): ClockInfo | null {
       minutes,
       seconds,
       digital: `${pad(hours)}:${pad(minutes)}`,
-      primaryDate,
-      secondaryDate,
+      dateLine: shortDateText(date, zone, card.lang),
       title: card.label ?? "",
-      zoneLine: `${zone} · UTC${formatOffset(offset)}`,
       relation: showRelation ? buildRelation(diff, day, card.lang) : null,
     };
   } catch {
@@ -600,8 +563,8 @@ function ClockFace({
     <svg
       viewBox="0 0 100 100"
       aria-hidden="true"
-      className="h-28 w-28 shrink-0 text-primary"
-      style={{ filter: "drop-shadow(0 0 6px rgba(57,255,136,0.35))" }}
+      className="h-20 w-20 shrink-0 text-primary"
+      style={{ filter: "drop-shadow(0 0 5px rgba(57,255,136,0.35))" }}
     >
       <circle
         cx="50"
@@ -617,9 +580,9 @@ function ClockFace({
         <line
           key={index}
           x1="50"
-          y1="7"
+          y1="6"
           x2="50"
-          y2={index % 3 === 0 ? 12 : 10}
+          y2={index % 3 === 0 ? 11 : 9}
           stroke="currentColor"
           strokeOpacity="0.85"
           strokeWidth={index % 3 === 0 ? 1.8 : 1}
@@ -630,15 +593,15 @@ function ClockFace({
 
       {numbers.map((value) => {
         const angle = (value * 30 * Math.PI) / 180;
-        const x = 50 + 31 * Math.sin(angle);
-        const y = 50 - 31 * Math.cos(angle);
+        const x = 50 + 33 * Math.sin(angle);
+        const y = 50 - 33 * Math.cos(angle);
 
         return (
           <text
             key={value}
             x={x}
             y={y}
-            fontSize="8"
+            fontSize="10"
             textAnchor="middle"
             dominantBaseline="central"
             fill="currentColor"
@@ -653,9 +616,9 @@ function ClockFace({
         x1="50"
         y1="50"
         x2="50"
-        y2="33"
+        y2="34"
         stroke="currentColor"
-        strokeWidth="3"
+        strokeWidth="3.2"
         strokeLinecap="round"
         transform={`rotate(${hourAngle} 50 50)`}
       />
@@ -663,9 +626,9 @@ function ClockFace({
         x1="50"
         y1="50"
         x2="50"
-        y2="24"
+        y2="22"
         stroke="currentColor"
-        strokeWidth="2.1"
+        strokeWidth="2.2"
         strokeLinecap="round"
         transform={`rotate(${minuteAngle} 50 50)`}
       />
@@ -673,14 +636,14 @@ function ClockFace({
         x1="50"
         y1="56"
         x2="50"
-        y2="20"
+        y2="18"
         stroke="currentColor"
         strokeOpacity="0.7"
-        strokeWidth="0.9"
+        strokeWidth="1"
         strokeLinecap="round"
         transform={`rotate(${secondAngle} 50 50)`}
       />
-      <circle cx="50" cy="50" r="2.4" fill="currentColor" />
+      <circle cx="50" cy="50" r="2.6" fill="currentColor" />
     </svg>
   );
 }
@@ -697,37 +660,27 @@ function ClockCard({ card }: { readonly card: ClockCardData }) {
   return (
     <div
       dir={rtl ? "rtl" : "ltr"}
-      className="md-glass my-3 flex w-full max-w-sm items-center gap-3 rounded-2xl px-4 py-3"
+      className="md-glass my-2 flex w-full max-w-[17rem] items-center gap-3 rounded-2xl px-3 py-2.5"
     >
       <div className="min-w-0 flex-1">
         {info.title && (
-          <div className="mb-1 truncate text-sm font-semibold text-text">
+          <div className="truncate text-xs font-semibold text-text">
             {info.title}
           </div>
         )}
         <div
           dir="ltr"
-          className="text-4xl font-bold leading-none tabular-nums text-primary"
+          className="text-3xl font-bold leading-none tabular-nums text-primary"
           style={{ textAlign: rtl ? "right" : "left" }}
         >
           {info.digital}
         </div>
-        <div className="mt-2 text-sm leading-6 text-text">
-          {info.primaryDate}
-        </div>
-        {info.secondaryDate && (
-          <div className="text-xs leading-5 text-text-subtle">
-            {info.secondaryDate}
-          </div>
-        )}
+        <div className="mt-1 truncate text-xs text-text">{info.dateLine}</div>
         {info.relation && (
-          <div className="mt-1 text-xs leading-5 text-text-subtle">
+          <div className="truncate text-[11px] leading-5 text-text-subtle">
             {info.relation}
           </div>
         )}
-        <div dir="ltr" className="mt-1 text-[11px] text-text-subtle">
-          {info.zoneLine}
-        </div>
       </div>
 
       <ClockFace
@@ -952,7 +905,7 @@ function readPosition(
 function describeLocationError(error: unknown): string {
   if (isRecord(error) && typeof error.code === "number") {
     if (error.code === 1) {
-      return "اجازه‌ی دسترسی به موقعیت داده نشد.";
+      return "اجازه‌ی دسترسی به موقعیت داده نشد. از تنظیمات مرورگر برای این سایت فعالش کنید.";
     }
 
     if (error.code === 3) {
@@ -1017,6 +970,65 @@ export default function ChatScreen() {
     } catch {
       // Keep the previous fix.
     }
+  }, []);
+
+  useEffect(() => {
+    let cancelled = false;
+
+    const start = async (): Promise<void> => {
+      if (typeof navigator === "undefined" || !navigator.geolocation) {
+        return;
+      }
+
+      let permission: PermissionState | "unknown" = "unknown";
+
+      try {
+        const status = await navigator.permissions.query({
+          name: "geolocation",
+        });
+
+        permission = status.state;
+
+        status.onchange = () => {
+          if (status.state === "denied") {
+            locationRef.current = null;
+            setLocationState("off");
+          }
+        };
+      } catch {
+        permission = "unknown";
+      }
+
+      if (cancelled || permission === "denied") {
+        return;
+      }
+
+      setLocationState("loading");
+
+      try {
+        const fix = await readPosition(12_000, 60_000);
+
+        if (cancelled) {
+          return;
+        }
+
+        locationRef.current = fix;
+        setLocationState("on");
+      } catch {
+        if (cancelled) {
+          return;
+        }
+
+        locationRef.current = null;
+        setLocationState("off");
+      }
+    };
+
+    void start();
+
+    return () => {
+      cancelled = true;
+    };
   }, []);
 
   useEffect(() => {
@@ -1329,10 +1341,10 @@ export default function ChatScreen() {
 
   const locationLabel =
     locationState === "on"
-      ? "قطع اشتراک موقعیت"
+      ? "موقعیت فعال است. برای قطع اشتراک بزنید"
       : locationState === "loading"
         ? "در حال دریافت موقعیت"
-        : "اشتراک موقعیت من";
+        : "فعال کردن موقعیت";
 
   return (
     <div
