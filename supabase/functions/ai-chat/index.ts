@@ -41,7 +41,7 @@ const UUID_PATTERN =
 
 const CLOCK_MARKER_PATTERN =
   /:::md-clock~[^~\s]+~[A-Za-z0-9_\/+-]+~(?:fa|en):::/g;
-const CARD_MARKER_PATTERN = /:::md-card~[A-Za-z0-9_-]+:::/g;
+const CARD_MARKER_PATTERN = /:::md-card~([A-Za-z0-9_-]+):::/g;
 const LOCATION_TAG_PATTERN =
   /\s*:::md-loc~(-?\d{1,3}(?:\.\d+)?)~(-?\d{1,3}(?:\.\d+)?):::\s*$/;
 
@@ -136,6 +136,7 @@ type CardPayload =
 type ToolOutcome = {
   readonly data: unknown;
   readonly card?: CardPayload;
+  readonly finalText?: string;
 };
 
 type ToolDefinition = {
@@ -444,10 +445,69 @@ function encodeCard(card: CardPayload): string {
   return `:::md-card~${body}:::`;
 }
 
+function decodeCardBody(body: string): unknown {
+  try {
+    const base64 = body.replace(/-/g, "+").replace(/_/g, "/");
+    const padded = base64 + "=".repeat((4 - (base64.length % 4)) % 4);
+    const binary = atob(padded);
+    const bytes = Uint8Array.from(binary, (char) => char.charCodeAt(0));
+
+    return JSON.parse(new TextDecoder().decode(bytes));
+  } catch {
+    return null;
+  }
+}
+
+function describeCardForHistory(body: string): string {
+  const decoded = decodeCardBody(body);
+
+  if (!isRecord(decoded)) {
+    return "";
+  }
+
+  if (decoded.t === "places" && Array.isArray(decoded.items)) {
+    const entries = decoded.items
+      .filter(isRecord)
+      .slice(0, 3)
+      .map((item) => {
+        const name = typeof item.name === "string" ? item.name : "";
+        const address = typeof item.address === "string" ? item.address : "";
+        const km =
+          typeof item.km === "number" ? `, ${item.km} km from the user` : "";
+
+        return `${name}${address ? ` (${address})` : ""}${km}`;
+      })
+      .filter(Boolean);
+
+    return entries.length > 0 ? `[map card shown: ${entries.join("; ")}]` : "";
+  }
+
+  if (decoded.t === "clock") {
+    const zone = typeof decoded.zone === "string" ? decoded.zone : "";
+
+    return zone ? `[clock card shown for ${zone}]` : "";
+  }
+
+  if (decoded.t === "sources" && Array.isArray(decoded.items)) {
+    const domains = decoded.items
+      .filter(isRecord)
+      .map((item) => (typeof item.domain === "string" ? item.domain : ""))
+      .filter(Boolean);
+
+    return domains.length > 0
+      ? `[sources card shown: ${domains.join(", ")}]`
+      : "";
+  }
+
+  return "";
+}
+
 function stripMarkers(content: string): string {
   return content
     .replace(CLOCK_MARKER_PATTERN, "")
-    .replace(CARD_MARKER_PATTERN, "")
+    .replace(CARD_MARKER_PATTERN, (_match: string, body: string) =>
+      describeCardForHistory(body),
+    )
     .trim();
 }
 
@@ -456,7 +516,7 @@ const GET_DATETIME_TOOL: ToolDefinition = {
   function: {
     name: "get_datetime",
     description:
-      "Get the exact current date, weekday and time, for the user's own time zone or for any other place. Always use this for questions about today's date, the weekday, the current time, or the time in another city or country.",
+      "Get the exact current date, weekday and time, for the user's own time zone or for any other place. Always use this for questions about today's date, the weekday, the current time, or the time in another city or country. Never use web_search for these.",
     parameters: {
       type: "object",
       properties: {
@@ -511,7 +571,7 @@ const WEB_SEARCH_TOOL: ToolDefinition = {
   function: {
     name: "web_search",
     description:
-      "Search the web for current or recent information such as news, prices and exchange rates, weather, sports results, or anything that may have changed after your training.",
+      "Search the web for current or recent information such as news, prices and exchange rates, weather, sports results, or anything that may have changed after your training. Never use it for the date, the time or where a place is.",
     parameters: {
       type: "object",
       properties: {
@@ -557,6 +617,7 @@ function buildReadyAnswer(
   zone: string,
   unknownUserZone: boolean,
 ): string {
+  const emoji = showClock ? "🕐" : "📅";
   let text: string;
 
   if (lang === "fa") {
@@ -591,7 +652,7 @@ function buildReadyAnswer(
       text += " (به وقت UTC؛ ساعت محلی شما ممکن است فرق کند)";
     }
 
-    return text;
+    return `${text} ${emoji}`;
   }
 
   if (showClock) {
@@ -624,7 +685,7 @@ function buildReadyAnswer(
     text += " (UTC; your local time may differ)";
   }
 
-  return text;
+  return `${text} ${emoji}`;
 }
 
 function runGetDatetime(
@@ -666,15 +727,17 @@ function runGetDatetime(
   const isUserZone = zone === userZone;
   const placeName = label || (isUserZone ? "" : zone);
 
+  const readyAnswer = buildReadyAnswer(
+    ctx.lang,
+    showClock,
+    placeName,
+    now,
+    zone,
+    isUserZone && ctx.timeZone === null,
+  );
+
   const data = {
-    ready_answer: buildReadyAnswer(
-      ctx.lang,
-      showClock,
-      placeName,
-      now,
-      zone,
-      isUserZone && ctx.timeZone === null,
-    ),
+    ready_answer: readyAnswer,
     time_24h: safeFormat(
       "en-GB",
       { timeZone: zone, hour: "2-digit", minute: "2-digit", hourCycle: "h23" },
@@ -700,11 +763,12 @@ function runGetDatetime(
   };
 
   if (!showClock) {
-    return { data };
+    return { data, finalText: readyAnswer };
   }
 
   return {
     data,
+    finalText: readyAnswer,
     card: {
       t: "clock",
       iso: now.toISOString(),
@@ -926,6 +990,7 @@ function placesOutcome(
         distance_km: item.km,
       })),
     },
+    finalText: "",
     card: { t: "places", lang: ctx.lang, items: top },
   };
 }
@@ -948,7 +1013,7 @@ async function runFindPlace(
     return {
       data: {
         error: "user_location_not_available",
-        hint: "The user's location is not available. Tell them to allow location access for this site in the browser, or tap the pin icon at the top of the chat, then ask again.",
+        hint: "The user's location is not available. Tell them to allow location access for this site in the browser settings, then ask again.",
       },
     };
   }
@@ -1158,7 +1223,7 @@ function buildSystemPrompt(ctx: ToolContext): string {
     ) || now.toISOString();
 
   const lines: string[] = [
-    "You are Mass Diamond, an intelligent, accurate and friendly AI assistant inside the Mass Diamond app.",
+    "You are Mass Diamond, a brilliant, warm and precise AI assistant inside the Mass Diamond app.",
     "",
     "Reference data (authoritative and already converted; never recompute, convert or reformat it yourself):",
     `- Gregorian date: ${gregorian}`,
@@ -1182,37 +1247,34 @@ function buildSystemPrompt(ctx: ToolContext): string {
     );
   } else {
     lines.push(
-      "- The user's position is NOT available (location permission is off or denied). For 'near me' questions tell them to allow location access for this site in the browser, or tap the pin icon at the top of the chat.",
+      "- The user's position is NOT available (location permission is off or denied). For 'near me' questions tell them, in one short sentence, to allow location access for this site in the browser settings.",
     );
   }
 
   lines.push(
     "Rules for date and time: mention the date or time ONLY when the user explicitly asks, or when the task truly needs it (an age, a deadline, a countdown). Never mention them in greetings or small talk.",
     "",
+    "Core behaviour:",
+    "- Answer exactly what was asked, nothing more. Lead with the answer. No filler openings and no closing lines such as 'anything else?', 'let me know', 'shall we start?' or 'how can I help further?'. Ask a question only when you truly cannot proceed without the answer, and then ask just one short question.",
+    "- When greeted, reply with one short warm line and stop.",
+    "- Never address the user with honorifics such as 'قربان'. Match the user's own register.",
+    "- When asked to create something (an ad, a text, a plan, names), deliver a concrete, polished result immediately, using sensible assumptions. Put every unknown specific in [square brackets] as a placeholder. Never invent facts such as ratings, prices, discount codes, phone numbers, addresses or statistics.",
+    "",
+    "Writing quality:",
+    "- Write like an expert human writer: vivid, precise, confident, never generic. Prefer concrete details, numbers and examples over filler. Structure longer answers with short bold headings, tight lists, or a Markdown table when comparing options or presenting a schedule. Keep paragraphs short.",
+    "- In Persian use natural, idiomatic, polished Persian that does not sound translated, correct half-spaces (ZWNJ), Persian digits in Persian prose, and a tone that matches the user's. Use only words you are sure exist; if unsure, choose a simpler common word. Re-read before answering and fix typos and odd words.",
+    "- Emojis: sparingly, 0 to 2 per reply, only where they add warmth. None in code, tables or serious topics (illness, grief, legal or financial risk, errors).",
+    "",
     "Tools:",
-    "- get_datetime: use it for ANY question about today's date, the weekday, the current time, or the time in another city or country. Never answer these from memory. Set show_clock=true only when the user asks for the time of day; use false for date or weekday questions. Use correct IANA time zone ids. After it returns, reply with the field ready_answer EXACTLY as given, optionally followed by one fitting emoji. Add nothing else: no extra sentence, no question, no suggestion. Never convert, reformat or rewrite dates and numbers yourself.",
-    "- find_place: call it FIRST for any question about where a place, business, landmark or address is, or for places near the user. Never answer locations from memory. For categories such as pharmacy, restaurant or hospital use the English category word as the query. After it returns, reply with one short sentence only, because the app shows the map card; do not repeat the address. If it reports a failure, say briefly that the map could not be reached right now and offer to retry. Do not tell the user to tap the pin unless they want places near them and their position is not available.",
+    "- get_datetime: use it for ANY question about today's date, the weekday, the current time, or the time in another city or country. Never answer these from memory and never use web_search for them. Set show_clock=true only when the user asks for the time of day; false for date or weekday questions. Use correct IANA time zone ids. The app writes the answer itself, so after this tool returns just stop.",
+    "- find_place: call it FIRST for any question about where a place, business, landmark or address is, or for places near the user. Never answer locations from memory. For categories such as pharmacy, restaurant or hospital use the English category word as the query. The app shows the map card itself, so after it returns just stop. If it reports a failure, say in one short sentence that the map could not be reached right now.",
     ctx.tavilyKey
-      ? "- web_search: call it FIRST for anything that changes over time: prices and exchange rates (currency, gold, crypto), news, weather, sports results, schedules. Write the query in the language best suited to the topic (Persian for Iranian prices and news). Answer in 1 to 3 short sentences with the key numbers exactly as in the results, and name the source sites. The app shows a sources card, so never paste URLs."
-      : "- You cannot browse the internet or check live information (news, prices, weather). If asked, say so briefly and offer what you can do instead.",
-    "- Never mention tools, function names, JSON or internal data to the user. If a tool reports an error, say briefly that the lookup failed right now and offer to try again; never invent the answer.",
+      ? "- web_search: call it FIRST for anything that changes over time: prices and exchange rates (currency, gold, crypto), news, weather, sports results, schedules. Write the query in the language best suited to the topic (Persian for Iranian prices and news). Answer in 1 to 3 short sentences with the key numbers exactly as in the results; for prices say 'حدود' or 'approximately' and give a range if sources disagree. The app shows a collapsible sources list, so never write source names or URLs in your text."
+      : "- You cannot browse the internet or check live information (news, prices, weather). If asked, say so in one short sentence.",
+    "- Never mention tools, function names, JSON or internal data to the user. If a tool reports an error, say in one short sentence that the lookup failed right now; never invent the answer.",
+    "- Bracketed notes such as [map card shown: ...] in the conversation are internal records of cards the app already displayed. Never write such notes yourself.",
     "",
     "Language: always reply in the language of the user's latest message, and keep that language consistent through the whole reply.",
-    "",
-    "Personality and tone:",
-    "- You are warm, friendly and lively, like a smart friend who is genuinely happy to help. You are not a stiff, form-filling bot.",
-    "- In Persian, write natural, conversational but polite Persian that matches the user's own register. Avoid stiff bureaucratic phrasing such as 'لطفاً اطلاعات زیر را در اختیار بگذارید'.",
-    "- Use emojis naturally: usually 1 to 3 per reply, where they add warmth (a greeting, the start of a section, a closing line). Never put emojis inside code blocks. Skip them for serious topics such as illness, grief, legal or financial risk, errors and complaints.",
-    "- When greeted, greet back briefly and warmly, then invite the user to continue. Do not add facts nobody asked for.",
-    "- Be proactive. When asked to create something (an ad, a text, a plan, name ideas), write a concrete, good first draft IMMEDIATELY using sensible assumptions and clear placeholders. Only after the draft, ask at most 2 short questions to refine it, in one or two lines. Never respond with a list of questions before delivering something useful, and never ask more than 2 questions.",
-    "- Start with the answer or the draft itself, with no filler opening.",
-    "- When it genuinely helps, end with one short, natural follow-up offer or question. Not in every reply, and never after a clock, date, map or search answer.",
-    "",
-    "Templates and examples: when you write ads, texts or samples, never invent facts such as ratings, prices, discount codes, phone numbers, addresses or statistics. Put every unknown specific in [square brackets] as a placeholder.",
-    "",
-    "Formatting:",
-    "- Be clear and concise. You may use Markdown: short paragraphs, lists only when they really help, bold sparingly, code blocks for code.",
-    "- Write stories, essays and explanations as flowing paragraphs. Never put every sentence on its own line.",
     "",
     "Honesty:",
     "- Do not invent facts. If you are not sure, say so.",
@@ -1533,11 +1595,16 @@ type AgentParams = {
   readonly signal: AbortSignal;
 };
 
+type CollectedCard = {
+  readonly kind: CardPayload["t"];
+  readonly marker: string;
+};
+
 async function* groqAgentChunks(
   params: AgentParams,
 ): AsyncGenerator<string, void, void> {
   const convo: OAIMessage[] = params.messages.map(toOAIMessage);
-  const cards: string[] = [];
+  const cards: CollectedCard[] = [];
   let body = params.firstBody;
 
   for (let round = 0; ; round += 1) {
@@ -1565,6 +1632,8 @@ async function* groqAgentChunks(
       })),
     });
 
+    const outcomes: ToolOutcome[] = [];
+
     for (const call of turn.toolCalls) {
       const outcome = await executeTool(
         call.name,
@@ -1572,6 +1641,8 @@ async function* groqAgentChunks(
         params.ctx,
         params.signal,
       );
+
+      outcomes.push(outcome);
 
       convo.push({
         role: "tool",
@@ -1582,10 +1653,27 @@ async function* groqAgentChunks(
       if (outcome.card) {
         const marker = encodeCard(outcome.card);
 
-        if (!cards.includes(marker) && cards.length < MAX_CARDS) {
-          cards.push(marker);
+        if (
+          !cards.some((entry) => entry.marker === marker) &&
+          cards.length < MAX_CARDS
+        ) {
+          cards.push({ kind: outcome.card.t, marker });
         }
       }
+    }
+
+    if (outcomes.every((outcome) => outcome.finalText !== undefined)) {
+      for (const outcome of outcomes) {
+        if (outcome.finalText) {
+          yield `${outcome.finalText}\n\n`;
+        }
+
+        if (outcome.card) {
+          yield `${encodeCard(outcome.card)}\n\n`;
+        }
+      }
+
+      return;
     }
 
     const next = await requestGroqRound(
@@ -1606,8 +1694,14 @@ async function* groqAgentChunks(
     body = next.body;
   }
 
-  for (const marker of cards) {
-    yield `\n\n${marker}`;
+  const hasUtilityCard = cards.some((entry) => entry.kind !== "sources");
+
+  for (const entry of cards) {
+    if (hasUtilityCard && entry.kind === "sources") {
+      continue;
+    }
+
+    yield `\n\n${entry.marker}`;
   }
 }
 
@@ -1880,10 +1974,12 @@ async function loadHistory(
 
   const rows = ((data ?? []) as ChatMessageRow[]).slice().reverse();
 
-  return rows.map((row) => ({
-    role: row.role,
-    content: stripMarkers(row.content),
-  }));
+  return rows
+    .map((row) => ({
+      role: row.role,
+      content: stripMarkers(row.content),
+    }))
+    .filter((message) => message.content.length > 0);
 }
 
 async function createConversation(
