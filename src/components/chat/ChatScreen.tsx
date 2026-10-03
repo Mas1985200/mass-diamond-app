@@ -4,9 +4,11 @@ import {
   useRef,
   useState,
   type ChangeEvent,
+  type CSSProperties,
   type KeyboardEvent,
   type ReactNode,
 } from "react";
+import { createPortal } from "react-dom";
 
 import { supabase } from "../../lib/supabase";
 import { useChat } from "../../hooks/useChat";
@@ -32,6 +34,7 @@ const STICK_THRESHOLD_PX = 80;
 const RESIZE_GRACE_MS = 400;
 const LOCATION_REFRESH_MS = 120_000;
 const SEND_IMAGE_SRC = "/send-diamond-full.png";
+const NO_PAGE_ZOOM = "pan-x pan-y";
 
 interface QuickAction {
   readonly id: string;
@@ -108,6 +111,16 @@ const SEARCH_GLOW_CSS = `
 .md-thinking-dot {
   animation: md-thinking 1.2s ease-in-out infinite;
 }
+.md-second-hand {
+  transition: transform 0.3s cubic-bezier(0.4, 2.2, 0.55, 1);
+}
+.md-sources > summary {
+  list-style: none;
+  cursor: pointer;
+}
+.md-sources > summary::-webkit-details-marker {
+  display: none;
+}
 .md-prose { width: 100%; }
 .md-prose ol,
 .md-prose ul {
@@ -129,6 +142,7 @@ const SEARCH_GLOW_CSS = `
 @media (prefers-reduced-motion: reduce) {
   .md-search-highlight { animation: none; }
   .md-thinking-dot { animation: none; opacity: 0.7; }
+  .md-second-hand { transition: none; }
 }
 `;
 
@@ -399,6 +413,31 @@ function dateKey(zone: string, date: Date): string {
   }).format(date);
 }
 
+interface ClockParts {
+  readonly hours: number;
+  readonly minutes: number;
+  readonly seconds: number;
+}
+
+function clockParts(date: Date, zone: string): ClockParts {
+  const parts = new Intl.DateTimeFormat("en-GB", {
+    timeZone: zone,
+    hour: "2-digit",
+    minute: "2-digit",
+    second: "2-digit",
+    hourCycle: "h23",
+  }).formatToParts(date);
+
+  const read = (type: string): number =>
+    Number(parts.find((part) => part.type === type)?.value ?? "0");
+
+  return {
+    hours: read("hour"),
+    minutes: read("minute"),
+    seconds: read("second"),
+  };
+}
+
 function shortDateText(date: Date, zone: string, lang: Lang): string {
   try {
     if (lang === "fa") {
@@ -484,46 +523,41 @@ function buildRelation(diff: number, day: DayRelation, lang: Lang): string {
 }
 
 interface ClockInfo {
-  readonly hours: number;
-  readonly minutes: number;
-  readonly seconds: number;
+  readonly hourAngle: number;
+  readonly minuteAngle: number;
+  readonly secondAngle: number;
   readonly digital: string;
   readonly dateLine: string;
   readonly title: string;
   readonly relation: string | null;
 }
 
-function describeClock(card: ClockCardData): ClockInfo | null {
+function describeClock(
+  card: ClockCardData,
+  elapsedSeconds: number,
+): ClockInfo | null {
   try {
-    const date = new Date(card.iso);
+    const base = new Date(card.iso);
 
-    if (Number.isNaN(date.getTime())) {
+    if (Number.isNaN(base.getTime())) {
       return null;
     }
 
     const zone = safeZone(card.zone);
     const refZone = safeZone(card.ref ?? browserZone());
+    const current = new Date(base.getTime() + elapsedSeconds * 1000);
 
-    const parts = new Intl.DateTimeFormat("en-GB", {
-      timeZone: zone,
-      hour: "2-digit",
-      minute: "2-digit",
-      second: "2-digit",
-      hourCycle: "h23",
-    }).formatToParts(date);
+    const start = clockParts(base, zone);
+    const now = clockParts(current, zone);
 
-    const read = (type: string): number =>
-      Number(parts.find((part) => part.type === type)?.value ?? "0");
-
-    const hours = read("hour");
-    const minutes = read("minute");
-    const seconds = read("second");
+    const secondsTotal = start.seconds + elapsedSeconds;
+    const minuteFraction = start.minutes + secondsTotal / 60;
     const pad = (value: number): string => String(value).padStart(2, "0");
 
     const diff =
-      zoneOffsetMinutes(zone, date) - zoneOffsetMinutes(refZone, date);
-    const zoneKey = dateKey(zone, date);
-    const refKey = dateKey(refZone, date);
+      zoneOffsetMinutes(zone, current) - zoneOffsetMinutes(refZone, current);
+    const zoneKey = dateKey(zone, current);
+    const refKey = dateKey(refZone, current);
 
     const day: DayRelation =
       zoneKey === refKey ? "same" : zoneKey > refKey ? "tomorrow" : "yesterday";
@@ -531,11 +565,11 @@ function describeClock(card: ClockCardData): ClockInfo | null {
     const showRelation = diff !== 0 || Boolean(card.label);
 
     return {
-      hours,
-      minutes,
-      seconds,
-      digital: `${pad(hours)}:${pad(minutes)}`,
-      dateLine: shortDateText(date, zone, card.lang),
+      hourAngle: ((start.hours % 12) + minuteFraction / 60) * 30,
+      minuteAngle: minuteFraction * 6,
+      secondAngle: secondsTotal * 6,
+      digital: `${pad(now.hours)}:${pad(now.minutes)}`,
+      dateLine: shortDateText(current, zone, card.lang),
       title: card.label ?? "",
       relation: showRelation ? buildRelation(diff, day, card.lang) : null,
     };
@@ -544,18 +578,39 @@ function describeClock(card: ClockCardData): ClockInfo | null {
   }
 }
 
+function useElapsedSeconds(): number {
+  const startRef = useRef<number>(Date.now());
+  const [elapsed, setElapsed] = useState(0);
+
+  useEffect(() => {
+    const timer = window.setInterval(() => {
+      setElapsed(Math.round((Date.now() - startRef.current) / 1000));
+    }, 1000);
+
+    return () => {
+      window.clearInterval(timer);
+    };
+  }, []);
+
+  return elapsed;
+}
+
+function handStyle(angle: number): CSSProperties {
+  return {
+    transform: `rotate(${angle}deg)`,
+    transformOrigin: "50px 50px",
+  };
+}
+
 function ClockFace({
-  hours,
-  minutes,
-  seconds,
+  hourAngle,
+  minuteAngle,
+  secondAngle,
 }: {
-  readonly hours: number;
-  readonly minutes: number;
-  readonly seconds: number;
+  readonly hourAngle: number;
+  readonly minuteAngle: number;
+  readonly secondAngle: number;
 }) {
-  const hourAngle = ((hours % 12) + minutes / 60) * 30;
-  const minuteAngle = (minutes + seconds / 60) * 6;
-  const secondAngle = seconds * 6;
   const ticks = Array.from({ length: 12 }, (_, index) => index);
   const numbers = Array.from({ length: 12 }, (_, index) => index + 1);
 
@@ -620,7 +675,7 @@ function ClockFace({
         stroke="currentColor"
         strokeWidth="3.2"
         strokeLinecap="round"
-        transform={`rotate(${hourAngle} 50 50)`}
+        style={handStyle(hourAngle)}
       />
       <line
         x1="50"
@@ -630,18 +685,19 @@ function ClockFace({
         stroke="currentColor"
         strokeWidth="2.2"
         strokeLinecap="round"
-        transform={`rotate(${minuteAngle} 50 50)`}
+        style={handStyle(minuteAngle)}
       />
       <line
+        className="md-second-hand"
         x1="50"
-        y1="56"
+        y1="58"
         x2="50"
-        y2="18"
+        y2="16"
         stroke="currentColor"
-        strokeOpacity="0.7"
+        strokeOpacity="0.8"
         strokeWidth="1"
         strokeLinecap="round"
-        transform={`rotate(${secondAngle} 50 50)`}
+        style={handStyle(secondAngle)}
       />
       <circle cx="50" cy="50" r="2.6" fill="currentColor" />
     </svg>
@@ -649,7 +705,8 @@ function ClockFace({
 }
 
 function ClockCard({ card }: { readonly card: ClockCardData }) {
-  const info = describeClock(card);
+  const elapsed = useElapsedSeconds();
+  const info = describeClock(card, elapsed);
 
   if (!info) {
     return null;
@@ -684,9 +741,9 @@ function ClockCard({ card }: { readonly card: ClockCardData }) {
       </div>
 
       <ClockFace
-        hours={info.hours}
-        minutes={info.minutes}
-        seconds={info.seconds}
+        hourAngle={info.hourAngle}
+        minuteAngle={info.minuteAngle}
+        secondAngle={info.secondAngle}
       />
     </div>
   );
@@ -708,9 +765,8 @@ function directionsHref(item: PlaceItem): string {
   return `https://www.google.com/maps/dir/?api=1&destination=${coord(item.lat)},${coord(item.lon)}`;
 }
 
-function embedSrc(item: PlaceItem): string {
-  const lonSpan = 0.006;
-  const latSpan = 0.003;
+function embedSrc(item: PlaceItem, lonSpan: number): string {
+  const latSpan = lonSpan / 2;
   const bbox = [
     item.lon - lonSpan,
     item.lat - latSpan,
@@ -740,7 +796,100 @@ function distanceLabel(km: number, lang: Lang): string {
 const PILL_CLASS =
   "rounded-full border border-[rgba(57,255,136,0.35)] px-3 py-1 text-xs text-primary transition-colors hover:bg-[rgba(57,255,136,0.08)]";
 
+function MapViewer({
+  item,
+  lang,
+  onClose,
+}: {
+  readonly item: PlaceItem;
+  readonly lang: Lang;
+  readonly onClose: () => void;
+}) {
+  const rtl = lang === "fa";
+
+  useEffect(() => {
+    const onKey = (event: { readonly key: string }): void => {
+      if (event.key === "Escape") {
+        onClose();
+      }
+    };
+
+    window.addEventListener("keydown", onKey);
+
+    return () => {
+      window.removeEventListener("keydown", onKey);
+    };
+  }, [onClose]);
+
+  return createPortal(
+    <div
+      role="dialog"
+      aria-modal="true"
+      aria-label={item.name}
+      dir={rtl ? "rtl" : "ltr"}
+      className="fixed inset-0 z-[100] flex flex-col bg-[#060907]"
+    >
+      <div
+        className="flex items-center justify-between gap-3 px-4 py-3"
+        style={{ touchAction: "none" }}
+      >
+        <div className="min-w-0">
+          <div dir="auto" className="truncate text-sm font-semibold text-text">
+            {item.name}
+          </div>
+          {item.address && (
+            <div dir="auto" className="truncate text-xs text-text-subtle">
+              {item.address}
+            </div>
+          )}
+        </div>
+
+        <button
+          type="button"
+          onClick={onClose}
+          aria-label={rtl ? "بستن نقشه" : "Close map"}
+          className="md-glass flex h-10 w-10 shrink-0 items-center justify-center rounded-full text-xl leading-none text-primary"
+        >
+          ×
+        </button>
+      </div>
+
+      <iframe
+        src={embedSrc(item, 0.012)}
+        title={item.name}
+        referrerPolicy="no-referrer"
+        className="min-h-0 w-full flex-1 border-0"
+      />
+
+      <div className="flex flex-wrap gap-2 px-4 py-3">
+        <a href={geoHref(item)} className={PILL_CLASS}>
+          {rtl ? "باز کردن در برنامه‌ی نقشه" : "Open in Maps app"}
+        </a>
+        <a
+          href={directionsHref(item)}
+          target="_blank"
+          rel="noopener noreferrer"
+          className={PILL_CLASS}
+        >
+          {rtl ? "مسیریابی" : "Directions"}
+        </a>
+        <a
+          href={osmHref(item)}
+          target="_blank"
+          rel="noopener noreferrer"
+          className={PILL_CLASS}
+        >
+          OpenStreetMap
+        </a>
+      </div>
+    </div>,
+    document.body,
+  );
+}
+
 function PlacesCard({ card }: { readonly card: PlacesCardData }) {
+  const [viewer, setViewer] = useState<PlaceItem | null>(null);
+  const closeViewer = useCallback((): void => setViewer(null), []);
   const first = card.items[0];
 
   if (!first) {
@@ -749,27 +898,38 @@ function PlacesCard({ card }: { readonly card: PlacesCardData }) {
 
   const rtl = card.lang === "fa";
 
+  const handlePreviewKey = (event: KeyboardEvent<HTMLDivElement>) => {
+    if (event.key === "Enter" || event.key === " ") {
+      event.preventDefault();
+      setViewer(first);
+    }
+  };
+
   return (
     <div
       dir={rtl ? "rtl" : "ltr"}
       className="md-glass my-3 w-full max-w-sm overflow-hidden rounded-2xl"
     >
-      <a
-        href={osmHref(first)}
-        target="_blank"
-        rel="noopener noreferrer"
-        aria-label={first.name}
-        className="block bg-black/30"
+      <div
+        role="button"
+        tabIndex={0}
+        aria-label={rtl ? `نمایش نقشه‌ی ${first.name}` : `Show map of ${first.name}`}
+        onClick={() => setViewer(first)}
+        onKeyDown={handlePreviewKey}
+        className="relative block cursor-pointer bg-black/30"
       >
         <iframe
-          src={embedSrc(first)}
+          src={embedSrc(first, 0.006)}
           title={first.name}
           loading="lazy"
           referrerPolicy="no-referrer"
           tabIndex={-1}
           className="pointer-events-none block h-40 w-full border-0"
         />
-      </a>
+        <span className="absolute bottom-2 start-2 rounded-full bg-black/70 px-3 py-1 text-[11px] text-primary">
+          {rtl ? "برای بزرگ‌نمایی بزنید" : "Tap to enlarge"}
+        </span>
+      </div>
 
       <ul className="divide-y divide-white/10">
         {card.items.map((item, index) => (
@@ -796,6 +956,13 @@ function PlacesCard({ card }: { readonly card: PlacesCardData }) {
             </div>
 
             <div className="mt-2 flex flex-wrap gap-2">
+              <button
+                type="button"
+                onClick={() => setViewer(item)}
+                className={PILL_CLASS}
+              >
+                {rtl ? "بزرگ‌نمایی" : "Enlarge"}
+              </button>
               <a href={geoHref(item)} className={PILL_CLASS}>
                 {rtl ? "باز کردن در نقشه" : "Open in Maps"}
               </a>
@@ -811,23 +978,38 @@ function PlacesCard({ card }: { readonly card: PlacesCardData }) {
           </li>
         ))}
       </ul>
+
+      {viewer && (
+        <MapViewer item={viewer} lang={card.lang} onClose={closeViewer} />
+      )}
     </div>
   );
 }
 
 function SourcesCard({ card }: { readonly card: SourcesCardData }) {
   const rtl = card.lang === "fa";
+  const count = card.items.length.toLocaleString(rtl ? "fa-IR" : "en-US");
+  const domains = Array.from(
+    new Set(card.items.map((item) => item.domain).filter(Boolean)),
+  )
+    .slice(0, 2)
+    .join(" · ");
 
   return (
-    <div
+    <details
       dir={rtl ? "rtl" : "ltr"}
-      className="md-glass my-3 w-full max-w-sm rounded-2xl px-4 py-3"
+      className="md-sources md-glass my-2 w-full max-w-sm rounded-xl px-3 py-2"
     >
-      <div className="mb-2 text-xs font-semibold text-text-subtle">
-        {rtl ? "منابع" : "Sources"}
-      </div>
+      <summary className="flex items-center justify-between gap-3 text-xs text-text-subtle">
+        <span className="shrink-0">
+          {rtl ? `منابع (${count})` : `Sources (${count})`}
+        </span>
+        <span dir="ltr" className="truncate text-[11px]">
+          {domains}
+        </span>
+      </summary>
 
-      <ul className="flex flex-col gap-2.5">
+      <ul className="mt-2 flex flex-col gap-2.5">
         {card.items.map((item, index) => (
           <li key={`${item.url}-${index}`}>
             <a
@@ -848,7 +1030,7 @@ function SourcesCard({ card }: { readonly card: SourcesCardData }) {
           </li>
         ))}
       </ul>
-    </div>
+    </details>
   );
 }
 
@@ -868,8 +1050,6 @@ interface LocationFix {
   readonly lon: number;
   readonly at: number;
 }
-
-type LocationState = "off" | "loading" | "on";
 
 function round4(value: number): number {
   return Math.round(value * 10_000) / 10_000;
@@ -902,22 +1082,6 @@ function readPosition(
   });
 }
 
-function describeLocationError(error: unknown): string {
-  if (isRecord(error) && typeof error.code === "number") {
-    if (error.code === 1) {
-      return "اجازه‌ی دسترسی به موقعیت داده نشد. از تنظیمات مرورگر برای این سایت فعالش کنید.";
-    }
-
-    if (error.code === 3) {
-      return "دریافت موقعیت طول کشید. دوباره تلاش کنید.";
-    }
-
-    return "موقعیت شما پیدا نشد.";
-  }
-
-  return "مرورگر شما از موقعیت‌یابی پشتیبانی نمی‌کند.";
-}
-
 export default function ChatScreen() {
   const {
     messages,
@@ -934,8 +1098,6 @@ export default function ChatScreen() {
   const [activeId, setActiveId] = useState<string | null>(null);
   const [viewportHeight, setViewportHeight] = useState<number | null>(null);
   const [showJump, setShowJump] = useState(false);
-  const [locationState, setLocationState] = useState<LocationState>("off");
-  const [locationNotice, setLocationNotice] = useState<string | null>(null);
   const inputRef = useRef<HTMLTextAreaElement | null>(null);
   const mainRef = useRef<HTMLElement | null>(null);
   const listRef = useRef<HTMLUListElement | null>(null);
@@ -973,6 +1135,17 @@ export default function ChatScreen() {
   }, []);
 
   useEffect(() => {
+    const root = document.documentElement;
+    const previous = root.style.touchAction;
+
+    root.style.touchAction = NO_PAGE_ZOOM;
+
+    return () => {
+      root.style.touchAction = previous;
+    };
+  }, []);
+
+  useEffect(() => {
     let cancelled = false;
 
     const start = async (): Promise<void> => {
@@ -992,7 +1165,8 @@ export default function ChatScreen() {
         status.onchange = () => {
           if (status.state === "denied") {
             locationRef.current = null;
-            setLocationState("off");
+          } else if (status.state === "granted") {
+            void refreshLocation();
           }
         };
       } catch {
@@ -1003,24 +1177,16 @@ export default function ChatScreen() {
         return;
       }
 
-      setLocationState("loading");
-
       try {
         const fix = await readPosition(12_000, 60_000);
 
-        if (cancelled) {
-          return;
+        if (!cancelled) {
+          locationRef.current = fix;
         }
-
-        locationRef.current = fix;
-        setLocationState("on");
       } catch {
-        if (cancelled) {
-          return;
+        if (!cancelled) {
+          locationRef.current = null;
         }
-
-        locationRef.current = null;
-        setLocationState("off");
       }
     };
 
@@ -1029,19 +1195,7 @@ export default function ChatScreen() {
     return () => {
       cancelled = true;
     };
-  }, []);
-
-  useEffect(() => {
-    if (!locationNotice) {
-      return;
-    }
-
-    const timer = window.setTimeout(() => setLocationNotice(null), 4500);
-
-    return () => {
-      window.clearTimeout(timer);
-    };
-  }, [locationNotice]);
+  }, [refreshLocation]);
 
   useEffect(() => {
     const viewport = window.visualViewport;
@@ -1052,8 +1206,11 @@ export default function ChatScreen() {
 
     const update = () => {
       lastResizeAtRef.current = Date.now();
-      setViewportHeight(viewport.height);
-      window.scrollTo(0, 0);
+      setViewportHeight(Math.round(viewport.height * viewport.scale));
+
+      if (viewport.scale <= 1.01) {
+        window.scrollTo(0, 0);
+      }
     };
 
     update();
@@ -1224,29 +1381,6 @@ export default function ChatScreen() {
     scrollToBottom();
   };
 
-  const handleToggleLocation = async () => {
-    if (locationState === "loading") {
-      return;
-    }
-
-    if (locationState === "on") {
-      locationRef.current = null;
-      setLocationState("off");
-      return;
-    }
-
-    setLocationState("loading");
-
-    try {
-      locationRef.current = await readPosition(12_000, 0);
-      setLocationState("on");
-    } catch (failure) {
-      locationRef.current = null;
-      setLocationState("off");
-      setLocationNotice(describeLocationError(failure));
-    }
-  };
-
   const submit = async (raw: string) => {
     const text = raw.trim();
 
@@ -1254,7 +1388,7 @@ export default function ChatScreen() {
       return;
     }
 
-    const fix = locationState === "on" ? locationRef.current : null;
+    const fix = locationRef.current;
 
     if (fix && Date.now() - fix.at > LOCATION_REFRESH_MS) {
       void refreshLocation();
@@ -1332,25 +1466,12 @@ export default function ChatScreen() {
     void supabase.auth.signOut();
   };
 
-  const locationButtonClass =
-    locationState === "on"
-      ? "border border-[rgba(57,255,136,0.55)] bg-[rgba(57,255,136,0.12)] text-primary"
-      : locationState === "loading"
-        ? "animate-pulse text-primary"
-        : "text-text-subtle hover:text-primary";
-
-  const locationLabel =
-    locationState === "on"
-      ? "موقعیت فعال است. برای قطع اشتراک بزنید"
-      : locationState === "loading"
-        ? "در حال دریافت موقعیت"
-        : "فعال کردن موقعیت";
-
   return (
     <div
       className="relative flex flex-col overflow-hidden"
       style={{
         height: viewportHeight !== null ? `${viewportHeight}px` : "100dvh",
+        touchAction: NO_PAGE_ZOOM,
       }}
     >
       <style>{SEARCH_GLOW_CSS}</style>
@@ -1361,26 +1482,14 @@ export default function ChatScreen() {
         className="z-10 flex items-center justify-between px-3 py-1"
         dir="ltr"
       >
-        <div className="flex items-center gap-1">
-          <button
-            type="button"
-            onClick={handleSignOut}
-            aria-label="خروج از حساب"
-            className="flex h-10 w-10 items-center justify-center rounded-full text-text-subtle transition-colors hover:text-primary"
-          >
-            <SignOutIcon />
-          </button>
-
-          <button
-            type="button"
-            onClick={() => void handleToggleLocation()}
-            aria-label={locationLabel}
-            aria-pressed={locationState === "on"}
-            className={`flex h-10 w-10 items-center justify-center rounded-full transition-colors ${locationButtonClass}`}
-          >
-            <PinIcon />
-          </button>
-        </div>
+        <button
+          type="button"
+          onClick={handleSignOut}
+          aria-label="خروج از حساب"
+          className="flex h-10 w-10 items-center justify-center rounded-full text-text-subtle transition-colors hover:text-primary"
+        >
+          <SignOutIcon />
+        </button>
 
         {hasMessages ? (
           <button
@@ -1400,6 +1509,7 @@ export default function ChatScreen() {
       <main
         ref={mainRef}
         onScroll={handleScroll}
+        style={{ touchAction: NO_PAGE_ZOOM }}
         className="z-10 flex-1 overflow-y-auto px-4"
       >
         {hasMessages ? (
@@ -1516,16 +1626,6 @@ export default function ChatScreen() {
           </button>
         )}
 
-        {locationNotice && (
-          <div
-            role="status"
-            dir="rtl"
-            className="mx-auto mb-2 w-full max-w-xl rounded-xl border border-amber-300/20 bg-amber-300/10 px-4 py-2 text-sm leading-6 text-amber-200"
-          >
-            {locationNotice}
-          </div>
-        )}
-
         {error && (
           <div
             role="alert"
@@ -1632,15 +1732,6 @@ function iconProps() {
     strokeLinejoin: "round" as const,
     className: "w-5 h-5",
   };
-}
-
-function PinIcon() {
-  return (
-    <svg {...iconProps()}>
-      <path d="M12 21s7-6.2 7-11a7 7 0 0 0-14 0c0 4.8 7 11 7 11Z" />
-      <circle cx="12" cy="10" r="2.6" />
-    </svg>
-  );
 }
 
 function AttachIcon() {
