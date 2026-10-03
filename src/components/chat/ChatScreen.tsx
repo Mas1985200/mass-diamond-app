@@ -30,6 +30,7 @@ const ERROR_MESSAGES: Record<ChatErrorCode, string> = {
 const DEFAULT_PLACEHOLDER = "چطور می‌تونم کمکت کنم؟";
 const STICK_THRESHOLD_PX = 80;
 const RESIZE_GRACE_MS = 400;
+const LOCATION_REFRESH_MS = 120_000;
 const SEND_IMAGE_SRC = "/send-diamond-full.png";
 
 interface QuickAction {
@@ -131,24 +132,182 @@ const SEARCH_GLOW_CSS = `
 }
 `;
 
-const CLOCK_RE =
-  /:::md-clock~([^~\s]+)~([A-Za-z0-9_\/+-]+)~(fa|en):::/g;
+type Lang = "fa" | "en";
+
+interface ClockCardData {
+  readonly t: "clock";
+  readonly iso: string;
+  readonly zone: string;
+  readonly ref?: string;
+  readonly label?: string;
+  readonly lang: Lang;
+}
+
+interface PlaceItem {
+  readonly name: string;
+  readonly address: string;
+  readonly lat: number;
+  readonly lon: number;
+  readonly km?: number;
+}
+
+interface PlacesCardData {
+  readonly t: "places";
+  readonly lang: Lang;
+  readonly items: readonly PlaceItem[];
+}
+
+interface SourceItem {
+  readonly title: string;
+  readonly url: string;
+  readonly domain: string;
+}
+
+interface SourcesCardData {
+  readonly t: "sources";
+  readonly lang: Lang;
+  readonly items: readonly SourceItem[];
+}
+
+type CardData = ClockCardData | PlacesCardData | SourcesCardData;
+
+const MARKER_RE =
+  /:::md-(?:clock~([^~\s]+)~([A-Za-z0-9_\/+-]+)~(fa|en)|card~([A-Za-z0-9_-]+)):::/g;
 const PENDING_MARKER_RE = /:{2,3}(?:m[^\n]*)?$/;
 
 type ContentPart =
   | { readonly kind: "text"; readonly text: string }
-  | {
-      readonly kind: "clock";
-      readonly iso: string;
-      readonly zone: string;
-      readonly lang: "fa" | "en";
-    };
+  | { readonly kind: "card"; readonly card: CardData };
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === "object" && value !== null;
+}
+
+function asText(value: unknown, max: number): string | null {
+  return typeof value === "string" && value ? value.slice(0, max) : null;
+}
+
+function asSafeUrl(value: unknown): string | null {
+  if (typeof value !== "string") {
+    return null;
+  }
+
+  try {
+    const url = new URL(value);
+
+    return url.protocol === "https:" || url.protocol === "http:"
+      ? url.toString()
+      : null;
+  } catch {
+    return null;
+  }
+}
+
+function asLang(value: unknown): Lang {
+  return value === "en" ? "en" : "fa";
+}
+
+function parseCard(value: unknown): CardData | null {
+  if (!isRecord(value)) {
+    return null;
+  }
+
+  if (value.t === "clock") {
+    const iso = asText(value.iso, 40);
+    const zone = asText(value.zone, 64);
+
+    if (!iso || !zone) {
+      return null;
+    }
+
+    const ref = asText(value.ref, 64) ?? undefined;
+    const label = asText(value.label, 80) ?? undefined;
+
+    return { t: "clock", iso, zone, ref, label, lang: asLang(value.lang) };
+  }
+
+  if (value.t === "places" && Array.isArray(value.items)) {
+    const items: PlaceItem[] = [];
+
+    for (const raw of value.items.slice(0, 3)) {
+      if (!isRecord(raw)) {
+        continue;
+      }
+
+      const name = asText(raw.name, 80);
+      const address = asText(raw.address, 160) ?? "";
+      const lat = typeof raw.lat === "number" ? raw.lat : Number.NaN;
+      const lon = typeof raw.lon === "number" ? raw.lon : Number.NaN;
+
+      if (
+        !name ||
+        !Number.isFinite(lat) ||
+        !Number.isFinite(lon) ||
+        Math.abs(lat) > 90 ||
+        Math.abs(lon) > 180
+      ) {
+        continue;
+      }
+
+      const km =
+        typeof raw.km === "number" && Number.isFinite(raw.km)
+          ? raw.km
+          : undefined;
+
+      items.push({ name, address, lat, lon, km });
+    }
+
+    return items.length > 0
+      ? { t: "places", lang: asLang(value.lang), items }
+      : null;
+  }
+
+  if (value.t === "sources" && Array.isArray(value.items)) {
+    const items: SourceItem[] = [];
+
+    for (const raw of value.items.slice(0, 5)) {
+      if (!isRecord(raw)) {
+        continue;
+      }
+
+      const title = asText(raw.title, 140);
+      const url = asSafeUrl(raw.url);
+      const domain = asText(raw.domain, 80) ?? "";
+
+      if (!title || !url) {
+        continue;
+      }
+
+      items.push({ title, url, domain });
+    }
+
+    return items.length > 0
+      ? { t: "sources", lang: asLang(value.lang), items }
+      : null;
+  }
+
+  return null;
+}
+
+function decodeCard(body: string): CardData | null {
+  try {
+    const base64 = body.replace(/-/g, "+").replace(/_/g, "/");
+    const padded = base64 + "=".repeat((4 - (base64.length % 4)) % 4);
+    const binary = atob(padded);
+    const bytes = Uint8Array.from(binary, (char) => char.charCodeAt(0));
+    const parsed: unknown = JSON.parse(new TextDecoder().decode(bytes));
+
+    return parseCard(parsed);
+  } catch {
+    return null;
+  }
+}
 
 function splitAssistantContent(raw: string): ContentPart[] {
   const parts: ContentPart[] = [];
   let cursor = 0;
 
-  for (const match of raw.matchAll(CLOCK_RE)) {
+  for (const match of raw.matchAll(MARKER_RE)) {
     const index = match.index ?? 0;
     const before = raw.slice(cursor, index).trim();
 
@@ -156,12 +315,22 @@ function splitAssistantContent(raw: string): ContentPart[] {
       parts.push({ kind: "text", text: before });
     }
 
-    parts.push({
-      kind: "clock",
-      iso: match[1],
-      zone: match[2],
-      lang: match[3] === "en" ? "en" : "fa",
-    });
+    const iso = match[1];
+    const zone = match[2];
+    const lang = match[3];
+    const cardBody = match[4];
+
+    let card: CardData | null = null;
+
+    if (cardBody !== undefined) {
+      card = decodeCard(cardBody);
+    } else if (iso !== undefined && zone !== undefined) {
+      card = { t: "clock", iso, zone, lang: lang === "en" ? "en" : "fa" };
+    }
+
+    if (card) {
+      parts.push({ kind: "card", card });
+    }
 
     cursor = index + match[0].length;
   }
@@ -175,6 +344,157 @@ function splitAssistantContent(raw: string): ContentPart[] {
   return parts;
 }
 
+function safeZone(zone: string): string {
+  try {
+    new Intl.DateTimeFormat("en-US", { timeZone: zone });
+    return zone;
+  } catch {
+    return "UTC";
+  }
+}
+
+function browserZone(): string {
+  try {
+    return Intl.DateTimeFormat().resolvedOptions().timeZone || "UTC";
+  } catch {
+    return "UTC";
+  }
+}
+
+function zoneOffsetMinutes(zone: string, date: Date): number {
+  const parts = new Intl.DateTimeFormat("en-US", {
+    timeZone: zone,
+    hourCycle: "h23",
+    year: "numeric",
+    month: "2-digit",
+    day: "2-digit",
+    hour: "2-digit",
+    minute: "2-digit",
+    second: "2-digit",
+  }).formatToParts(date);
+
+  const read = (type: string): number =>
+    Number(parts.find((part) => part.type === type)?.value ?? "0");
+
+  const asUtc = Date.UTC(
+    read("year"),
+    read("month") - 1,
+    read("day"),
+    read("hour"),
+    read("minute"),
+    read("second"),
+  );
+
+  const truncated = Math.floor(date.getTime() / 1000) * 1000;
+
+  return Math.round((asUtc - truncated) / 60000);
+}
+
+function formatOffset(minutes: number): string {
+  const sign = minutes < 0 ? "-" : "+";
+  const abs = Math.abs(minutes);
+  const hours = String(Math.floor(abs / 60)).padStart(2, "0");
+  const rest = String(abs % 60).padStart(2, "0");
+
+  return `${sign}${hours}:${rest}`;
+}
+
+function dateKey(zone: string, date: Date): string {
+  return new Intl.DateTimeFormat("en-CA", {
+    timeZone: zone,
+    year: "numeric",
+    month: "2-digit",
+    day: "2-digit",
+  }).format(date);
+}
+
+function persianDateText(date: Date, zone: string): string {
+  try {
+    const parts = new Intl.DateTimeFormat("fa-IR-u-ca-persian", {
+      timeZone: zone,
+      weekday: "long",
+      day: "numeric",
+      month: "long",
+      year: "numeric",
+    }).formatToParts(date);
+
+    const pick = (type: string): string =>
+      parts.find((part) => part.type === type)?.value ?? "";
+
+    const weekday = pick("weekday");
+    const core = [pick("day"), pick("month"), pick("year")]
+      .filter(Boolean)
+      .join(" ");
+
+    if (!core) {
+      return "";
+    }
+
+    return weekday ? `${weekday}، ${core}` : core;
+  } catch {
+    return "";
+  }
+}
+
+type DayRelation = "same" | "tomorrow" | "yesterday";
+
+function buildRelation(diff: number, day: DayRelation, lang: Lang): string {
+  const abs = Math.abs(diff);
+  const hours = Math.floor(abs / 60);
+  const minutes = abs % 60;
+  const number = (value: number): string =>
+    value.toLocaleString(lang === "fa" ? "fa-IR" : "en-US");
+
+  const dayWord =
+    day === "same"
+      ? lang === "fa"
+        ? "امروز"
+        : "Today"
+      : day === "tomorrow"
+        ? lang === "fa"
+          ? "فردا"
+          : "Tomorrow"
+        : lang === "fa"
+          ? "دیروز"
+          : "Yesterday";
+
+  if (diff === 0) {
+    return lang === "fa"
+      ? `${dayWord} · هم‌ساعت با شما`
+      : `${dayWord} · Same time as you`;
+  }
+
+  if (lang === "fa") {
+    const pieces: string[] = [];
+
+    if (hours > 0) {
+      pieces.push(`${number(hours)} ساعت`);
+    }
+
+    if (minutes > 0) {
+      pieces.push(`${number(minutes)} دقیقه`);
+    }
+
+    return `${dayWord} · ${pieces.join(" و ")} ${
+      diff > 0 ? "جلوتر از شما" : "عقب‌تر از شما"
+    }`;
+  }
+
+  const pieces: string[] = [];
+
+  if (hours > 0) {
+    pieces.push(`${hours}h`);
+  }
+
+  if (minutes > 0) {
+    pieces.push(`${minutes}m`);
+  }
+
+  return `${dayWord} · ${pieces.join(" ")} ${
+    diff > 0 ? "ahead of you" : "behind you"
+  }`;
+}
+
 interface ClockInfo {
   readonly hours: number;
   readonly minutes: number;
@@ -182,31 +502,24 @@ interface ClockInfo {
   readonly digital: string;
   readonly primaryDate: string;
   readonly secondaryDate: string;
-  readonly zone: string;
+  readonly title: string;
+  readonly zoneLine: string;
+  readonly relation: string | null;
 }
 
-function describeClock(
-  iso: string,
-  zone: string,
-  lang: "fa" | "en",
-): ClockInfo | null {
+function describeClock(card: ClockCardData): ClockInfo | null {
   try {
-    const date = new Date(iso);
+    const date = new Date(card.iso);
 
     if (Number.isNaN(date.getTime())) {
       return null;
     }
 
-    let timeZone = zone;
-
-    try {
-      new Intl.DateTimeFormat("en-US", { timeZone });
-    } catch {
-      timeZone = "UTC";
-    }
+    const zone = safeZone(card.zone);
+    const refZone = safeZone(card.ref ?? browserZone());
 
     const parts = new Intl.DateTimeFormat("en-GB", {
-      timeZone,
+      timeZone: zone,
       hour: "2-digit",
       minute: "2-digit",
       second: "2-digit",
@@ -216,22 +529,16 @@ function describeClock(
     const read = (type: string): number =>
       Number(parts.find((part) => part.type === type)?.value ?? "0");
 
-    const digital = new Intl.DateTimeFormat(
-      lang === "fa" ? "fa-IR" : "en-GB",
-      { timeZone, hour: "2-digit", minute: "2-digit", hourCycle: "h23" },
-    ).format(date);
+    const hours = read("hour");
+    const minutes = read("minute");
+    const seconds = read("second");
+    const pad = (value: number): string => String(value).padStart(2, "0");
 
     const primaryDate =
-      lang === "fa"
-        ? new Intl.DateTimeFormat("fa-IR-u-ca-persian", {
-            timeZone,
-            weekday: "long",
-            day: "numeric",
-            month: "long",
-            year: "numeric",
-          }).format(date)
+      card.lang === "fa"
+        ? persianDateText(date, zone)
         : new Intl.DateTimeFormat("en-US", {
-            timeZone,
+            timeZone: zone,
             weekday: "long",
             month: "long",
             day: "numeric",
@@ -239,23 +546,35 @@ function describeClock(
           }).format(date);
 
     const secondaryDate =
-      lang === "fa"
+      card.lang === "fa"
         ? new Intl.DateTimeFormat("fa-IR-u-ca-gregory", {
-            timeZone,
+            timeZone: zone,
             day: "numeric",
             month: "long",
             year: "numeric",
           }).format(date)
         : "";
 
+    const offset = zoneOffsetMinutes(zone, date);
+    const diff = offset - zoneOffsetMinutes(refZone, date);
+    const zoneKey = dateKey(zone, date);
+    const refKey = dateKey(refZone, date);
+
+    const day: DayRelation =
+      zoneKey === refKey ? "same" : zoneKey > refKey ? "tomorrow" : "yesterday";
+
+    const showRelation = diff !== 0 || Boolean(card.label);
+
     return {
-      hours: read("hour"),
-      minutes: read("minute"),
-      seconds: read("second"),
-      digital,
+      hours,
+      minutes,
+      seconds,
+      digital: `${pad(hours)}:${pad(minutes)}`,
       primaryDate,
       secondaryDate,
-      zone: timeZone,
+      title: card.label ?? "",
+      zoneLine: `${zone} · UTC${formatOffset(offset)}`,
+      relation: showRelation ? buildRelation(diff, day, card.lang) : null,
     };
   } catch {
     return null;
@@ -275,12 +594,13 @@ function ClockFace({
   const minuteAngle = (minutes + seconds / 60) * 6;
   const secondAngle = seconds * 6;
   const ticks = Array.from({ length: 12 }, (_, index) => index);
+  const numbers = Array.from({ length: 12 }, (_, index) => index + 1);
 
   return (
     <svg
       viewBox="0 0 100 100"
       aria-hidden="true"
-      className="h-24 w-24 shrink-0 text-primary"
+      className="h-28 w-28 shrink-0 text-primary"
       style={{ filter: "drop-shadow(0 0 6px rgba(57,255,136,0.35))" }}
     >
       <circle
@@ -297,24 +617,45 @@ function ClockFace({
         <line
           key={index}
           x1="50"
-          y1="8"
+          y1="7"
           x2="50"
-          y2={index % 3 === 0 ? 16 : 12}
+          y2={index % 3 === 0 ? 12 : 10}
           stroke="currentColor"
           strokeOpacity="0.85"
-          strokeWidth={index % 3 === 0 ? 2 : 1}
+          strokeWidth={index % 3 === 0 ? 1.8 : 1}
           strokeLinecap="round"
           transform={`rotate(${index * 30} 50 50)`}
         />
       ))}
 
+      {numbers.map((value) => {
+        const angle = (value * 30 * Math.PI) / 180;
+        const x = 50 + 31 * Math.sin(angle);
+        const y = 50 - 31 * Math.cos(angle);
+
+        return (
+          <text
+            key={value}
+            x={x}
+            y={y}
+            fontSize="8"
+            textAnchor="middle"
+            dominantBaseline="central"
+            fill="currentColor"
+            fillOpacity="0.9"
+          >
+            {value}
+          </text>
+        );
+      })}
+
       <line
         x1="50"
         y1="50"
         x2="50"
-        y2="29"
+        y2="33"
         stroke="currentColor"
-        strokeWidth="3.2"
+        strokeWidth="3"
         strokeLinecap="round"
         transform={`rotate(${hourAngle} 50 50)`}
       />
@@ -322,9 +663,9 @@ function ClockFace({
         x1="50"
         y1="50"
         x2="50"
-        y2="18"
+        y2="24"
         stroke="currentColor"
-        strokeWidth="2.2"
+        strokeWidth="2.1"
         strokeLinecap="round"
         transform={`rotate(${minuteAngle} 50 50)`}
       />
@@ -332,46 +673,43 @@ function ClockFace({
         x1="50"
         y1="56"
         x2="50"
-        y2="14"
+        y2="20"
         stroke="currentColor"
         strokeOpacity="0.7"
-        strokeWidth="1"
+        strokeWidth="0.9"
         strokeLinecap="round"
         transform={`rotate(${secondAngle} 50 50)`}
       />
-      <circle cx="50" cy="50" r="2.6" fill="currentColor" />
+      <circle cx="50" cy="50" r="2.4" fill="currentColor" />
     </svg>
   );
 }
 
-function ClockCard({
-  iso,
-  zone,
-  lang,
-}: {
-  readonly iso: string;
-  readonly zone: string;
-  readonly lang: "fa" | "en";
-}) {
-  const info = describeClock(iso, zone, lang);
+function ClockCard({ card }: { readonly card: ClockCardData }) {
+  const info = describeClock(card);
 
   if (!info) {
     return null;
   }
 
+  const rtl = card.lang === "fa";
+
   return (
     <div
-      dir={lang === "fa" ? "rtl" : "ltr"}
-      className="md-glass my-3 flex w-full max-w-xs items-center gap-4 rounded-2xl px-4 py-3"
+      dir={rtl ? "rtl" : "ltr"}
+      className="md-glass my-3 flex w-full max-w-sm items-center gap-3 rounded-2xl px-4 py-3"
     >
-      <ClockFace
-        hours={info.hours}
-        minutes={info.minutes}
-        seconds={info.seconds}
-      />
-
-      <div className="min-w-0">
-        <div className="text-3xl font-bold leading-none tabular-nums text-primary">
+      <div className="min-w-0 flex-1">
+        {info.title && (
+          <div className="mb-1 truncate text-sm font-semibold text-text">
+            {info.title}
+          </div>
+        )}
+        <div
+          dir="ltr"
+          className="text-4xl font-bold leading-none tabular-nums text-primary"
+          style={{ textAlign: rtl ? "right" : "left" }}
+        >
           {info.digital}
         </div>
         <div className="mt-2 text-sm leading-6 text-text">
@@ -382,12 +720,249 @@ function ClockCard({
             {info.secondaryDate}
           </div>
         )}
+        {info.relation && (
+          <div className="mt-1 text-xs leading-5 text-text-subtle">
+            {info.relation}
+          </div>
+        )}
         <div dir="ltr" className="mt-1 text-[11px] text-text-subtle">
-          {info.zone}
+          {info.zoneLine}
         </div>
       </div>
+
+      <ClockFace
+        hours={info.hours}
+        minutes={info.minutes}
+        seconds={info.seconds}
+      />
     </div>
   );
+}
+
+function coord(value: number): string {
+  return value.toFixed(6);
+}
+
+function osmHref(item: PlaceItem): string {
+  return `https://www.openstreetmap.org/?mlat=${coord(item.lat)}&mlon=${coord(item.lon)}#map=17/${coord(item.lat)}/${coord(item.lon)}`;
+}
+
+function geoHref(item: PlaceItem): string {
+  return `geo:${coord(item.lat)},${coord(item.lon)}?q=${coord(item.lat)},${coord(item.lon)}(${encodeURIComponent(item.name)})`;
+}
+
+function directionsHref(item: PlaceItem): string {
+  return `https://www.google.com/maps/dir/?api=1&destination=${coord(item.lat)},${coord(item.lon)}`;
+}
+
+function embedSrc(item: PlaceItem): string {
+  const lonSpan = 0.006;
+  const latSpan = 0.003;
+  const bbox = [
+    item.lon - lonSpan,
+    item.lat - latSpan,
+    item.lon + lonSpan,
+    item.lat + latSpan,
+  ]
+    .map(coord)
+    .join(",");
+
+  return `https://www.openstreetmap.org/export/embed.html?bbox=${bbox}&layer=mapnik&marker=${coord(item.lat)},${coord(item.lon)}`;
+}
+
+function distanceLabel(km: number, lang: Lang): string {
+  if (km < 1) {
+    const meters = Math.max(10, Math.round((km * 1000) / 10) * 10);
+
+    return lang === "fa"
+      ? `${meters.toLocaleString("fa-IR")} متر`
+      : `${meters} m`;
+  }
+
+  return lang === "fa"
+    ? `${km.toLocaleString("fa-IR", { maximumFractionDigits: 1 })} کیلومتر`
+    : `${km.toLocaleString("en-US", { maximumFractionDigits: 1 })} km`;
+}
+
+const PILL_CLASS =
+  "rounded-full border border-[rgba(57,255,136,0.35)] px-3 py-1 text-xs text-primary transition-colors hover:bg-[rgba(57,255,136,0.08)]";
+
+function PlacesCard({ card }: { readonly card: PlacesCardData }) {
+  const first = card.items[0];
+
+  if (!first) {
+    return null;
+  }
+
+  const rtl = card.lang === "fa";
+
+  return (
+    <div
+      dir={rtl ? "rtl" : "ltr"}
+      className="md-glass my-3 w-full max-w-sm overflow-hidden rounded-2xl"
+    >
+      <a
+        href={osmHref(first)}
+        target="_blank"
+        rel="noopener noreferrer"
+        aria-label={first.name}
+        className="block bg-black/30"
+      >
+        <iframe
+          src={embedSrc(first)}
+          title={first.name}
+          loading="lazy"
+          referrerPolicy="no-referrer"
+          tabIndex={-1}
+          className="pointer-events-none block h-40 w-full border-0"
+        />
+      </a>
+
+      <ul className="divide-y divide-white/10">
+        {card.items.map((item, index) => (
+          <li key={`${item.lat}-${item.lon}-${index}`} className="px-4 py-3">
+            <div className="flex items-start justify-between gap-3">
+              <div className="min-w-0">
+                <div dir="auto" className="text-sm font-semibold text-text">
+                  {item.name}
+                </div>
+                {item.address && (
+                  <div
+                    dir="auto"
+                    className="mt-0.5 text-xs leading-5 text-text-subtle"
+                  >
+                    {item.address}
+                  </div>
+                )}
+              </div>
+              {item.km !== undefined && (
+                <span className="shrink-0 text-xs text-primary">
+                  {distanceLabel(item.km, card.lang)}
+                </span>
+              )}
+            </div>
+
+            <div className="mt-2 flex flex-wrap gap-2">
+              <a href={geoHref(item)} className={PILL_CLASS}>
+                {rtl ? "باز کردن در نقشه" : "Open in Maps"}
+              </a>
+              <a
+                href={directionsHref(item)}
+                target="_blank"
+                rel="noopener noreferrer"
+                className={PILL_CLASS}
+              >
+                {rtl ? "مسیریابی" : "Directions"}
+              </a>
+            </div>
+          </li>
+        ))}
+      </ul>
+    </div>
+  );
+}
+
+function SourcesCard({ card }: { readonly card: SourcesCardData }) {
+  const rtl = card.lang === "fa";
+
+  return (
+    <div
+      dir={rtl ? "rtl" : "ltr"}
+      className="md-glass my-3 w-full max-w-sm rounded-2xl px-4 py-3"
+    >
+      <div className="mb-2 text-xs font-semibold text-text-subtle">
+        {rtl ? "منابع" : "Sources"}
+      </div>
+
+      <ul className="flex flex-col gap-2.5">
+        {card.items.map((item, index) => (
+          <li key={`${item.url}-${index}`}>
+            <a
+              href={item.url}
+              target="_blank"
+              rel="noopener noreferrer"
+              className="block"
+            >
+              <div dir="auto" className="text-sm leading-6 text-primary">
+                {item.title}
+              </div>
+              {item.domain && (
+                <div dir="ltr" className="text-[11px] text-text-subtle">
+                  {item.domain}
+                </div>
+              )}
+            </a>
+          </li>
+        ))}
+      </ul>
+    </div>
+  );
+}
+
+function CardView({ card }: { readonly card: CardData }) {
+  switch (card.t) {
+    case "clock":
+      return <ClockCard card={card} />;
+    case "places":
+      return <PlacesCard card={card} />;
+    case "sources":
+      return <SourcesCard card={card} />;
+  }
+}
+
+interface LocationFix {
+  readonly lat: number;
+  readonly lon: number;
+  readonly at: number;
+}
+
+type LocationState = "off" | "loading" | "on";
+
+function round4(value: number): number {
+  return Math.round(value * 10_000) / 10_000;
+}
+
+function readPosition(
+  timeoutMs: number,
+  maximumAgeMs: number,
+): Promise<LocationFix> {
+  return new Promise((resolve, reject) => {
+    if (typeof navigator === "undefined" || !navigator.geolocation) {
+      reject(new Error("unsupported"));
+      return;
+    }
+
+    navigator.geolocation.getCurrentPosition(
+      (position) =>
+        resolve({
+          lat: round4(position.coords.latitude),
+          lon: round4(position.coords.longitude),
+          at: Date.now(),
+        }),
+      (failure) => reject(failure),
+      {
+        enableHighAccuracy: false,
+        timeout: timeoutMs,
+        maximumAge: maximumAgeMs,
+      },
+    );
+  });
+}
+
+function describeLocationError(error: unknown): string {
+  if (isRecord(error) && typeof error.code === "number") {
+    if (error.code === 1) {
+      return "اجازه‌ی دسترسی به موقعیت داده نشد.";
+    }
+
+    if (error.code === 3) {
+      return "دریافت موقعیت طول کشید. دوباره تلاش کنید.";
+    }
+
+    return "موقعیت شما پیدا نشد.";
+  }
+
+  return "مرورگر شما از موقعیت‌یابی پشتیبانی نمی‌کند.";
 }
 
 export default function ChatScreen() {
@@ -406,6 +981,8 @@ export default function ChatScreen() {
   const [activeId, setActiveId] = useState<string | null>(null);
   const [viewportHeight, setViewportHeight] = useState<number | null>(null);
   const [showJump, setShowJump] = useState(false);
+  const [locationState, setLocationState] = useState<LocationState>("off");
+  const [locationNotice, setLocationNotice] = useState<string | null>(null);
   const inputRef = useRef<HTMLTextAreaElement | null>(null);
   const mainRef = useRef<HTMLElement | null>(null);
   const listRef = useRef<HTMLUListElement | null>(null);
@@ -414,6 +991,7 @@ export default function ChatScreen() {
   const lastScrollTopRef = useRef(0);
   const lastResizeAtRef = useRef(0);
   const shiftHeldRef = useRef(false);
+  const locationRef = useRef<LocationFix | null>(null);
 
   const hasMessages = messages.length > 0;
   const canSend = draft.trim().length > 0 && !isSending;
@@ -432,6 +1010,26 @@ export default function ChatScreen() {
     element.scrollTop = element.scrollHeight;
     lastScrollTopRef.current = element.scrollTop;
   }, []);
+
+  const refreshLocation = useCallback(async (): Promise<void> => {
+    try {
+      locationRef.current = await readPosition(8000, 60_000);
+    } catch {
+      // Keep the previous fix.
+    }
+  }, []);
+
+  useEffect(() => {
+    if (!locationNotice) {
+      return;
+    }
+
+    const timer = window.setTimeout(() => setLocationNotice(null), 4500);
+
+    return () => {
+      window.clearTimeout(timer);
+    };
+  }, [locationNotice]);
 
   useEffect(() => {
     const viewport = window.visualViewport;
@@ -614,6 +1212,29 @@ export default function ChatScreen() {
     scrollToBottom();
   };
 
+  const handleToggleLocation = async () => {
+    if (locationState === "loading") {
+      return;
+    }
+
+    if (locationState === "on") {
+      locationRef.current = null;
+      setLocationState("off");
+      return;
+    }
+
+    setLocationState("loading");
+
+    try {
+      locationRef.current = await readPosition(12_000, 0);
+      setLocationState("on");
+    } catch (failure) {
+      locationRef.current = null;
+      setLocationState("off");
+      setLocationNotice(describeLocationError(failure));
+    }
+  };
+
   const submit = async (raw: string) => {
     const text = raw.trim();
 
@@ -621,11 +1242,21 @@ export default function ChatScreen() {
       return;
     }
 
+    const fix = locationState === "on" ? locationRef.current : null;
+
+    if (fix && Date.now() - fix.at > LOCATION_REFRESH_MS) {
+      void refreshLocation();
+    }
+
     stickToBottomRef.current = true;
     setShowJump(false);
     setDraft("");
     setActiveId(null);
-    await sendMessage(text);
+
+    await sendMessage(
+      text,
+      fix ? { location: { lat: fix.lat, lon: fix.lon } } : undefined,
+    );
   };
 
   const handleSend = async () => {
@@ -689,6 +1320,20 @@ export default function ChatScreen() {
     void supabase.auth.signOut();
   };
 
+  const locationButtonClass =
+    locationState === "on"
+      ? "border border-[rgba(57,255,136,0.55)] bg-[rgba(57,255,136,0.12)] text-primary"
+      : locationState === "loading"
+        ? "animate-pulse text-primary"
+        : "text-text-subtle hover:text-primary";
+
+  const locationLabel =
+    locationState === "on"
+      ? "قطع اشتراک موقعیت"
+      : locationState === "loading"
+        ? "در حال دریافت موقعیت"
+        : "اشتراک موقعیت من";
+
   return (
     <div
       className="relative flex flex-col overflow-hidden"
@@ -704,14 +1349,26 @@ export default function ChatScreen() {
         className="z-10 flex items-center justify-between px-3 py-1"
         dir="ltr"
       >
-        <button
-          type="button"
-          onClick={handleSignOut}
-          aria-label="خروج از حساب"
-          className="flex h-10 w-10 items-center justify-center rounded-full text-text-subtle transition-colors hover:text-primary"
-        >
-          <SignOutIcon />
-        </button>
+        <div className="flex items-center gap-1">
+          <button
+            type="button"
+            onClick={handleSignOut}
+            aria-label="خروج از حساب"
+            className="flex h-10 w-10 items-center justify-center rounded-full text-text-subtle transition-colors hover:text-primary"
+          >
+            <SignOutIcon />
+          </button>
+
+          <button
+            type="button"
+            onClick={() => void handleToggleLocation()}
+            aria-label={locationLabel}
+            aria-pressed={locationState === "on"}
+            className={`flex h-10 w-10 items-center justify-center rounded-full transition-colors ${locationButtonClass}`}
+          >
+            <PinIcon />
+          </button>
+        </div>
 
         {hasMessages ? (
           <button
@@ -754,13 +1411,8 @@ export default function ChatScreen() {
                   <div className="md-prose w-full px-1 text-[15px] text-text">
                     {splitAssistantContent(message.content).map(
                       (part, index) =>
-                        part.kind === "clock" ? (
-                          <ClockCard
-                            key={`clock-${index}`}
-                            iso={part.iso}
-                            zone={part.zone}
-                            lang={part.lang}
-                          />
+                        part.kind === "card" ? (
+                          <CardView key={`card-${index}`} card={part.card} />
                         ) : (
                           <MarkdownText key={`text-${index}`} text={part.text} />
                         ),
@@ -850,6 +1502,16 @@ export default function ChatScreen() {
           >
             <DownIcon />
           </button>
+        )}
+
+        {locationNotice && (
+          <div
+            role="status"
+            dir="rtl"
+            className="mx-auto mb-2 w-full max-w-xl rounded-xl border border-amber-300/20 bg-amber-300/10 px-4 py-2 text-sm leading-6 text-amber-200"
+          >
+            {locationNotice}
+          </div>
         )}
 
         {error && (
@@ -958,6 +1620,15 @@ function iconProps() {
     strokeLinejoin: "round" as const,
     className: "w-5 h-5",
   };
+}
+
+function PinIcon() {
+  return (
+    <svg {...iconProps()}>
+      <path d="M12 21s7-6.2 7-11a7 7 0 0 0-14 0c0 4.8 7 11 7 11Z" />
+      <circle cx="12" cy="10" r="2.6" />
+    </svg>
+  );
 }
 
 function AttachIcon() {
