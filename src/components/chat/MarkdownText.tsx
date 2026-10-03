@@ -26,8 +26,27 @@ const QUOTE_PATTERN = /^>\s?(.*)$/;
 const BULLET_PATTERN = /^[-*•]\s+(.+)$/;
 const ORDERED_PATTERN = /^[0-9۰-۹]+[.)]\s+(.+)$/;
 
+const RTL_CHAR = /[\u0590-\u08FF\uFB1D-\uFDFF\uFE70-\uFEFF]/;
+const LTR_CHAR = /[A-Za-z\u00C0-\u024F\u0370-\u03FF\u0400-\u04FF]/;
+
 const INLINE_SOURCE =
   "(`[^`\\n]+`)|(\\*\\*[^*\\n]+?\\*\\*)|(\\*[^*\\s][^*\\n]*?\\*)|(\\[[^\\]\\n]+\\]\\((https?:\\/\\/[^\\s)]+)\\))";
+
+function detectDirection(texts: readonly string[]): "rtl" | "ltr" {
+  for (const text of texts) {
+    for (const char of text) {
+      if (RTL_CHAR.test(char)) {
+        return "rtl";
+      }
+
+      if (LTR_CHAR.test(char)) {
+        return "ltr";
+      }
+    }
+  }
+
+  return "rtl";
+}
 
 function isBlockStart(trimmed: string): boolean {
   return (
@@ -253,20 +272,49 @@ function renderBlock(block: Block, key: string): ReactNode {
       );
 
     case "list": {
-      const items = block.items.map((item, itemIndex) => (
-        <li key={`${key}-i${itemIndex}`} className="break-words">
-          {renderInline(item, `${key}-i${itemIndex}`)}
-        </li>
-      ));
+      const direction = detectDirection(block.items);
+      const numberLocale = direction === "rtl" ? "fa-IR" : "en-US";
 
-      return block.ordered ? (
-        <ol key={key} dir="auto" className="list-decimal space-y-1.5 px-5">
-          {items}
-        </ol>
-      ) : (
-        <ul key={key} dir="auto" className="list-disc space-y-1.5 px-5">
-          {items}
-        </ul>
+      return (
+        <div
+          key={key}
+          role="list"
+          dir={direction}
+          style={{ direction }}
+          className="flex flex-col gap-1.5 px-1"
+        >
+          {block.items.map((item, itemIndex) => {
+            const marker = block.ordered
+              ? `${(itemIndex + 1).toLocaleString(numberLocale, {
+                  useGrouping: false,
+                })}.`
+              : "•";
+
+            return (
+              <div
+                key={`${key}-i${itemIndex}`}
+                role="listitem"
+                dir={direction}
+                style={{ direction, textAlign: "start" }}
+                className="flex items-start gap-2.5 leading-7"
+              >
+                <span
+                  aria-hidden="true"
+                  className="min-w-[1.1rem] shrink-0 select-none text-center text-text-subtle"
+                >
+                  {marker}
+                </span>
+                <span
+                  dir={direction}
+                  style={{ direction, textAlign: "start" }}
+                  className="min-w-0 flex-1 break-words"
+                >
+                  {renderInline(item, `${key}-i${itemIndex}`)}
+                </span>
+              </div>
+            );
+          })}
+        </div>
       );
     }
 
