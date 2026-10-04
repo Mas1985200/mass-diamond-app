@@ -32,6 +32,7 @@ const BULLET_PATTERN = /^[-*•]\s+(.+)$/;
 const ORDERED_PATTERN = /^[0-9۰-۹]+[.)]\s+(.+)$/;
 const TABLE_SEPARATOR_PATTERN =
   /^\|?\s*:?-{2,}:?\s*(?:\|\s*:?-{2,}:?\s*)*\|?$/;
+const EMPTY_CELL_PATTERN = /^[-–—\s]*$/;
 
 const RTL_CHAR = /[\u0590-\u08FF\uFB1D-\uFDFF\uFE70-\uFEFF]/;
 const LTR_CHAR = /[A-Za-z\u00C0-\u024F\u0370-\u03FF\u0400-\u04FF]/;
@@ -302,6 +303,100 @@ function renderInline(text: string, keyPrefix: string): ReactNode[] {
   return nodes;
 }
 
+function renderTable(
+  block: Extract<Block, { kind: "table" }>,
+  key: string,
+): ReactNode {
+  const direction = detectDirection([...block.header, ...block.rows.flat()]);
+
+  return (
+    <div key={key} dir={direction} className="w-full">
+      <div className="flex flex-col gap-2.5 sm:hidden">
+        {block.rows.map((row, rowIndex) => {
+          const title = row[0] ?? "";
+          const rest = row.slice(1);
+
+          return (
+            <div
+              key={`${key}-m${rowIndex}`}
+              className="rounded-2xl border border-[rgba(57,255,136,0.18)] bg-[rgba(57,255,136,0.04)] px-3.5 py-3"
+            >
+              <div className="text-[15px] font-semibold leading-6 text-text">
+                {renderInline(
+                  EMPTY_CELL_PATTERN.test(title) ? "•" : title,
+                  `${key}-m${rowIndex}t`,
+                )}
+              </div>
+
+              <div className="mt-2 flex flex-col gap-1.5">
+                {rest.map((cell, cellIndex) => {
+                  if (EMPTY_CELL_PATTERN.test(cell)) {
+                    return null;
+                  }
+
+                  const label = block.header[cellIndex + 1] ?? "";
+
+                  return (
+                    <div
+                      key={`${key}-m${rowIndex}c${cellIndex}`}
+                      className="flex items-start justify-between gap-4 text-sm leading-6"
+                    >
+                      <span className="shrink-0 pt-0.5 text-xs text-text-subtle">
+                        {renderInline(label, `${key}-m${rowIndex}l${cellIndex}`)}
+                      </span>
+                      <span className="min-w-0 flex-1 break-words text-end text-text">
+                        {renderInline(cell, `${key}-m${rowIndex}v${cellIndex}`)}
+                      </span>
+                    </div>
+                  );
+                })}
+              </div>
+            </div>
+          );
+        })}
+      </div>
+
+      <div className="hidden w-full overflow-hidden rounded-2xl border border-[rgba(57,255,136,0.2)] sm:block">
+        <table
+          style={{ direction }}
+          className="w-full border-collapse text-sm leading-6"
+        >
+          <thead>
+            <tr className="bg-[rgba(57,255,136,0.08)]">
+              {block.header.map((cell, cellIndex) => (
+                <th
+                  key={`${key}-h${cellIndex}`}
+                  style={{ textAlign: "start" }}
+                  className="px-4 py-2.5 font-semibold text-primary"
+                >
+                  {renderInline(cell, `${key}-h${cellIndex}`)}
+                </th>
+              ))}
+            </tr>
+          </thead>
+          <tbody>
+            {block.rows.map((row, rowIndex) => (
+              <tr key={`${key}-r${rowIndex}`} className="even:bg-white/[0.03]">
+                {row.map((cell, cellIndex) => (
+                  <td
+                    key={`${key}-r${rowIndex}c${cellIndex}`}
+                    style={{ textAlign: "start" }}
+                    className={`break-words border-t border-white/5 px-4 py-2.5 align-top ${
+                      cellIndex === 0 ? "font-semibold text-text" : ""
+                    }`}
+                  >
+                    {renderInline(cell, `${key}-r${rowIndex}c${cellIndex}`)}
+                  </td>
+                ))}
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      </div>
+    </div>
+  );
+}
+
 function renderBlock(block: Block, key: string): ReactNode {
   switch (block.kind) {
     case "paragraph":
@@ -316,8 +411,12 @@ function renderBlock(block: Block, key: string): ReactNode {
         <p
           key={key}
           dir="auto"
-          className={`font-semibold text-text break-words ${
-            block.level === 1 ? "text-lg" : "text-base"
+          className={`break-words ${
+            block.level === 1
+              ? "text-xl font-bold text-text"
+              : block.level === 2
+                ? "text-lg font-bold text-text"
+                : "text-base font-semibold text-primary"
           }`}
         >
           {renderInline(block.text, key)}
@@ -382,54 +481,8 @@ function renderBlock(block: Block, key: string): ReactNode {
       );
     }
 
-    case "table": {
-      const direction = detectDirection([
-        ...block.header,
-        ...block.rows.flat(),
-      ]);
-
-      return (
-        <div
-          key={key}
-          dir={direction}
-          className="w-full overflow-x-auto rounded-xl border border-white/10"
-        >
-          <table
-            style={{ direction }}
-            className="w-full border-collapse text-sm leading-6"
-          >
-            <thead>
-              <tr>
-                {block.header.map((cell, cellIndex) => (
-                  <th
-                    key={`${key}-h${cellIndex}`}
-                    style={{ textAlign: "start" }}
-                    className="border-b border-white/10 bg-white/5 px-3 py-2 font-semibold text-text"
-                  >
-                    {renderInline(cell, `${key}-h${cellIndex}`)}
-                  </th>
-                ))}
-              </tr>
-            </thead>
-            <tbody>
-              {block.rows.map((row, rowIndex) => (
-                <tr key={`${key}-r${rowIndex}`}>
-                  {row.map((cell, cellIndex) => (
-                    <td
-                      key={`${key}-r${rowIndex}c${cellIndex}`}
-                      style={{ textAlign: "start" }}
-                      className="min-w-[6.5rem] break-words border-b border-white/5 px-3 py-2 align-top"
-                    >
-                      {renderInline(cell, `${key}-r${rowIndex}c${cellIndex}`)}
-                    </td>
-                  ))}
-                </tr>
-              ))}
-            </tbody>
-          </table>
-        </div>
-      );
-    }
+    case "table":
+      return renderTable(block, key);
 
     case "quote":
       return (
