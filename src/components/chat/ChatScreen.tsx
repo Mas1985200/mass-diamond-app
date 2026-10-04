@@ -35,6 +35,9 @@ const RESIZE_GRACE_MS = 400;
 const LOCATION_REFRESH_MS = 120_000;
 const SEND_IMAGE_SRC = "/send-diamond-full.png";
 const NO_PAGE_ZOOM = "pan-x pan-y";
+const TILE_SIZE = 256;
+const PREVIEW_ZOOM = 16;
+const PREVIEW_HEIGHT = 168;
 
 interface QuickAction {
   readonly id: string;
@@ -114,13 +117,6 @@ const SEARCH_GLOW_CSS = `
 .md-second-hand {
   transition: transform 0.3s cubic-bezier(0.4, 2.2, 0.55, 1);
 }
-.md-sources > summary {
-  list-style: none;
-  cursor: pointer;
-}
-.md-sources > summary::-webkit-details-marker {
-  display: none;
-}
 .md-prose { width: 100%; }
 .md-prose ol,
 .md-prose ul {
@@ -171,19 +167,7 @@ interface PlacesCardData {
   readonly items: readonly PlaceItem[];
 }
 
-interface SourceItem {
-  readonly title: string;
-  readonly url: string;
-  readonly domain: string;
-}
-
-interface SourcesCardData {
-  readonly t: "sources";
-  readonly lang: Lang;
-  readonly items: readonly SourceItem[];
-}
-
-type CardData = ClockCardData | PlacesCardData | SourcesCardData;
+type CardData = ClockCardData | PlacesCardData;
 
 const MARKER_RE =
   /:::md-(?:clock~([^~\s]+)~([A-Za-z0-9_\/+-]+)~(fa|en)|card~([A-Za-z0-9_-]+)):::/g;
@@ -199,22 +183,6 @@ function isRecord(value: unknown): value is Record<string, unknown> {
 
 function asText(value: unknown, max: number): string | null {
   return typeof value === "string" && value ? value.slice(0, max) : null;
-}
-
-function asSafeUrl(value: unknown): string | null {
-  if (typeof value !== "string") {
-    return null;
-  }
-
-  try {
-    const url = new URL(value);
-
-    return url.protocol === "https:" || url.protocol === "http:"
-      ? url.toString()
-      : null;
-  } catch {
-    return null;
-  }
 }
 
 function asLang(value: unknown): Lang {
@@ -273,30 +241,6 @@ function parseCard(value: unknown): CardData | null {
 
     return items.length > 0
       ? { t: "places", lang: asLang(value.lang), items }
-      : null;
-  }
-
-  if (value.t === "sources" && Array.isArray(value.items)) {
-    const items: SourceItem[] = [];
-
-    for (const raw of value.items.slice(0, 5)) {
-      if (!isRecord(raw)) {
-        continue;
-      }
-
-      const title = asText(raw.title, 140);
-      const url = asSafeUrl(raw.url);
-      const domain = asText(raw.domain, 80) ?? "";
-
-      if (!title || !url) {
-        continue;
-      }
-
-      items.push({ title, url, domain });
-    }
-
-    return items.length > 0
-      ? { t: "sources", lang: asLang(value.lang), items }
       : null;
   }
 
@@ -796,6 +740,115 @@ function distanceLabel(km: number, lang: Lang): string {
 const PILL_CLASS =
   "rounded-full border border-[rgba(57,255,136,0.35)] px-3 py-1 text-xs text-primary transition-colors hover:bg-[rgba(57,255,136,0.08)]";
 
+function tileFraction(
+  lat: number,
+  lon: number,
+  zoom: number,
+): { readonly x: number; readonly y: number } {
+  const n = 2 ** zoom;
+  const latRad = (lat * Math.PI) / 180;
+
+  return {
+    x: ((lon + 180) / 360) * n,
+    y:
+      ((1 - Math.log(Math.tan(latRad) + 1 / Math.cos(latRad)) / Math.PI) / 2) *
+      n,
+  };
+}
+
+function MapPreview({
+  item,
+  label,
+}: {
+  readonly item: PlaceItem;
+  readonly label: string;
+}) {
+  const n = 2 ** PREVIEW_ZOOM;
+  const { x, y } = tileFraction(item.lat, item.lon, PREVIEW_ZOOM);
+
+  const tiles: Array<{
+    readonly key: string;
+    readonly src: string;
+    readonly left: string;
+    readonly top: string;
+  }> = [];
+
+  for (let tx = Math.floor(x - 0.9); tx <= Math.floor(x + 0.9); tx += 1) {
+    for (let ty = Math.floor(y - 0.4); ty <= Math.floor(y + 0.4); ty += 1) {
+      if (ty < 0 || ty >= n) {
+        continue;
+      }
+
+      const wrapped = ((tx % n) + n) % n;
+
+      tiles.push({
+        key: `${tx}/${ty}`,
+        src: `https://tile.openstreetmap.org/${PREVIEW_ZOOM}/${wrapped}/${ty}.png`,
+        left: `calc(50% + ${Math.round((tx - x) * TILE_SIZE)}px)`,
+        top: `calc(50% + ${Math.round((ty - y) * TILE_SIZE)}px)`,
+      });
+    }
+  }
+
+  return (
+    <div
+      dir="ltr"
+      className="relative w-full overflow-hidden bg-[#0b120d]"
+      style={{ height: PREVIEW_HEIGHT }}
+    >
+      {tiles.map((tile) => (
+        <img
+          key={tile.key}
+          src={tile.src}
+          alt=""
+          width={TILE_SIZE}
+          height={TILE_SIZE}
+          loading="lazy"
+          draggable={false}
+          referrerPolicy="no-referrer"
+          className="absolute max-w-none select-none"
+          style={{
+            left: tile.left,
+            top: tile.top,
+            width: TILE_SIZE,
+            height: TILE_SIZE,
+          }}
+        />
+      ))}
+
+      <svg
+        width="30"
+        height="38"
+        viewBox="0 0 30 38"
+        aria-hidden="true"
+        style={{
+          position: "absolute",
+          left: "50%",
+          top: "50%",
+          transform: "translate(-50%, -100%)",
+          filter: "drop-shadow(0 2px 3px rgba(0,0,0,0.45))",
+        }}
+      >
+        <path
+          d="M15 37C15 37 2 23.5 2 14.5a13 13 0 0 1 26 0C28 23.5 15 37 15 37Z"
+          fill="#39ff88"
+          stroke="#0b2415"
+          strokeWidth="2"
+        />
+        <circle cx="15" cy="14.5" r="5" fill="#0b2415" />
+      </svg>
+
+      <span className="absolute left-2 top-2 rounded-full bg-black/70 px-3 py-1 text-[11px] text-primary">
+        {label}
+      </span>
+
+      <span className="absolute bottom-1 right-1 rounded bg-white/80 px-1 text-[9px] text-black/70">
+        © OpenStreetMap
+      </span>
+    </div>
+  );
+}
+
 function MapViewer({
   item,
   lang,
@@ -913,22 +966,14 @@ function PlacesCard({ card }: { readonly card: PlacesCardData }) {
       <div
         role="button"
         tabIndex={0}
-        aria-label={rtl ? `نمایش نقشه‌ی ${first.name}` : `Show map of ${first.name}`}
+        aria-label={
+          rtl ? `نمایش نقشه‌ی ${first.name}` : `Show map of ${first.name}`
+        }
         onClick={() => setViewer(first)}
         onKeyDown={handlePreviewKey}
-        className="relative block cursor-pointer bg-black/30"
+        className="block cursor-pointer"
       >
-        <iframe
-          src={embedSrc(first, 0.006)}
-          title={first.name}
-          loading="lazy"
-          referrerPolicy="no-referrer"
-          tabIndex={-1}
-          className="pointer-events-none block h-40 w-full border-0"
-        />
-        <span className="absolute bottom-2 start-2 rounded-full bg-black/70 px-3 py-1 text-[11px] text-primary">
-          {rtl ? "برای بزرگ‌نمایی بزنید" : "Tap to enlarge"}
-        </span>
+        <MapPreview item={first} label={rtl ? "بزرگ‌نمایی" : "Enlarge"} />
       </div>
 
       <ul className="divide-y divide-white/10">
@@ -986,62 +1031,12 @@ function PlacesCard({ card }: { readonly card: PlacesCardData }) {
   );
 }
 
-function SourcesCard({ card }: { readonly card: SourcesCardData }) {
-  const rtl = card.lang === "fa";
-  const count = card.items.length.toLocaleString(rtl ? "fa-IR" : "en-US");
-  const domains = Array.from(
-    new Set(card.items.map((item) => item.domain).filter(Boolean)),
-  )
-    .slice(0, 2)
-    .join(" · ");
-
-  return (
-    <details
-      dir={rtl ? "rtl" : "ltr"}
-      className="md-sources md-glass my-2 w-full max-w-sm rounded-xl px-3 py-2"
-    >
-      <summary className="flex items-center justify-between gap-3 text-xs text-text-subtle">
-        <span className="shrink-0">
-          {rtl ? `منابع (${count})` : `Sources (${count})`}
-        </span>
-        <span dir="ltr" className="truncate text-[11px]">
-          {domains}
-        </span>
-      </summary>
-
-      <ul className="mt-2 flex flex-col gap-2.5">
-        {card.items.map((item, index) => (
-          <li key={`${item.url}-${index}`}>
-            <a
-              href={item.url}
-              target="_blank"
-              rel="noopener noreferrer"
-              className="block"
-            >
-              <div dir="auto" className="text-sm leading-6 text-primary">
-                {item.title}
-              </div>
-              {item.domain && (
-                <div dir="ltr" className="text-[11px] text-text-subtle">
-                  {item.domain}
-                </div>
-              )}
-            </a>
-          </li>
-        ))}
-      </ul>
-    </details>
-  );
-}
-
 function CardView({ card }: { readonly card: CardData }) {
   switch (card.t) {
     case "clock":
       return <ClockCard card={card} />;
     case "places":
       return <PlacesCard card={card} />;
-    case "sources":
-      return <SourcesCard card={card} />;
   }
 }
 
