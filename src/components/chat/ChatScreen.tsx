@@ -7,6 +7,7 @@ import {
   type CSSProperties,
   type KeyboardEvent,
   type ReactNode,
+  type WheelEvent,
 } from "react";
 import { createPortal } from "react-dom";
 
@@ -38,6 +39,7 @@ const NO_PAGE_ZOOM = "pan-x pan-y";
 const TILE_SIZE = 256;
 const PREVIEW_ZOOM = 16;
 const PREVIEW_HEIGHT = 168;
+const PHOTO_HOST_PATTERN = /^https:\/\/upload\.wikimedia\.org\//;
 
 interface QuickAction {
   readonly id: string;
@@ -117,6 +119,12 @@ const SEARCH_GLOW_CSS = `
 .md-second-hand {
   transition: transform 0.3s cubic-bezier(0.4, 2.2, 0.55, 1);
 }
+.md-gallery {
+  scrollbar-width: none;
+}
+.md-gallery::-webkit-scrollbar {
+  display: none;
+}
 .md-prose { width: 100%; }
 .md-prose ol,
 .md-prose ul {
@@ -167,7 +175,18 @@ interface PlacesCardData {
   readonly items: readonly PlaceItem[];
 }
 
-type CardData = ClockCardData | PlacesCardData;
+interface PhotoItem {
+  readonly src: string;
+  readonly title: string;
+}
+
+interface PhotosCardData {
+  readonly t: "photos";
+  readonly lang: Lang;
+  readonly items: readonly PhotoItem[];
+}
+
+type CardData = ClockCardData | PlacesCardData | PhotosCardData;
 
 const MARKER_RE =
   /:::md-(?:clock~([^~\s]+)~([A-Za-z0-9_\/+-]+)~(fa|en)|card~([A-Za-z0-9_-]+)):::/g;
@@ -241,6 +260,28 @@ function parseCard(value: unknown): CardData | null {
 
     return items.length > 0
       ? { t: "places", lang: asLang(value.lang), items }
+      : null;
+  }
+
+  if (value.t === "photos" && Array.isArray(value.items)) {
+    const items: PhotoItem[] = [];
+
+    for (const raw of value.items.slice(0, 5)) {
+      if (!isRecord(raw)) {
+        continue;
+      }
+
+      const src = asText(raw.src, 600);
+
+      if (!src || !PHOTO_HOST_PATTERN.test(src)) {
+        continue;
+      }
+
+      items.push({ src, title: asText(raw.title, 100) ?? "" });
+    }
+
+    return items.length > 0
+      ? { t: "photos", lang: asLang(value.lang), items }
       : null;
   }
 
@@ -805,7 +846,7 @@ function MapPreview({
           height={TILE_SIZE}
           loading="lazy"
           draggable={false}
-          referrerPolicy="no-referrer"
+          referrerPolicy="origin"
           className="absolute max-w-none select-none"
           style={{
             left: tile.left,
@@ -1031,12 +1072,44 @@ function PlacesCard({ card }: { readonly card: PlacesCardData }) {
   );
 }
 
+function PhotosCard({ card }: { readonly card: PhotosCardData }) {
+  return (
+    <div
+      dir={card.lang === "fa" ? "rtl" : "ltr"}
+      className="my-3 w-full max-w-sm"
+    >
+      <div className="md-gallery -mx-1 flex snap-x snap-mandatory gap-2.5 overflow-x-auto px-1 pb-1">
+        {card.items.map((item, index) => (
+          <a
+            key={`${item.src}-${index}`}
+            href={item.src}
+            target="_blank"
+            rel="noopener noreferrer"
+            className="block h-36 w-52 shrink-0 snap-start overflow-hidden rounded-2xl border border-white/10 bg-black/30"
+          >
+            <img
+              src={item.src}
+              alt={item.title}
+              loading="lazy"
+              draggable={false}
+              referrerPolicy="no-referrer"
+              className="h-full w-full select-none object-cover"
+            />
+          </a>
+        ))}
+      </div>
+    </div>
+  );
+}
+
 function CardView({ card }: { readonly card: CardData }) {
   switch (card.t) {
     case "clock":
       return <ClockCard card={card} />;
     case "places":
       return <PlacesCard card={card} />;
+    case "photos":
+      return <PhotosCard card={card} />;
   }
 }
 
@@ -1098,6 +1171,7 @@ export default function ChatScreen() {
   const listRef = useRef<HTMLUListElement | null>(null);
   const chatHistoryPushedRef = useRef(false);
   const stickToBottomRef = useRef(true);
+  const touchingRef = useRef(false);
   const lastScrollTopRef = useRef(0);
   const lastResizeAtRef = useRef(0);
   const shiftHeldRef = useRef(false);
@@ -1240,6 +1314,7 @@ export default function ChatScreen() {
     if (!hasMessages) {
       chatHistoryPushedRef.current = false;
       stickToBottomRef.current = true;
+      touchingRef.current = false;
       lastScrollTopRef.current = 0;
       setShowJump(false);
     }
@@ -1280,10 +1355,12 @@ export default function ChatScreen() {
       return;
     }
 
-    scrollToBottom();
+    if (!touchingRef.current) {
+      scrollToBottom();
+    }
 
     const frame = requestAnimationFrame(() => {
-      if (stickToBottomRef.current) {
+      if (stickToBottomRef.current && !touchingRef.current) {
         scrollToBottom();
       }
     });
@@ -1319,7 +1396,7 @@ export default function ChatScreen() {
         }
       }
 
-      if (stickToBottomRef.current) {
+      if (stickToBottomRef.current && !touchingRef.current) {
         scrollToBottom();
       }
     });
@@ -1344,6 +1421,17 @@ export default function ChatScreen() {
 
     lastScrollTopRef.current = currentTop;
 
+    const scrolledUp = currentTop < previousTop - 1;
+
+    if (touchingRef.current) {
+      if (scrolledUp) {
+        stickToBottomRef.current = false;
+        setShowJump(true);
+      }
+
+      return;
+    }
+
     const distance =
       element.scrollHeight - currentTop - element.clientHeight;
 
@@ -1353,7 +1441,6 @@ export default function ChatScreen() {
       return;
     }
 
-    const scrolledUp = currentTop < previousTop - 1;
     const resizedRecently =
       Date.now() - lastResizeAtRef.current < RESIZE_GRACE_MS;
 
@@ -1366,6 +1453,35 @@ export default function ChatScreen() {
     if (stickToBottomRef.current) {
       scrollToBottom();
     } else {
+      setShowJump(true);
+    }
+  };
+
+  const handleTouchStart = () => {
+    touchingRef.current = true;
+  };
+
+  const handleTouchEnd = () => {
+    touchingRef.current = false;
+
+    const element = mainRef.current;
+
+    if (!element) {
+      return;
+    }
+
+    const distance =
+      element.scrollHeight - element.scrollTop - element.clientHeight;
+
+    if (distance < STICK_THRESHOLD_PX) {
+      stickToBottomRef.current = true;
+      setShowJump(false);
+    }
+  };
+
+  const handleWheel = (event: WheelEvent<HTMLElement>) => {
+    if (event.deltaY < 0 && hasMessages) {
+      stickToBottomRef.current = false;
       setShowJump(true);
     }
   };
@@ -1504,6 +1620,10 @@ export default function ChatScreen() {
       <main
         ref={mainRef}
         onScroll={handleScroll}
+        onTouchStart={handleTouchStart}
+        onTouchEnd={handleTouchEnd}
+        onTouchCancel={handleTouchEnd}
+        onWheel={handleWheel}
         style={{ touchAction: NO_PAGE_ZOOM }}
         className="z-10 flex-1 overflow-y-auto px-4"
       >
