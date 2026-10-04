@@ -1,4 +1,4 @@
-import { memo, type ReactNode } from "react";
+import { memo, useEffect, useRef, useState, type ReactNode } from "react";
 
 interface MarkdownTextProps {
   readonly text: string;
@@ -33,6 +33,23 @@ interface SectionInfo {
   readonly title: string;
 }
 
+interface CopyLabels {
+  readonly idle: string;
+  readonly done: string;
+  readonly failed: string;
+}
+
+interface TableLayout {
+  readonly grouped: boolean;
+  readonly visible: readonly number[];
+  readonly noteColumn: number | null;
+}
+
+interface RowGroup {
+  readonly title: string | null;
+  readonly rows: readonly (readonly string[])[];
+}
+
 const RULE_PATTERN = /^([-*_])(\s*\1){2,}$/;
 const HEADING_PATTERN = /^(#{1,6})\s+(.+)$/;
 const QUOTE_PATTERN = /^>\s?(.*)$/;
@@ -41,11 +58,14 @@ const ORDERED_PATTERN = /^[0-9۰-۹]+[.)]\s+(.+)$/;
 const TABLE_SEPARATOR_PATTERN =
   /^\|?\s*:?-{2,}:?\s*(?:\|\s*:?-{2,}:?\s*)*\|?$/;
 const EMPTY_CELL_PATTERN = /^[-–—\s]*$/;
-const NUMBER_CELL_PATTERN = /^[0-9۰-۹]+[.)]?$/;
 const SECTION_PATTERN =
   /^(روز|هفته|جلسه|مرحله|day|week|session|step)\s*([0-9۰-۹]+)\s*(?:[—–:|\-]\s*(.+))?$/i;
-const SHORT_CELL_LIMIT = 24;
-const INDEX_HEADERS: readonly string[] = ["#", "ردیف", "شماره", "no", "no."];
+const GROUP_VALUE_PATTERN =
+  /^(روز|هفته|جلسه|مرحله|day|week|session|step)\s*[0-9۰-۹]+/i;
+const NOTE_HEADER_PATTERN =
+  /^(نکته|نکات|توضیح|توضیحات|یادداشت|note|notes|description|comment|comments)$/i;
+const SHORT_CELL_LIMIT = 14;
+const COPY_RESET_MS = 1800;
 
 const PERSIAN_DIGITS = "۰۱۲۳۴۵۶۷۸۹";
 
@@ -354,16 +374,127 @@ function renderInline(
   return nodes;
 }
 
-function hasIndexColumn(block: TableBlock): boolean {
-  const first = (block.header[0] ?? "").trim().toLowerCase();
+function plainText(text: string): string {
+  return text
+    .replace(/\[([^\]\n]+)\]\((https?:\/\/[^\s)]+)\)/g, "$1")
+    .replace(/\*\*([^*\n]+?)\*\*/g, "$1")
+    .replace(/\*([^*\s][^*\n]*?)\*/g, "$1")
+    .replace(/`([^`\n]+)`/g, "$1")
+    .trim();
+}
 
-  if (INDEX_HEADERS.includes(first)) {
-    return true;
+function tableToTsv(block: TableBlock): string {
+  const clean = (cell: string): string =>
+    plainText(cell).replace(/[\t\r\n]+/g, " ");
+
+  return [block.header, ...block.rows]
+    .map((row) => row.map(clean).join("\t"))
+    .join("\n");
+}
+
+function copyLabels(rtl: boolean, kind: "table" | "code"): CopyLabels {
+  if (rtl) {
+    return {
+      idle: kind === "table" ? "کپی جدول" : "کپی کد",
+      done: "کپی شد ✓",
+      failed: "کپی نشد",
+    };
   }
 
+  return {
+    idle: kind === "table" ? "Copy table" : "Copy code",
+    done: "Copied ✓",
+    failed: "Copy failed",
+  };
+}
+
+function pageIsRtl(): boolean {
   return (
-    block.rows.length > 0 &&
-    block.rows.every((row) => NUMBER_CELL_PATTERN.test((row[0] ?? "").trim()))
+    typeof document !== "undefined" && document.documentElement.dir === "rtl"
+  );
+}
+
+async function copyToClipboard(text: string): Promise<boolean> {
+  try {
+    if (
+      typeof navigator !== "undefined" &&
+      navigator.clipboard &&
+      window.isSecureContext
+    ) {
+      await navigator.clipboard.writeText(text);
+
+      return true;
+    }
+  } catch {
+    // Fall back to the legacy approach below.
+  }
+
+  try {
+    const area = document.createElement("textarea");
+
+    area.value = text;
+    area.setAttribute("readonly", "");
+    area.style.position = "fixed";
+    area.style.top = "0";
+    area.style.opacity = "0";
+    document.body.appendChild(area);
+    area.select();
+    area.setSelectionRange(0, text.length);
+
+    const copied = document.execCommand("copy");
+
+    document.body.removeChild(area);
+
+    return copied;
+  } catch {
+    return false;
+  }
+}
+
+function CopyButton({
+  text,
+  labels,
+}: {
+  readonly text: string;
+  readonly labels: CopyLabels;
+}) {
+  const [state, setState] = useState<"idle" | "done" | "failed">("idle");
+  const timerRef = useRef<number | null>(null);
+
+  useEffect(() => {
+    return () => {
+      if (timerRef.current !== null) {
+        window.clearTimeout(timerRef.current);
+      }
+    };
+  }, []);
+
+  const handleCopy = async (): Promise<void> => {
+    const copied = await copyToClipboard(text);
+
+    setState(copied ? "done" : "failed");
+
+    if (timerRef.current !== null) {
+      window.clearTimeout(timerRef.current);
+    }
+
+    timerRef.current = window.setTimeout(() => {
+      setState("idle");
+    }, COPY_RESET_MS);
+  };
+
+  return (
+    <button
+      type="button"
+      onClick={() => void handleCopy()}
+      className="rounded-full border border-[rgba(57,255,136,0.35)] px-3 py-1 text-xs text-primary transition-colors hover:bg-[rgba(57,255,136,0.08)]"
+    >
+      {state === "idle"
+        ? labels.idle
+        : state === "done"
+          ? labels.done
+          : labels.failed}
+    </button>
   );
 }
 
@@ -390,153 +521,176 @@ function renderSection(
   );
 }
 
+function analyzeTable(block: TableBlock): TableLayout {
+  const grouped =
+    block.header.length >= 2 &&
+    block.rows.length > 0 &&
+    block.rows.every((row) => GROUP_VALUE_PATTERN.test(plainText(row[0] ?? "")));
+
+  const start = grouped ? 1 : 0;
+  const columns = Array.from(
+    { length: Math.max(0, block.header.length - start) },
+    (_, offset) => offset + start,
+  );
+  const lastColumn = columns[columns.length - 1];
+
+  const noteColumn =
+    columns.length >= 4 &&
+    lastColumn !== undefined &&
+    NOTE_HEADER_PATTERN.test(plainText(block.header[lastColumn] ?? ""))
+      ? lastColumn
+      : null;
+
+  return {
+    grouped,
+    visible: noteColumn === null ? columns : columns.slice(0, -1),
+    noteColumn,
+  };
+}
+
+function groupRows(block: TableBlock, grouped: boolean): RowGroup[] {
+  if (!grouped) {
+    return [{ title: null, rows: block.rows }];
+  }
+
+  const groups: Array<{ title: string; rows: string[][] }> = [];
+
+  for (const row of block.rows) {
+    const title = plainText(row[0] ?? "");
+    const last = groups[groups.length - 1];
+
+    if (last && last.title === title) {
+      last.rows.push([...row]);
+    } else {
+      groups.push({ title, rows: [[...row]] });
+    }
+  }
+
+  return groups;
+}
+
 function renderTable(block: TableBlock, key: string): ReactNode {
   const direction = detectDirection([...block.header, ...block.rows.flat()]);
   const rtl = direction === "rtl";
-  const indexed = hasIndexColumn(block);
-  const titleIndex = indexed ? 1 : 0;
-  const restStart = titleIndex + 1;
+  const layout = analyzeTable(block);
+  const groups = groupRows(block, layout.grouped);
+  const columnCount = layout.visible.length;
 
   return (
     <div key={key} dir={direction} className="w-full">
-      <div className="flex flex-col gap-3 sm:hidden">
-        {block.rows.map((row, rowIndex) => {
-          const badgeSource = indexed
-            ? (row[0] ?? "").replace(/[.)]$/, "")
-            : String(rowIndex + 1);
-          const badge = rtl ? toPersianDigits(badgeSource) : badgeSource;
-          const rawTitle = row[titleIndex] ?? "";
-          const title = EMPTY_CELL_PATTERN.test(rawTitle) ? "•" : rawTitle;
-          const cells = row
-            .slice(restStart)
-            .map((cell, cellIndex) => ({
-              cell,
-              label: block.header[restStart + cellIndex] ?? "",
-              cellIndex,
-            }))
-            .filter((entry) => !EMPTY_CELL_PATTERN.test(entry.cell));
-          const chips = cells.filter(
-            (entry) => entry.cell.length <= SHORT_CELL_LIMIT,
-          );
-          const notes = cells.filter(
-            (entry) => entry.cell.length > SHORT_CELL_LIMIT,
-          );
-
-          return (
-            <div
-              key={`${key}-m${rowIndex}`}
-              className="rounded-2xl border border-[rgba(57,255,136,0.18)] bg-[rgba(57,255,136,0.04)] p-3"
-            >
-              <div className="flex items-start gap-3">
-                <span className="flex h-7 w-7 shrink-0 items-center justify-center rounded-full bg-[rgba(57,255,136,0.16)] text-xs font-bold tabular-nums text-primary">
-                  {badge}
-                </span>
-                <div className="min-w-0 flex-1 pt-0.5 text-[15px] font-semibold leading-6 text-text">
-                  {renderInline(title, `${key}-m${rowIndex}t`, rtl)}
-                </div>
-              </div>
-
-              {chips.length > 0 && (
-                <div className="mt-2.5 flex flex-wrap gap-2">
-                  {chips.map((entry) => (
-                    <div
-                      key={`${key}-m${rowIndex}c${entry.cellIndex}`}
-                      className="min-w-[4.5rem] rounded-xl bg-white/[0.05] px-3 py-1.5"
-                    >
-                      <div className="text-[10px] leading-4 text-text-subtle">
-                        {renderInline(
-                          entry.label,
-                          `${key}-m${rowIndex}l${entry.cellIndex}`,
-                          rtl,
-                        )}
-                      </div>
-                      <div className="text-sm font-semibold leading-5 text-text">
-                        {renderInline(
-                          entry.cell,
-                          `${key}-m${rowIndex}v${entry.cellIndex}`,
-                          rtl,
-                        )}
-                      </div>
-                    </div>
-                  ))}
-                </div>
-              )}
-
-              {notes.map((entry) => (
-                <div
-                  key={`${key}-m${rowIndex}n${entry.cellIndex}`}
-                  className="mt-2 text-sm leading-6 text-text-subtle"
-                >
-                  <span className="text-text-subtle">
-                    {renderInline(
-                      entry.label,
-                      `${key}-m${rowIndex}nl${entry.cellIndex}`,
-                      rtl,
-                    )}
-                    :{" "}
-                  </span>
-                  <span className="text-text">
-                    {renderInline(
-                      entry.cell,
-                      `${key}-m${rowIndex}nv${entry.cellIndex}`,
-                      rtl,
-                    )}
-                  </span>
-                </div>
-              ))}
-            </div>
-          );
-        })}
+      <div className="mb-1.5 flex justify-end">
+        <CopyButton text={tableToTsv(block)} labels={copyLabels(rtl, "table")} />
       </div>
 
-      <div className="hidden w-full overflow-hidden rounded-2xl border border-[rgba(57,255,136,0.2)] sm:block">
+      <div className="w-full overflow-x-auto rounded-2xl border border-[rgba(57,255,136,0.2)]">
         <table
           style={{ direction }}
-          className="w-full border-collapse text-sm leading-6"
+          className="w-full border-collapse text-[13px] leading-5"
         >
           <thead>
             <tr className="bg-[rgba(57,255,136,0.08)]">
-              {!indexed && (
+              {layout.visible.map((column, position) => (
                 <th
+                  key={`${key}-h${column}`}
                   style={{ textAlign: "start" }}
-                  className="w-12 px-4 py-2.5 font-semibold text-primary"
+                  className={`px-2.5 py-2 text-xs font-semibold text-primary ${
+                    position === 0 ? "min-w-[8.5rem]" : "whitespace-nowrap"
+                  }`}
                 >
-                  #
-                </th>
-              )}
-              {block.header.map((cell, cellIndex) => (
-                <th
-                  key={`${key}-h${cellIndex}`}
-                  style={{ textAlign: "start" }}
-                  className="px-4 py-2.5 font-semibold text-primary"
-                >
-                  {renderInline(cell, `${key}-h${cellIndex}`, rtl)}
+                  {renderInline(
+                    block.header[column] ?? "",
+                    `${key}-h${column}`,
+                    rtl,
+                  )}
                 </th>
               ))}
             </tr>
           </thead>
-          <tbody>
-            {block.rows.map((row, rowIndex) => (
-              <tr key={`${key}-r${rowIndex}`} className="even:bg-white/[0.03]">
-                {!indexed && (
-                  <td className="border-t border-white/5 px-4 py-2.5 align-top font-semibold tabular-nums text-primary">
-                    {rtl ? toPersianDigits(String(rowIndex + 1)) : rowIndex + 1}
-                  </td>
-                )}
-                {row.map((cell, cellIndex) => (
+
+          {groups.map((group, groupIndex) => (
+            <tbody key={`${key}-g${groupIndex}`}>
+              {group.title !== null && (
+                <tr>
                   <td
-                    key={`${key}-r${rowIndex}c${cellIndex}`}
+                    colSpan={columnCount}
                     style={{ textAlign: "start" }}
-                    className={`break-words border-t border-white/5 px-4 py-2.5 align-top ${
-                      cellIndex === titleIndex ? "font-semibold text-text" : ""
-                    }`}
+                    className="border-t border-[rgba(57,255,136,0.2)] bg-[rgba(57,255,136,0.10)] px-3 py-2 text-sm font-bold text-primary"
                   >
-                    {renderInline(cell, `${key}-r${rowIndex}c${cellIndex}`, rtl)}
+                    {renderInline(group.title, `${key}-g${groupIndex}t`, rtl)}
                   </td>
-                ))}
-              </tr>
-            ))}
-          </tbody>
+                </tr>
+              )}
+
+              {group.rows.map((row, rowIndex) => (
+                <tr
+                  key={`${key}-g${groupIndex}r${rowIndex}`}
+                  className="even:bg-white/[0.03]"
+                >
+                  {layout.visible.map((column, position) => {
+                    const cell = row[column] ?? "";
+                    const empty = EMPTY_CELL_PATTERN.test(cell);
+                    const cellKey = `${key}-g${groupIndex}r${rowIndex}c${column}`;
+
+                    if (position === 0) {
+                      const note =
+                        layout.noteColumn !== null
+                          ? (row[layout.noteColumn] ?? "")
+                          : "";
+                      const hasNote = !EMPTY_CELL_PATTERN.test(note);
+                      const badgeSource = String(rowIndex + 1);
+                      const badge = rtl
+                        ? toPersianDigits(badgeSource)
+                        : badgeSource;
+
+                      return (
+                        <td
+                          key={cellKey}
+                          style={{ textAlign: "start" }}
+                          className="min-w-[8.5rem] border-t border-white/5 px-2.5 py-2 align-top"
+                        >
+                          <div className="flex items-start gap-2">
+                            {layout.grouped && (
+                              <span className="mt-0.5 flex h-5 min-w-[1.25rem] shrink-0 items-center justify-center rounded-full bg-[rgba(57,255,136,0.16)] px-1 text-[11px] font-bold tabular-nums text-primary">
+                                {badge}
+                              </span>
+                            )}
+                            <div className="min-w-0 flex-1">
+                              <div className="break-words font-semibold text-text">
+                                {empty ? "•" : renderInline(cell, cellKey, rtl)}
+                              </div>
+                              {hasNote && (
+                                <div className="mt-0.5 break-words text-[11px] leading-4 text-text-subtle">
+                                  {renderInline(note, `${cellKey}n`, rtl)}
+                                </div>
+                              )}
+                            </div>
+                          </div>
+                        </td>
+                      );
+                    }
+
+                    return (
+                      <td
+                        key={cellKey}
+                        style={{ textAlign: "start" }}
+                        className={`border-t border-white/5 px-2.5 py-2 align-top ${
+                          cell.length <= SHORT_CELL_LIMIT
+                            ? "whitespace-nowrap"
+                            : "min-w-[6rem] break-words"
+                        }`}
+                      >
+                        {empty ? (
+                          <span className="text-text-subtle">–</span>
+                        ) : (
+                          renderInline(cell, cellKey, rtl)
+                        )}
+                      </td>
+                    );
+                  })}
+                </tr>
+              ))}
+            </tbody>
+          ))}
         </table>
       </div>
     </div>
@@ -591,13 +745,17 @@ function renderBlock(block: Block, key: string): ReactNode {
 
     case "code":
       return (
-        <pre
-          key={key}
-          dir="ltr"
-          className="overflow-x-auto rounded-xl border border-white/10 bg-black/40 p-3 text-left text-xs leading-6"
-        >
-          <code>{block.code}</code>
-        </pre>
+        <div key={key} dir="ltr" className="w-full">
+          <div className="mb-1.5 flex justify-end">
+            <CopyButton
+              text={block.code}
+              labels={copyLabels(pageIsRtl(), "code")}
+            />
+          </div>
+          <pre className="overflow-x-auto rounded-xl border border-white/10 bg-black/40 p-3 text-left text-xs leading-6">
+            <code>{block.code}</code>
+          </pre>
+        </div>
       );
 
     case "list": {
