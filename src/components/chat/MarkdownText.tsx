@@ -4,6 +4,12 @@ interface MarkdownTextProps {
   readonly text: string;
 }
 
+type TableBlock = {
+  readonly kind: "table";
+  readonly header: readonly string[];
+  readonly rows: readonly (readonly string[])[];
+};
+
 type Block =
   | { readonly kind: "paragraph"; readonly text: string }
   | {
@@ -18,12 +24,14 @@ type Block =
       readonly items: readonly string[];
     }
   | { readonly kind: "quote"; readonly text: string }
-  | {
-      readonly kind: "table";
-      readonly header: readonly string[];
-      readonly rows: readonly (readonly string[])[];
-    }
+  | TableBlock
   | { readonly kind: "rule" };
+
+interface SectionInfo {
+  readonly label: string;
+  readonly number: string;
+  readonly title: string;
+}
 
 const RULE_PATTERN = /^([-*_])(\s*\1){2,}$/;
 const HEADING_PATTERN = /^(#{1,6})\s+(.+)$/;
@@ -33,12 +41,27 @@ const ORDERED_PATTERN = /^[0-9۰-۹]+[.)]\s+(.+)$/;
 const TABLE_SEPARATOR_PATTERN =
   /^\|?\s*:?-{2,}:?\s*(?:\|\s*:?-{2,}:?\s*)*\|?$/;
 const EMPTY_CELL_PATTERN = /^[-–—\s]*$/;
+const NUMBER_CELL_PATTERN = /^[0-9۰-۹]+[.)]?$/;
+const SECTION_PATTERN =
+  /^(روز|هفته|جلسه|مرحله|day|week|session|step)\s*([0-9۰-۹]+)\s*(?:[—–:|\-]\s*(.+))?$/i;
+const SHORT_CELL_LIMIT = 24;
+const INDEX_HEADERS: readonly string[] = ["#", "ردیف", "شماره", "no", "no."];
+
+const PERSIAN_DIGITS = "۰۱۲۳۴۵۶۷۸۹";
 
 const RTL_CHAR = /[\u0590-\u08FF\uFB1D-\uFDFF\uFE70-\uFEFF]/;
 const LTR_CHAR = /[A-Za-z\u00C0-\u024F\u0370-\u03FF\u0400-\u04FF]/;
 
 const INLINE_SOURCE =
   "(`[^`\\n]+`)|(\\*\\*[^*\\n]+?\\*\\*)|(\\*[^*\\s][^*\\n]*?\\*)|(\\[[^\\]\\n]+\\]\\((https?:\\/\\/[^\\s)]+)\\))";
+
+function toPersianDigits(text: string): string {
+  return text.replace(/\S+/g, (token) =>
+    /[A-Za-z]/.test(token)
+      ? token
+      : token.replace(/[0-9]/g, (digit) => PERSIAN_DIGITS[Number(digit)] ?? digit),
+  );
+}
 
 function detectDirection(texts: readonly string[]): "rtl" | "ltr" {
   for (const text of texts) {
@@ -54,6 +77,26 @@ function detectDirection(texts: readonly string[]): "rtl" | "ltr" {
   }
 
   return "rtl";
+}
+
+function matchSection(text: string): SectionInfo | null {
+  const plain = text.replace(/\*/g, "").replace(/\s+/g, " ").trim();
+
+  if (plain.length === 0 || plain.length > 90) {
+    return null;
+  }
+
+  const match = SECTION_PATTERN.exec(plain);
+
+  if (!match) {
+    return null;
+  }
+
+  return {
+    label: match[1] ?? "",
+    number: match[2] ?? "",
+    title: (match[3] ?? "").trim(),
+  };
 }
 
 function isTableStart(lines: readonly string[], index: number): boolean {
@@ -235,16 +278,22 @@ function parseBlocks(source: string): Block[] {
   return blocks;
 }
 
-function renderInline(text: string, keyPrefix: string): ReactNode[] {
+function renderInline(
+  text: string,
+  keyPrefix: string,
+  rtl: boolean,
+): ReactNode[] {
   const nodes: ReactNode[] = [];
   const pattern = new RegExp(INLINE_SOURCE, "g");
+  const plain = (value: string): string =>
+    rtl ? toPersianDigits(value) : value;
   let lastIndex = 0;
   let counter = 0;
   let match = pattern.exec(text);
 
   while (match !== null) {
     if (match.index > lastIndex) {
-      nodes.push(text.slice(lastIndex, match.index));
+      nodes.push(plain(text.slice(lastIndex, match.index)));
     }
 
     const key = `${keyPrefix}-${counter}`;
@@ -269,11 +318,13 @@ function renderInline(text: string, keyPrefix: string): ReactNode[] {
     } else if (bold !== undefined) {
       nodes.push(
         <strong key={key} className="font-semibold text-text">
-          {renderInline(bold.slice(2, -2), key)}
+          {renderInline(bold.slice(2, -2), key, rtl)}
         </strong>,
       );
     } else if (italic !== undefined) {
-      nodes.push(<em key={key}>{renderInline(italic.slice(1, -1), key)}</em>);
+      nodes.push(
+        <em key={key}>{renderInline(italic.slice(1, -1), key, rtl)}</em>,
+      );
     } else if (link !== undefined && url !== undefined) {
       const label = link.slice(1, link.indexOf("]("));
 
@@ -285,7 +336,7 @@ function renderInline(text: string, keyPrefix: string): ReactNode[] {
           rel="noopener noreferrer"
           className="break-all text-primary underline underline-offset-2"
         >
-          {label}
+          {plain(label)}
         </a>,
       );
     } else {
@@ -297,60 +348,142 @@ function renderInline(text: string, keyPrefix: string): ReactNode[] {
   }
 
   if (lastIndex < text.length) {
-    nodes.push(text.slice(lastIndex));
+    nodes.push(plain(text.slice(lastIndex)));
   }
 
   return nodes;
 }
 
-function renderTable(
-  block: Extract<Block, { kind: "table" }>,
+function hasIndexColumn(block: TableBlock): boolean {
+  const first = (block.header[0] ?? "").trim().toLowerCase();
+
+  if (INDEX_HEADERS.includes(first)) {
+    return true;
+  }
+
+  return (
+    block.rows.length > 0 &&
+    block.rows.every((row) => NUMBER_CELL_PATTERN.test((row[0] ?? "").trim()))
+  );
+}
+
+function renderSection(
+  section: SectionInfo,
+  direction: "rtl" | "ltr",
   key: string,
 ): ReactNode {
+  const rtl = direction === "rtl";
+  const number = rtl ? toPersianDigits(section.number) : section.number;
+
+  return (
+    <div key={key} dir={direction} className="mt-3 flex items-center gap-3">
+      <span className="flex h-12 min-w-[3.4rem] shrink-0 flex-col items-center justify-center rounded-2xl border border-[rgba(57,255,136,0.35)] bg-[rgba(57,255,136,0.12)] px-2 leading-none text-primary">
+        <span className="text-[10px] opacity-80">{section.label}</span>
+        <span className="mt-1 text-lg font-bold tabular-nums">{number}</span>
+      </span>
+      {section.title && (
+        <span className="min-w-0 flex-1 break-words text-base font-semibold leading-6 text-text">
+          {renderInline(section.title, `${key}-s`, rtl)}
+        </span>
+      )}
+    </div>
+  );
+}
+
+function renderTable(block: TableBlock, key: string): ReactNode {
   const direction = detectDirection([...block.header, ...block.rows.flat()]);
+  const rtl = direction === "rtl";
+  const indexed = hasIndexColumn(block);
+  const titleIndex = indexed ? 1 : 0;
+  const restStart = titleIndex + 1;
 
   return (
     <div key={key} dir={direction} className="w-full">
-      <div className="flex flex-col gap-2.5 sm:hidden">
+      <div className="flex flex-col gap-3 sm:hidden">
         {block.rows.map((row, rowIndex) => {
-          const title = row[0] ?? "";
-          const rest = row.slice(1);
+          const badgeSource = indexed
+            ? (row[0] ?? "").replace(/[.)]$/, "")
+            : String(rowIndex + 1);
+          const badge = rtl ? toPersianDigits(badgeSource) : badgeSource;
+          const rawTitle = row[titleIndex] ?? "";
+          const title = EMPTY_CELL_PATTERN.test(rawTitle) ? "•" : rawTitle;
+          const cells = row
+            .slice(restStart)
+            .map((cell, cellIndex) => ({
+              cell,
+              label: block.header[restStart + cellIndex] ?? "",
+              cellIndex,
+            }))
+            .filter((entry) => !EMPTY_CELL_PATTERN.test(entry.cell));
+          const chips = cells.filter(
+            (entry) => entry.cell.length <= SHORT_CELL_LIMIT,
+          );
+          const notes = cells.filter(
+            (entry) => entry.cell.length > SHORT_CELL_LIMIT,
+          );
 
           return (
             <div
               key={`${key}-m${rowIndex}`}
-              className="rounded-2xl border border-[rgba(57,255,136,0.18)] bg-[rgba(57,255,136,0.04)] px-3.5 py-3"
+              className="rounded-2xl border border-[rgba(57,255,136,0.18)] bg-[rgba(57,255,136,0.04)] p-3"
             >
-              <div className="text-[15px] font-semibold leading-6 text-text">
-                {renderInline(
-                  EMPTY_CELL_PATTERN.test(title) ? "•" : title,
-                  `${key}-m${rowIndex}t`,
-                )}
+              <div className="flex items-start gap-3">
+                <span className="flex h-7 w-7 shrink-0 items-center justify-center rounded-full bg-[rgba(57,255,136,0.16)] text-xs font-bold tabular-nums text-primary">
+                  {badge}
+                </span>
+                <div className="min-w-0 flex-1 pt-0.5 text-[15px] font-semibold leading-6 text-text">
+                  {renderInline(title, `${key}-m${rowIndex}t`, rtl)}
+                </div>
               </div>
 
-              <div className="mt-2 flex flex-col gap-1.5">
-                {rest.map((cell, cellIndex) => {
-                  if (EMPTY_CELL_PATTERN.test(cell)) {
-                    return null;
-                  }
-
-                  const label = block.header[cellIndex + 1] ?? "";
-
-                  return (
+              {chips.length > 0 && (
+                <div className="mt-2.5 flex flex-wrap gap-2">
+                  {chips.map((entry) => (
                     <div
-                      key={`${key}-m${rowIndex}c${cellIndex}`}
-                      className="flex items-start justify-between gap-4 text-sm leading-6"
+                      key={`${key}-m${rowIndex}c${entry.cellIndex}`}
+                      className="min-w-[4.5rem] rounded-xl bg-white/[0.05] px-3 py-1.5"
                     >
-                      <span className="shrink-0 pt-0.5 text-xs text-text-subtle">
-                        {renderInline(label, `${key}-m${rowIndex}l${cellIndex}`)}
-                      </span>
-                      <span className="min-w-0 flex-1 break-words text-end text-text">
-                        {renderInline(cell, `${key}-m${rowIndex}v${cellIndex}`)}
-                      </span>
+                      <div className="text-[10px] leading-4 text-text-subtle">
+                        {renderInline(
+                          entry.label,
+                          `${key}-m${rowIndex}l${entry.cellIndex}`,
+                          rtl,
+                        )}
+                      </div>
+                      <div className="text-sm font-semibold leading-5 text-text">
+                        {renderInline(
+                          entry.cell,
+                          `${key}-m${rowIndex}v${entry.cellIndex}`,
+                          rtl,
+                        )}
+                      </div>
                     </div>
-                  );
-                })}
-              </div>
+                  ))}
+                </div>
+              )}
+
+              {notes.map((entry) => (
+                <div
+                  key={`${key}-m${rowIndex}n${entry.cellIndex}`}
+                  className="mt-2 text-sm leading-6 text-text-subtle"
+                >
+                  <span className="text-text-subtle">
+                    {renderInline(
+                      entry.label,
+                      `${key}-m${rowIndex}nl${entry.cellIndex}`,
+                      rtl,
+                    )}
+                    :{" "}
+                  </span>
+                  <span className="text-text">
+                    {renderInline(
+                      entry.cell,
+                      `${key}-m${rowIndex}nv${entry.cellIndex}`,
+                      rtl,
+                    )}
+                  </span>
+                </div>
+              ))}
             </div>
           );
         })}
@@ -363,13 +496,21 @@ function renderTable(
         >
           <thead>
             <tr className="bg-[rgba(57,255,136,0.08)]">
+              {!indexed && (
+                <th
+                  style={{ textAlign: "start" }}
+                  className="w-12 px-4 py-2.5 font-semibold text-primary"
+                >
+                  #
+                </th>
+              )}
               {block.header.map((cell, cellIndex) => (
                 <th
                   key={`${key}-h${cellIndex}`}
                   style={{ textAlign: "start" }}
                   className="px-4 py-2.5 font-semibold text-primary"
                 >
-                  {renderInline(cell, `${key}-h${cellIndex}`)}
+                  {renderInline(cell, `${key}-h${cellIndex}`, rtl)}
                 </th>
               ))}
             </tr>
@@ -377,15 +518,20 @@ function renderTable(
           <tbody>
             {block.rows.map((row, rowIndex) => (
               <tr key={`${key}-r${rowIndex}`} className="even:bg-white/[0.03]">
+                {!indexed && (
+                  <td className="border-t border-white/5 px-4 py-2.5 align-top font-semibold tabular-nums text-primary">
+                    {rtl ? toPersianDigits(String(rowIndex + 1)) : rowIndex + 1}
+                  </td>
+                )}
                 {row.map((cell, cellIndex) => (
                   <td
                     key={`${key}-r${rowIndex}c${cellIndex}`}
                     style={{ textAlign: "start" }}
                     className={`break-words border-t border-white/5 px-4 py-2.5 align-top ${
-                      cellIndex === 0 ? "font-semibold text-text" : ""
+                      cellIndex === titleIndex ? "font-semibold text-text" : ""
                     }`}
                   >
-                    {renderInline(cell, `${key}-r${rowIndex}c${cellIndex}`)}
+                    {renderInline(cell, `${key}-r${rowIndex}c${cellIndex}`, rtl)}
                   </td>
                 ))}
               </tr>
@@ -399,18 +545,37 @@ function renderTable(
 
 function renderBlock(block: Block, key: string): ReactNode {
   switch (block.kind) {
-    case "paragraph":
-      return (
-        <p key={key} dir="auto" className="whitespace-pre-line break-words">
-          {renderInline(block.text, key)}
-        </p>
-      );
+    case "paragraph": {
+      const direction = detectDirection([block.text]);
+      const section = matchSection(block.text);
 
-    case "heading":
+      if (section) {
+        return renderSection(section, direction, key);
+      }
+
       return (
         <p
           key={key}
-          dir="auto"
+          dir={direction}
+          className="whitespace-pre-line break-words"
+        >
+          {renderInline(block.text, key, direction === "rtl")}
+        </p>
+      );
+    }
+
+    case "heading": {
+      const direction = detectDirection([block.text]);
+      const section = matchSection(block.text);
+
+      if (section) {
+        return renderSection(section, direction, key);
+      }
+
+      return (
+        <p
+          key={key}
+          dir={direction}
           className={`break-words ${
             block.level === 1
               ? "text-xl font-bold text-text"
@@ -419,9 +584,10 @@ function renderBlock(block: Block, key: string): ReactNode {
                 : "text-base font-semibold text-primary"
           }`}
         >
-          {renderInline(block.text, key)}
+          {renderInline(block.text, key, direction === "rtl")}
         </p>
       );
+    }
 
     case "code":
       return (
@@ -436,7 +602,8 @@ function renderBlock(block: Block, key: string): ReactNode {
 
     case "list": {
       const direction = detectDirection(block.items);
-      const numberLocale = direction === "rtl" ? "fa-IR" : "en-US";
+      const rtl = direction === "rtl";
+      const numberLocale = rtl ? "fa-IR" : "en-US";
 
       return (
         <div
@@ -472,7 +639,7 @@ function renderBlock(block: Block, key: string): ReactNode {
                   style={{ direction, textAlign: "start" }}
                   className="min-w-0 flex-1 break-words"
                 >
-                  {renderInline(item, `${key}-i${itemIndex}`)}
+                  {renderInline(item, `${key}-i${itemIndex}`, rtl)}
                 </span>
               </div>
             );
@@ -484,16 +651,19 @@ function renderBlock(block: Block, key: string): ReactNode {
     case "table":
       return renderTable(block, key);
 
-    case "quote":
+    case "quote": {
+      const direction = detectDirection([block.text]);
+
       return (
         <blockquote
           key={key}
-          dir="auto"
+          dir={direction}
           className="whitespace-pre-line rounded-lg bg-white/5 px-3 py-2 text-text-subtle"
         >
-          {renderInline(block.text, key)}
+          {renderInline(block.text, key, direction === "rtl")}
         </blockquote>
       );
+    }
 
     case "rule":
       return <hr key={key} className="border-white/10" />;
