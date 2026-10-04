@@ -27,13 +27,15 @@ const sseHeaders: Record<string, string> = {
 
 const MAX_MESSAGE_LENGTH = 32_000;
 const MAX_HISTORY_MESSAGES = 40;
-const HISTORY_CHAR_BUDGET = 9_000;
-const HISTORY_MESSAGE_CAP = 1_500;
+const HISTORY_CHAR_BUDGET = 4_000;
+const HISTORY_MESSAGE_CAP = 700;
+const TOOL_RESULT_CHAR_CAP = 3_500;
 const CONNECT_TIMEOUT_MS = 30_000;
 const TOOL_TIMEOUT_MS = 9_000;
 const WIKI_TIMEOUT_MS = 5_000;
 const TOTAL_TIMEOUT_MS = 120_000;
 const RETRY_DELAY_MS = 900;
+const MAX_RATE_WAIT_MS = 9_000;
 const WEB_CACHE_TTL_MS = 300_000;
 const WEB_CACHE_MAX_ENTRIES = 40;
 const MAX_TOOL_ROUNDS = 3;
@@ -366,6 +368,7 @@ function groqModelCandidates(): string[] {
   for (const candidate of [
     getOptionalEnv("GROQ_MODEL_PREFERRED"),
     getOptionalEnv("GROQ_MODEL"),
+    getOptionalEnv("GROQ_FALLBACK_MODEL"),
   ]) {
     if (candidate && !unique.includes(candidate)) {
       unique.push(candidate);
@@ -619,24 +622,24 @@ const GET_DATETIME_TOOL: ToolDefinition = {
   function: {
     name: "get_datetime",
     description:
-      "Get the exact current date, weekday and time, for the user's own place or for any other place. Always use this for questions about today's date, the weekday, the current time, or the time in another city or country. Never use web_search for these.",
+      "Exact current date, weekday and time for the user's place or any other place. Always use it for date, weekday, time or time-in-another-place questions; never use web_search for them.",
     parameters: {
       type: "object",
       properties: {
         timezone: {
           type: "string",
           description:
-            'IANA time zone id of the place the user asks about (for example Asia/Tokyo, Europe/Nicosia, America/New_York). If the user names ANY city, country or region you MUST pass its IANA id. Pass the exact string "local" ONLY when the user mentions no other place.',
+            'IANA id of the asked place (e.g. Asia/Tokyo). If any city, country or region is named you MUST pass its id. Pass "local" only when no other place is mentioned.',
         },
         place_label: {
           type: "string",
           description:
-            "Name of the place as 'City, Country' or just the country, in the user's language (for example 'قبرس' or 'توکیو، ژاپن'). Required whenever timezone is not \"local\".",
+            "Place as 'City, Country' in the user's language. Required when timezone is not \"local\".",
         },
         show_clock: {
           type: "boolean",
           description:
-            "true when the user asks for the time of day (here or elsewhere), which shows a clock card; false when they only ask about the date or the weekday.",
+            "true for time-of-day questions (shows a clock card); false for date or weekday only.",
         },
       },
       required: ["timezone", "show_clock"],
@@ -649,20 +652,20 @@ const FIND_PLACE_TOOL: ToolDefinition = {
   function: {
     name: "find_place",
     description:
-      "Look up a place on the map. Use it whenever the user asks where something is, asks for an address or location, or wants places near them. The app shows the map card (and photos when available) first and you then write general information about the place.",
+      "Look up a place on the map for where-is, address or near-me questions. The app shows the map card first.",
     parameters: {
       type: "object",
       properties: {
         query: {
           type: "string",
           description:
-            "For intent specific_place: the full name plus city, region or country when you know it, for example 'برج میلاد تهران'. For intent nearby_search: the English category word such as 'pharmacy' or 'restaurant'.",
+            "specific_place: full name plus city, region or country. nearby_search: English category word (pharmacy, restaurant).",
         },
         intent: {
           type: "string",
           enum: ["specific_place", "nearby_search"],
           description:
-            "specific_place for one named place, landmark, business or address. nearby_search for 'near me' or 'nearest' questions about a category.",
+            "specific_place for one named place or address; nearby_search for near-me category questions.",
         },
       },
       required: ["query", "intent"],
@@ -675,13 +678,14 @@ const WEB_SEARCH_TOOL: ToolDefinition = {
   function: {
     name: "web_search",
     description:
-      "Search the web for current or recent information such as news, prices and exchange rates, weather, sports results, facts about a place, or anything that may have changed after your training. Never use it for the date, the time or where a place is.",
+      "Search the web for current information: news, prices, exchange rates, weather, sports. Never use it for the date, the time or where a place is.",
     parameters: {
       type: "object",
       properties: {
         query: {
           type: "string",
-          description: "A short, specific search query.",
+          description:
+            "Short, specific query. For several prices put all items in ONE query.",
         },
       },
       required: ["query"],
@@ -1255,7 +1259,7 @@ async function fetchWikipediaSummary(
     const json: unknown = await response.json();
 
     return isRecord(json) && typeof json.extract === "string"
-      ? json.extract.slice(0, 900)
+      ? json.extract.slice(0, 600)
       : "";
   } catch (error) {
     console.error(`wikipedia summary failed: ${describeError(error)}`);
@@ -1437,9 +1441,9 @@ async function tavilySearch(
       }
 
       results.push({
-        title: title.slice(0, 140),
-        source: host.slice(0, 80),
-        snippet: content.slice(0, 500),
+        title: title.slice(0, 100),
+        source: host.slice(0, 60),
+        snippet: content.slice(0, 300),
       });
     }
 
@@ -1680,7 +1684,7 @@ async function runSpecificPlace(
 
     webContext = (found ?? []).map((result) => ({
       source: result.source,
-      snippet: result.snippet.slice(0, 400),
+      snippet: result.snippet.slice(0, 250),
     }));
   }
 
@@ -1752,7 +1756,7 @@ async function runWebSearch(
     return { data: { error: "Web search is not available." } };
   }
 
-  const results = await tavilySearch(query, ctx.tavilyKey, 5, signal);
+  const results = await tavilySearch(query, ctx.tavilyKey, 4, signal);
 
   if (results === null) {
     return { data: { error: "Web search failed." } };
@@ -1840,7 +1844,7 @@ function buildSystemPrompt(ctx: ToolContext): string {
   const lines: string[] = [
     "You are Mass Diamond, a brilliant, warm and precise AI assistant inside the Mass Diamond app.",
     "",
-    "Reference data (authoritative and already converted; never recompute, convert or reformat it yourself):",
+    "Reference data (authoritative; never recompute it):",
     `- Gregorian date: ${gregorian}`,
   ];
 
@@ -1849,54 +1853,51 @@ function buildSystemPrompt(ctx: ToolContext): string {
   }
 
   lines.push(
-    `- Local time: ${time} (time zone: ${zone})`,
-    `- Part of the day for the user: ${partOfDay} (use it only to pick a fitting greeting when the user greets you).`,
+    `- Local time: ${time} (${zone}). Part of the day: ${partOfDay} (use it only to pick a greeting word).`,
   );
 
   if (!ctx.timeZone) {
     lines.push(
-      "- The user's real time zone is unknown, so if the time is requested, say it is UTC and may differ locally.",
+      "- The user's real time zone is unknown; if the time is requested, say it is UTC and may differ locally.",
     );
   }
 
   if (ctx.location) {
     lines.push(
-      "- The user's position is already known automatically. For 'near me' or 'nearest' questions call find_place with intent nearby_search. Never ask them to share it.",
+      "- The user's position is known automatically. For near-me questions call find_place with intent nearby_search; never ask them to share it.",
     );
   } else {
     lines.push(
-      "- The user's position is NOT available (location permission is off or denied). For 'near me' questions tell them, in one short sentence, to allow location access for this site in the browser settings.",
+      "- The user's position is NOT available. For near-me questions tell them in one short sentence to allow location access for this site in the browser settings.",
     );
   }
 
   lines.push(
-    "Rules for date and time: mention the date or time ONLY when the user explicitly asks, or when the task truly needs it (an age, a deadline, a countdown). Never mention them in greetings or small talk, except a fitting time-of-day greeting word.",
     "",
     "Core behaviour:",
-    "- Task requests (questions, lookups, writing, plans): answer exactly what was asked, nothing more. Lead with the answer. No filler openings and no closing lines such as 'anything else?', 'let me know', 'shall we start?' or 'how can I help further?'. Ask a question only when you truly cannot proceed without the answer, and then ask just one short question (if the topic is unknown, list 3 or 4 concrete options in that one line).",
-    "- Small talk (greetings, 'how are you?', thanks, compliments, the user's mood) is where you are a warm, cheerful, close friend. Reply in 1 to 3 natural sentences: answer the personal question genuinely, react to the user's mood, and invite them to continue with something specific and inviting. Never answer a greeting with only the greeting word. Use a time-of-day greeting (صبح بخیر، عصر بخیر، شب بخیر) when it fits. Use at most one exclamation mark in the whole reply and never end a greeting with a bare '!'. Match the user's register (informal 'تو' if they are informal). Vary your wording and never copy the same reply twice.",
-    "- Never address the user with honorifics such as 'قربان'.",
-    "- When asked to create something (an ad, a text, names), deliver a concrete, polished, complete result immediately, using sensible assumptions. Put every unknown specific in [square brackets] as a placeholder. Never invent facts such as ratings, prices, discount codes, phone numbers, addresses or statistics.",
+    "- Mention the date or time ONLY when asked or truly needed (an age, a deadline); never in greetings except a time-of-day greeting word.",
+    "- Task requests: answer exactly what was asked and lead with the answer. No filler openings or closing lines ('anything else?', 'let me know', 'shall we start?'). Ask at most one short question, only if you cannot proceed (list 3 or 4 options in that line).",
+    "- Small talk (greetings, how are you, thanks, mood): be a warm, cheerful, close friend. 1 to 3 natural sentences: answer the personal question, react to the mood, invite the user to continue with something specific. Never reply with only the greeting word. Use a time-of-day greeting when it fits. At most one exclamation mark and never end with a bare '!'. Match the user's register (informal 'تو' if they are informal). Vary your wording.",
+    "- Never use honorifics like 'قربان'.",
+    "- When asked to create something (an ad, a text, names), deliver a polished, complete result immediately. Put unknown specifics in [square brackets]. Never invent ratings, prices, codes, phones, addresses or statistics.",
     "",
     "Writing quality:",
-    "- Write like an expert human writer: vivid, precise, confident, never generic. Prefer concrete details, numbers and examples over filler. Keep paragraphs short.",
-    "- In Persian use natural, idiomatic, polished Persian that does not sound translated, correct half-spaces (ZWNJ) and Persian digits. Never type Latin letters inside Persian words and never mix English words into Persian sentences unless it is a brand or an established term (like HIIT). Use only words you are sure exist; if unsure, choose a simpler common word. Re-read before answering and fix typos and odd words.",
-    "- Plans and schedules (workouts, study, meals, trips) must be complete and numbered. (1) A title line such as '**برنامه‌ی ورزشی ۴ روزه**' that always states the total number of days or weeks. (2) One line summarising goal, level, session length and rest days. (3) ONE single Markdown table for the whole plan: never one table per day and never separate sections or headings per day. For workouts use exactly these columns (translate the column names into the user's language): روز | تمرین | ست | تکرار یا مدت | استراحت | نکته. Every row starts with its day label in the first column (for example 'روز ۱'; for plans with several weeks write 'هفته ۱ - روز ۱'). Warm-up and cool-down are rows too. A rest day is one row: the day label, 'استراحت' in the تمرین column, '-' in the number columns and a short suggestion in the نکته column. Every day of the plan must appear as rows, so the plan is complete. (4) Keep cells short (at most 6 words) and write exercise names in Persian. (5) Finish with '### نکات' and 3 or 4 short tips (progression, recovery, hydration, safety).",
-    "- Emojis: sparingly, 0 to 2 per reply, only where they add warmth. None in code, tables or serious topics (illness, grief, legal or financial risk, errors).",
+    "- Write like an expert human writer: vivid, precise, concrete, short paragraphs.",
+    "- Persian: natural idiomatic Persian that does not sound translated, correct half-spaces (ZWNJ), Persian digits, no Latin letters inside Persian words, no English words unless a brand or established term (like HIIT). Use only words you are sure exist. Re-read and fix typos.",
+    "- Plans (workouts, study, meals, trips) must be complete and numbered: (1) a bold title line stating the total days or weeks; (2) one summary line (goal, level, session length, rest days); (3) ONE single Markdown table for the whole plan, never one table or heading per day. Workout columns (translated to the user's language): روز | تمرین | ست | تکرار یا مدت | استراحت | نکته. Every row starts with its day label ('روز ۱'; with weeks 'هفته ۱ - روز ۱'). Warm-up and cool-down are rows. A rest day is one row: the day label, 'استراحت', '-' in the number columns, a short tip in نکته. Every day must appear. Cells at most 6 words, exercise names in Persian. (4) End with '### نکات' and 3 or 4 short tips.",
+    "- Emojis: 0 to 2 per reply, only where they add warmth; none in code, tables or serious topics.",
     "",
     "Tools:",
-    '- get_datetime: use it for ANY question about today\'s date, the weekday, the current time, or the time in another city or country; never answer these from memory and never use web_search for them. If the user mentions ANY city, country or region you MUST pass its IANA time zone id and a place_label; pass timezone "local" only when no place is mentioned. Set show_clock=true only when the user asks for the time of day; false for date or weekday questions. The app writes the answer itself, so after this tool returns just stop.',
-    "- find_place: call it FIRST for any question about where a place, business, landmark or address is, or for places near the user. Never answer locations from memory. Use intent specific_place for one named place (query = its full name plus city, region or country when you know it, in the user's language) and intent nearby_search for 'near me' category questions (query = the English category word, e.g. pharmacy). After nearby_search the app shows the cards, so just stop. After specific_place the app has already shown the map card (and a photo strip when available); now write 2 to 4 sentences of general information about the place: what it is, where it is (region and country) and why it is notable. Use ONLY facts found in the tool data: first `about`, then `web_context`, then the category and region fields. Never add roads, landmarks, populations, dates or history that are not in the data; if there is little data, write one short factual sentence from the category and region and stop. Do not repeat the address or coordinates and do not mention photos. If `ambiguous` is true add one short clause saying that other places share this name and that you showed the best-known one. If it reports a failure, say in one short sentence that the map could not be reached right now.",
+    '- get_datetime: for ANY question about today\'s date, weekday, current time, or the time elsewhere; never from memory or web_search. If any city, country or region is mentioned pass its IANA id and a place_label; use "local" only when no place is mentioned. show_clock=true only for time-of-day questions. The app writes the answer itself, so after this tool just stop.',
+    "- find_place: FIRST for where a place, business, landmark or address is, or for places near the user; never from memory. specific_place: query = full name plus city, region or country (user's language). nearby_search: query = English category word. After nearby_search just stop (the app shows the cards). After specific_place the app has shown the map card (and photos): write 2 to 4 sentences of general information (what it is, region and country, why notable) using ONLY the tool data (`about`, `web_context`, category, region). Never add roads, landmarks, populations, dates or history that are not in the data; with little data write one short factual sentence. Do not repeat the address or coordinates and do not mention photos. If `ambiguous` is true add one short clause saying other places share this name and you showed the best-known one. On failure say in one short sentence that the map could not be reached right now.",
     ctx.tavilyKey
-      ? "- web_search: call it FIRST for anything that changes over time: prices and exchange rates (currency, gold, crypto), news, weather, sports results, schedules. Write the query in the language best suited to the topic (Persian for Iranian prices and news). Answer in ONE short sentence with the key number exactly as in the results. For prices keep the unit exactly as the source states it (تومان or ریال, never convert), write numbers with the thousands separator ٬ (for example ۲۶٬۲۴۰٬۹۰۰), say 'حدود' or 'approximately', and give a range if sources disagree. If a number looks implausible next to the other data, say you could not confirm it. Never write source names or URLs."
-      : "- You cannot browse the internet or check live information (news, prices, weather). If asked, say so in one short sentence.",
-    "- Never mention tools, function names, JSON or internal data to the user. If a tool reports an error, say in one short sentence that the lookup failed right now; never invent the answer.",
-    "- Bracketed notes such as [map card shown: ...] in the conversation are internal records of cards the app already displayed. Never write such notes yourself.",
+      ? "- web_search: FIRST for anything that changes: prices and exchange rates (currency, gold, crypto), news, weather, sports, schedules. Use ONE query for several items. Write the query in the best language for the topic (Persian for Iranian prices and news). Answer in ONE short sentence with the key numbers exactly as in the results; keep the source's unit (تومان or ریال, never convert), use the thousands separator ٬ (for example ۲۶٬۲۴۰٬۹۰۰), say 'حدود', give a range if sources disagree; if a number looks implausible say you could not confirm it. Never write source names or URLs."
+      : "- You cannot browse the internet or check live information. If asked, say so in one short sentence.",
+    "- Never mention tools, function names, JSON or internal data. If a tool reports an error say in one short sentence that the lookup failed right now; never invent the answer.",
+    "- Bracketed notes like [map card shown: ...] in the conversation are internal records of cards already displayed; never write them yourself.",
     "",
-    "Language: always reply in the language of the user's latest message, and keep that language consistent through the whole reply.",
-    "",
-    "Honesty:",
-    "- Do not invent facts. If you are not sure, say so.",
+    "Language: always reply in the language of the user's latest message and keep it consistent.",
+    "Honesty: do not invent facts; if unsure, say so.",
   );
 
   return lines.join("\n");
@@ -2034,6 +2035,11 @@ type GroqTurn = {
   readonly toolCalls: readonly ParsedToolCall[];
 };
 
+type ResilientRound = {
+  readonly round: GroqRound;
+  readonly model: string;
+};
+
 async function requestGroqRound(
   apiKey: string,
   model: string,
@@ -2052,7 +2058,8 @@ async function requestGroqRound(
     };
 
     if (model.includes("gpt-oss")) {
-      payload.reasoning_effort = getOptionalEnv("GROQ_REASONING_EFFORT") ?? "medium";
+      payload.reasoning_effort =
+        getOptionalEnv("GROQ_REASONING_EFFORT") ?? "low";
     }
 
     if (toolOptions) {
@@ -2102,6 +2109,97 @@ async function requestGroqRound(
   } finally {
     attempt.clearConnectTimer();
   }
+}
+
+function parseRetryDelayMs(errorText: string): number | null {
+  const match = /try again in\s+((?:\d+(?:\.\d+)?(?:ms|s|m|h))+)/i.exec(
+    errorText,
+  );
+
+  if (!match || !match[1]) {
+    return null;
+  }
+
+  let total = 0;
+
+  for (const part of match[1].matchAll(/(\d+(?:\.\d+)?)(ms|s|m|h)/gi)) {
+    const value = Number(part[1]);
+    const unit = (part[2] ?? "").toLowerCase();
+
+    total +=
+      unit === "ms"
+        ? value
+        : unit === "s"
+          ? value * 1_000
+          : unit === "m"
+            ? value * 60_000
+            : value * 3_600_000;
+  }
+
+  return Number.isFinite(total) && total > 0 ? Math.ceil(total) : null;
+}
+
+async function requestGroqResilient(
+  apiKey: string,
+  models: readonly string[],
+  messages: readonly OAIMessage[],
+  toolOptions: GroqToolOptions,
+  signal: AbortSignal,
+): Promise<ResilientRound> {
+  let last: GroqRound = {
+    ok: false,
+    status: 0,
+    error: "No Groq model is configured.",
+    retryable: false,
+  };
+  let lastModel = models[0] ?? "";
+
+  for (const model of models) {
+    lastModel = model;
+
+    let round = await requestGroqRound(
+      apiKey,
+      model,
+      messages,
+      toolOptions,
+      signal,
+    );
+
+    if (!round.ok && round.status === 429) {
+      const wait = parseRetryDelayMs(round.error);
+
+      if (wait !== null && wait <= MAX_RATE_WAIT_MS) {
+        await sleep(wait + 300);
+        round = await requestGroqRound(
+          apiKey,
+          model,
+          messages,
+          toolOptions,
+          signal,
+        );
+      }
+    } else if (!round.ok && round.retryable) {
+      await sleep(RETRY_DELAY_MS);
+      round = await requestGroqRound(
+        apiKey,
+        model,
+        messages,
+        toolOptions,
+        signal,
+      );
+    }
+
+    if (round.ok || round.status === 400) {
+      return { round, model };
+    }
+
+    console.error(
+      `Groq model ${model} failed (status ${round.status}): ${round.error.slice(0, 300)}`,
+    );
+    last = round;
+  }
+
+  return { round: last, model: lastModel };
 }
 
 function extractGroqDelta(payload: unknown): Record<string, unknown> | null {
@@ -2210,6 +2308,7 @@ function toOAIMessage(message: AIMessage): OAIMessage {
 type AgentParams = {
   readonly apiKey: string;
   readonly model: string;
+  readonly models: readonly string[];
   readonly messages: readonly AIMessage[];
   readonly tools: readonly ToolDefinition[];
   readonly withTools: boolean;
@@ -2266,7 +2365,7 @@ async function* groqAgentChunks(
       convo.push({
         role: "tool",
         tool_call_id: call.id,
-        content: JSON.stringify(outcome.data).slice(0, 12_000),
+        content: JSON.stringify(outcome.data).slice(0, TOOL_RESULT_CHAR_CAP),
       });
 
       for (const card of outcome.cards ?? []) {
@@ -2311,24 +2410,20 @@ async function* groqAgentChunks(
       toolChoice: round + 1 >= MAX_TOOL_ROUNDS ? "none" : "auto",
     };
 
-    let next = await requestGroqRound(
-      params.apiKey,
+    const ordered = [
       params.model,
+      ...params.models.filter((candidate) => candidate !== params.model),
+    ];
+
+    const result = await requestGroqResilient(
+      params.apiKey,
+      ordered,
       convo,
       roundOptions,
       params.signal,
     );
 
-    if (!next.ok && next.retryable) {
-      await sleep(RETRY_DELAY_MS);
-      next = await requestGroqRound(
-        params.apiKey,
-        params.model,
-        convo,
-        roundOptions,
-        params.signal,
-      );
-    }
+    const next = result.round;
 
     if (!next.ok) {
       console.error(
@@ -2364,72 +2459,52 @@ async function openGroqAgent(
   const tools = buildToolDefinitions(ctx);
   const oaiMessages = messages.map(toOAIMessage);
 
-  let lastFailure: StreamOpenFailure = failure(
-    "groq",
-    "Groq request failed.",
-    true,
+  let withTools = true;
+  let result = await requestGroqResilient(
+    apiKey,
+    models,
+    oaiMessages,
+    { tools, toolChoice: "auto" },
+    masterSignal,
   );
 
-  for (const model of models) {
-    let withTools = true;
-    let round = await requestGroqRound(
+  if (!result.round.ok && result.round.status === 400) {
+    console.error(
+      `Groq model ${result.model} rejected the tool request: ${result.round.error.slice(0, 300)}`,
+    );
+
+    withTools = false;
+    result = await requestGroqResilient(
       apiKey,
-      model,
+      models,
       oaiMessages,
-      { tools, toolChoice: "auto" },
+      null,
       masterSignal,
     );
-
-    if (!round.ok && round.retryable) {
-      await sleep(RETRY_DELAY_MS);
-      round = await requestGroqRound(
-        apiKey,
-        model,
-        oaiMessages,
-        { tools, toolChoice: "auto" },
-        masterSignal,
-      );
-    }
-
-    if (!round.ok && round.status === 400) {
-      console.error(
-        `Groq model ${model} rejected the tool request: ${round.error.slice(0, 300)}`,
-      );
-      withTools = false;
-      round = await requestGroqRound(
-        apiKey,
-        model,
-        oaiMessages,
-        null,
-        masterSignal,
-      );
-    }
-
-    if (round.ok) {
-      return {
-        success: true,
-        provider: "groq",
-        model,
-        chunks: groqAgentChunks({
-          apiKey,
-          model,
-          messages,
-          tools,
-          withTools,
-          firstBody: round.body,
-          ctx,
-          signal: masterSignal,
-        }),
-      };
-    }
-
-    console.error(
-      `Groq model ${model} failed (status ${round.status}): ${round.error.slice(0, 300)}`,
-    );
-    lastFailure = failure("groq", round.error.slice(0, 300), round.retryable);
   }
 
-  return lastFailure;
+  const round = result.round;
+
+  if (round.ok) {
+    return {
+      success: true,
+      provider: "groq",
+      model: result.model,
+      chunks: groqAgentChunks({
+        apiKey,
+        model: result.model,
+        models,
+        messages,
+        tools,
+        withTools,
+        firstBody: round.body,
+        ctx,
+        signal: masterSignal,
+      }),
+    };
+  }
+
+  return failure("groq", round.error.slice(0, 300), round.retryable);
 }
 
 function extractGeminiText(payload: unknown): string {
