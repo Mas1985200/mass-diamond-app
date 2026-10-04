@@ -27,10 +27,15 @@ const sseHeaders: Record<string, string> = {
 
 const MAX_MESSAGE_LENGTH = 32_000;
 const MAX_HISTORY_MESSAGES = 40;
+const HISTORY_CHAR_BUDGET = 9_000;
+const HISTORY_MESSAGE_CAP = 1_500;
 const CONNECT_TIMEOUT_MS = 30_000;
 const TOOL_TIMEOUT_MS = 9_000;
 const WIKI_TIMEOUT_MS = 5_000;
 const TOTAL_TIMEOUT_MS = 120_000;
+const RETRY_DELAY_MS = 900;
+const WEB_CACHE_TTL_MS = 300_000;
+const WEB_CACHE_MAX_ENTRIES = 40;
 const MAX_TOOL_ROUNDS = 3;
 const MAX_CARDS = 4;
 const GROQ_ENDPOINT = "https://api.groq.com/openai/v1/chat/completions";
@@ -121,6 +126,7 @@ type PlaceItem = {
   readonly lat: number;
   readonly lon: number;
   readonly km?: number;
+  readonly zoom?: number;
 };
 
 type PlaceCandidate = {
@@ -128,6 +134,7 @@ type PlaceCandidate = {
   readonly category: string;
   readonly facts: Readonly<Record<string, string>>;
   readonly wikipedia: string;
+  readonly importance: number;
 };
 
 type PhotoItem = {
@@ -214,6 +221,10 @@ function pickString(record: Record<string, unknown>, key: string): string {
   const value = record[key];
 
   return typeof value === "string" ? value : "";
+}
+
+function sleep(ms: number): Promise<void> {
+  return new Promise((resolve) => setTimeout(resolve, ms));
 }
 
 function getBearerToken(request: Request): string | null {
@@ -572,6 +583,37 @@ function stripMarkers(content: string): string {
     .trim();
 }
 
+function trimHistory(history: readonly AIMessage[]): AIMessage[] {
+  const kept: AIMessage[] = [];
+  let used = 0;
+
+  for (let index = history.length - 1; index >= 0; index -= 1) {
+    const item = history[index];
+
+    if (!item) {
+      continue;
+    }
+
+    const content =
+      item.content.length > HISTORY_MESSAGE_CAP
+        ? `${item.content.slice(0, HISTORY_MESSAGE_CAP)}…`
+        : item.content;
+
+    if (used + content.length > HISTORY_CHAR_BUDGET && kept.length > 0) {
+      break;
+    }
+
+    used += content.length;
+    kept.unshift({ role: item.role, content });
+  }
+
+  while (kept.length > 0 && kept[0]?.role !== "user") {
+    kept.shift();
+  }
+
+  return kept;
+}
+
 const GET_DATETIME_TOOL: ToolDefinition = {
   type: "function",
   function: {
@@ -855,12 +897,77 @@ type NominatimOptions = {
   } | null;
 };
 
+function zoomFromRank(rank: number): number {
+  if (!Number.isFinite(rank) || rank <= 0) {
+    return 15;
+  }
+
+  if (rank <= 4) {
+    return 5;
+  }
+
+  if (rank <= 8) {
+    return 7;
+  }
+
+  if (rank <= 12) {
+    return 9;
+  }
+
+  if (rank <= 16) {
+    return 11;
+  }
+
+  if (rank <= 18) {
+    return 12;
+  }
+
+  if (rank <= 20) {
+    return 13;
+  }
+
+  if (rank <= 22) {
+    return 14;
+  }
+
+  if (rank <= 25) {
+    return 15;
+  }
+
+  return 16;
+}
+
+function zoomFromPhotonType(type: string): number {
+  if (type === "country") {
+    return 5;
+  }
+
+  if (type === "state") {
+    return 7;
+  }
+
+  if (type === "county") {
+    return 9;
+  }
+
+  if (type === "city") {
+    return 11;
+  }
+
+  if (type === "district" || type === "locality") {
+    return 13;
+  }
+
+  return 16;
+}
+
 function withDistance(
   ctx: ToolContext,
   name: string,
   address: string,
   lat: number,
   lon: number,
+  zoom?: number,
 ): PlaceItem {
   const km = ctx.location
     ? Math.round(haversineKm(ctx.location, lat, lon) * 10) / 10
@@ -872,6 +979,7 @@ function withDistance(
     lat: round5(lat),
     lon: round5(lon),
     ...(km !== undefined ? { km } : {}),
+    ...(zoom !== undefined ? { zoom } : {}),
   };
 }
 
@@ -945,6 +1053,8 @@ async function searchNominatim(
       const address = isRecord(raw.address) ? raw.address : {};
       const extratags = isRecord(raw.extratags) ? raw.extratags : {};
       const displayName = pickString(raw, "display_name");
+      const rank = Number(raw.place_rank);
+      const importance = Number(raw.importance);
 
       const name =
         pickString(raw, "name") ||
@@ -974,12 +1084,20 @@ async function searchNominatim(
       }
 
       candidates.push({
-        item: withDistance(ctx, name, region || displayName, lat, lon),
+        item: withDistance(
+          ctx,
+          name,
+          region || displayName,
+          lat,
+          lon,
+          zoomFromRank(rank),
+        ),
         category: [pickString(raw, "category"), pickString(raw, "type")]
           .filter(Boolean)
           .join("/"),
         facts,
         wikipedia: pickString(extratags, "wikipedia"),
+        importance: Number.isFinite(importance) ? importance : 0,
       });
     }
 
@@ -993,10 +1111,11 @@ async function searchPhoton(
   query: string,
   ctx: ToolContext,
   masterSignal: AbortSignal,
+  useBias: boolean,
 ): Promise<PlaceCandidate[]> {
   const params = new URLSearchParams({ q: query, limit: "8" });
 
-  if (ctx.location) {
+  if (useBias && ctx.location) {
     params.set("lat", String(ctx.location.lat));
     params.set("lon", String(ctx.location.lon));
   }
@@ -1067,12 +1186,20 @@ async function searchPhoton(
         .join(", ");
 
       candidates.push({
-        item: withDistance(ctx, name, address, lat, lon),
+        item: withDistance(
+          ctx,
+          name,
+          address,
+          lat,
+          lon,
+          zoomFromPhotonType(pickString(props, "type")),
+        ),
         category: [pickString(props, "osm_key"), pickString(props, "osm_value")]
           .filter(Boolean)
           .join("/"),
         facts: {},
         wikipedia: "",
+        importance: 0,
       });
     }
 
@@ -1223,12 +1350,36 @@ async function fetchWikipediaPhotos(
   }
 }
 
+const webCache = new Map<
+  string,
+  { readonly at: number; readonly results: WebResult[] }
+>();
+
+function rememberWebResults(key: string, results: WebResult[]): void {
+  if (webCache.size >= WEB_CACHE_MAX_ENTRIES) {
+    const oldest = webCache.keys().next().value;
+
+    if (oldest !== undefined) {
+      webCache.delete(oldest);
+    }
+  }
+
+  webCache.set(key, { at: Date.now(), results });
+}
+
 async function tavilySearch(
   query: string,
   apiKey: string,
   maxResults: number,
   masterSignal: AbortSignal,
 ): Promise<WebResult[] | null> {
+  const cacheKey = `${maxResults}:${query.trim().toLowerCase()}`;
+  const cached = webCache.get(cacheKey);
+
+  if (cached && Date.now() - cached.at < WEB_CACHE_TTL_MS) {
+    return cached.results;
+  }
+
   const timed = createAttempt(masterSignal, TOOL_TIMEOUT_MS);
 
   try {
@@ -1292,6 +1443,10 @@ async function tavilySearch(
       });
     }
 
+    if (results.length > 0) {
+      rememberWebResults(cacheKey, results);
+    }
+
     return results;
   } catch (error) {
     console.error(`web_search threw: ${describeError(error)}`);
@@ -1320,71 +1475,31 @@ function distinctLocations(
   return distinct;
 }
 
-function mergeCandidates(
-  base: readonly PlaceCandidate[],
-  extra: readonly PlaceCandidate[],
-): PlaceCandidate[] {
-  const merged = [...base];
-
-  for (const candidate of extra) {
-    const exists = merged.some(
-      (existing) => distanceBetween(existing.item, candidate.item) < 0.05,
-    );
-
-    if (!exists) {
-      merged.push(candidate);
-    }
-  }
-
-  return merged;
-}
-
 type SpecificPick = {
   readonly chosen: PlaceCandidate;
   readonly alternatives: readonly PlaceCandidate[];
   readonly ambiguous: boolean;
-  readonly reason: "best_match" | "nearest_to_user";
 };
 
 function pickSpecific(
   top: PlaceCandidate,
   all: readonly PlaceCandidate[],
-  ctx: ToolContext,
 ): SpecificPick {
   const topKey = normalizePlaceName(top.item.name);
-  const sameName = all.filter(
-    (candidate) => normalizePlaceName(candidate.item.name) === topKey,
-  );
-  const distinct = distinctLocations(sameName);
 
-  if (distinct.length <= 1) {
-    return {
-      chosen: top,
-      alternatives: [],
-      ambiguous: false,
-      reason: "best_match",
-    };
-  }
-
-  if (ctx.location) {
-    const sorted = distinct
-      .slice()
-      .sort((a, b) => (a.item.km ?? 1e9) - (b.item.km ?? 1e9));
-    const nearest = sorted[0] ?? top;
-
-    return {
-      chosen: nearest,
-      alternatives: sorted.filter((candidate) => candidate !== nearest).slice(0, 2),
-      ambiguous: true,
-      reason: "nearest_to_user",
-    };
-  }
+  const rivals = distinctLocations(
+    all.filter(
+      (candidate) =>
+        candidate !== top &&
+        normalizePlaceName(candidate.item.name) === topKey &&
+        distanceBetween(candidate.item, top.item) > 2,
+    ),
+  ).slice(0, 2);
 
   return {
     chosen: top,
-    alternatives: distinct.filter((candidate) => candidate !== top).slice(0, 2),
-    ambiguous: true,
-    reason: "best_match",
+    alternatives: rivals,
+    ambiguous: rivals.length > 0 && top.importance < 0.45,
   };
 }
 
@@ -1471,7 +1586,7 @@ async function runNearbySearch(
   }
 
   try {
-    const found = await searchPhoton(query, ctx, signal);
+    const found = await searchPhoton(query, ctx, signal, true);
     const items = selectNearby(found);
 
     if (items.length > 0) {
@@ -1511,40 +1626,19 @@ async function runSpecificPlace(
     console.error(`find_place nominatim failed: ${lastError}`);
   }
 
-  const first = candidates[0];
-
-  if (first && ctx.location) {
-    const key = normalizePlaceName(first.item.name);
-    const sameName = candidates.filter(
-      (candidate) => normalizePlaceName(candidate.item.name) === key,
-    );
-
-    if (distinctLocations(sameName).length > 1) {
-      try {
-        const biased = await searchNominatim(
-          query,
-          ctx,
-          { limit: 8, viewbox: { delta: 0.4, bounded: false } },
-          signal,
-        );
-
-        candidates = mergeCandidates(candidates, biased);
-      } catch (error) {
-        console.error(`find_place biased search failed: ${describeError(error)}`);
-      }
-    }
-  }
-
   if (candidates.length === 0) {
     try {
-      candidates = await searchPhoton(query, ctx, signal);
+      candidates = await searchPhoton(query, ctx, signal, false);
     } catch (error) {
       lastError = describeError(error);
       console.error(`find_place photon failed: ${lastError}`);
     }
   }
 
-  const top = candidates[0];
+  const ranked = candidates
+    .slice()
+    .sort((a, b) => b.importance - a.importance);
+  const top = ranked[0];
 
   if (!top) {
     return lastError
@@ -1557,7 +1651,7 @@ async function runSpecificPlace(
       : { data: { results: [], note: "No places were found." } };
   }
 
-  const pick = pickSpecific(top, candidates, ctx);
+  const pick = pickSpecific(top, ranked);
   const chosen = pick.chosen;
 
   let about = "";
@@ -1613,7 +1707,7 @@ async function runSpecificPlace(
       },
       web_context: webContext,
       ambiguous: pick.ambiguous,
-      picked_reason: pick.reason,
+      picked_reason: "most_prominent",
       other_matches: pick.alternatives.map((candidate) => ({
         name: candidate.item.name,
         region: candidate.item.address,
@@ -1787,12 +1881,12 @@ function buildSystemPrompt(ctx: ToolContext): string {
     "Writing quality:",
     "- Write like an expert human writer: vivid, precise, confident, never generic. Prefer concrete details, numbers and examples over filler. Keep paragraphs short.",
     "- In Persian use natural, idiomatic, polished Persian that does not sound translated, correct half-spaces (ZWNJ) and Persian digits. Never type Latin letters inside Persian words and never mix English words into Persian sentences unless it is a brand or an established term (like HIIT). Use only words you are sure exist; if unsure, choose a simpler common word. Re-read before answering and fix typos and odd words.",
-    "- Plans and schedules (workouts, study, meals, trips) must be complete and numbered. (1) A title line such as '**برنامه‌ی ورزشی ۴ روزه**' that always states the total number of days or weeks (and the week when it matters, e.g. 'هفته‌ی ۱'). (2) One line summarising goal, level, session length and rest days. (3) One section per day with a heading exactly like '### روز ۱ — پایین‌تنه' (the word روز, هفته or جلسه, a number, a dash, a short title). (4) Under each day ONE Markdown table; for workouts use exactly these columns: تمرین | ست | تکرار یا مدت | استراحت | نکته. Warm-up and cool-down are rows too (ست ۱, duration in minutes). A rest day gets a short list instead of a table. (5) Keep cells short (at most 6 words) and write exercise names in Persian. (6) Finish with '### نکات' and 3 or 4 short tips (progression, recovery, hydration, safety). Never put several days in one table.",
+    "- Plans and schedules (workouts, study, meals, trips) must be complete and numbered. (1) A title line such as '**برنامه‌ی ورزشی ۴ روزه**' that always states the total number of days or weeks. (2) One line summarising goal, level, session length and rest days. (3) ONE single Markdown table for the whole plan: never one table per day and never separate sections or headings per day. For workouts use exactly these columns (translate the column names into the user's language): روز | تمرین | ست | تکرار یا مدت | استراحت | نکته. Every row starts with its day label in the first column (for example 'روز ۱'; for plans with several weeks write 'هفته ۱ - روز ۱'). Warm-up and cool-down are rows too. A rest day is one row: the day label, 'استراحت' in the تمرین column, '-' in the number columns and a short suggestion in the نکته column. Every day of the plan must appear as rows, so the plan is complete. (4) Keep cells short (at most 6 words) and write exercise names in Persian. (5) Finish with '### نکات' and 3 or 4 short tips (progression, recovery, hydration, safety).",
     "- Emojis: sparingly, 0 to 2 per reply, only where they add warmth. None in code, tables or serious topics (illness, grief, legal or financial risk, errors).",
     "",
     "Tools:",
     '- get_datetime: use it for ANY question about today\'s date, the weekday, the current time, or the time in another city or country; never answer these from memory and never use web_search for them. If the user mentions ANY city, country or region you MUST pass its IANA time zone id and a place_label; pass timezone "local" only when no place is mentioned. Set show_clock=true only when the user asks for the time of day; false for date or weekday questions. The app writes the answer itself, so after this tool returns just stop.',
-    "- find_place: call it FIRST for any question about where a place, business, landmark or address is, or for places near the user. Never answer locations from memory. Use intent specific_place for one named place (query = its full name plus city, region or country when you know it, in the user's language) and intent nearby_search for 'near me' category questions (query = the English category word, e.g. pharmacy). After nearby_search the app shows the cards, so just stop. After specific_place the app has already shown the map card (and a photo strip when available); now write 2 to 4 sentences of general information about the place: what it is, where it is (region and country) and why it is notable. Use ONLY facts found in the tool data: first `about`, then `web_context`, then the category and region fields. Never add roads, landmarks, populations, dates or history that are not in the data; if there is little data, write one short factual sentence from the category and region and stop. Do not repeat the address or coordinates and do not mention photos. If `ambiguous` is true add one short clause saying which one you picked (for example 'نزدیک‌ترین به موقعیت شما'). If it reports a failure, say in one short sentence that the map could not be reached right now.",
+    "- find_place: call it FIRST for any question about where a place, business, landmark or address is, or for places near the user. Never answer locations from memory. Use intent specific_place for one named place (query = its full name plus city, region or country when you know it, in the user's language) and intent nearby_search for 'near me' category questions (query = the English category word, e.g. pharmacy). After nearby_search the app shows the cards, so just stop. After specific_place the app has already shown the map card (and a photo strip when available); now write 2 to 4 sentences of general information about the place: what it is, where it is (region and country) and why it is notable. Use ONLY facts found in the tool data: first `about`, then `web_context`, then the category and region fields. Never add roads, landmarks, populations, dates or history that are not in the data; if there is little data, write one short factual sentence from the category and region and stop. Do not repeat the address or coordinates and do not mention photos. If `ambiguous` is true add one short clause saying that other places share this name and that you showed the best-known one. If it reports a failure, say in one short sentence that the map could not be reached right now.",
     ctx.tavilyKey
       ? "- web_search: call it FIRST for anything that changes over time: prices and exchange rates (currency, gold, crypto), news, weather, sports results, schedules. Write the query in the language best suited to the topic (Persian for Iranian prices and news). Answer in ONE short sentence with the key number exactly as in the results. For prices keep the unit exactly as the source states it (تومان or ریال, never convert), write numbers with the thousands separator ٬ (for example ۲۶٬۲۴۰٬۹۰۰), say 'حدود' or 'approximately', and give a range if sources disagree. If a number looks implausible next to the other data, say you could not confirm it. Never write source names or URLs."
       : "- You cannot browse the internet or check live information (news, prices, weather). If asked, say so in one short sentence.",
@@ -2212,19 +2306,36 @@ async function* groqAgentChunks(
       return;
     }
 
-    const next = await requestGroqRound(
+    const roundOptions: GroqToolOptions = {
+      tools: params.tools,
+      toolChoice: round + 1 >= MAX_TOOL_ROUNDS ? "none" : "auto",
+    };
+
+    let next = await requestGroqRound(
       params.apiKey,
       params.model,
       convo,
-      {
-        tools: params.tools,
-        toolChoice: round + 1 >= MAX_TOOL_ROUNDS ? "none" : "auto",
-      },
+      roundOptions,
       params.signal,
     );
 
+    if (!next.ok && next.retryable) {
+      await sleep(RETRY_DELAY_MS);
+      next = await requestGroqRound(
+        params.apiKey,
+        params.model,
+        convo,
+        roundOptions,
+        params.signal,
+      );
+    }
+
     if (!next.ok) {
-      throw new Error(next.error);
+      console.error(
+        `Groq follow-up round failed (status ${next.status}): ${next.error.slice(0, 300)}`,
+      );
+
+      throw new Error(next.error.slice(0, 300));
     }
 
     body = next.body;
@@ -2269,9 +2380,20 @@ async function openGroqAgent(
       masterSignal,
     );
 
+    if (!round.ok && round.retryable) {
+      await sleep(RETRY_DELAY_MS);
+      round = await requestGroqRound(
+        apiKey,
+        model,
+        oaiMessages,
+        { tools, toolChoice: "auto" },
+        masterSignal,
+      );
+    }
+
     if (!round.ok && round.status === 400) {
       console.error(
-        `Groq model ${model} rejected the tool request: ${round.error}`,
+        `Groq model ${model} rejected the tool request: ${round.error.slice(0, 300)}`,
       );
       withTools = false;
       round = await requestGroqRound(
@@ -2301,8 +2423,10 @@ async function openGroqAgent(
       };
     }
 
-    console.error(`Groq model ${model} failed: ${round.error}`);
-    lastFailure = failure("groq", round.error, round.retryable);
+    console.error(
+      `Groq model ${model} failed (status ${round.status}): ${round.error.slice(0, 300)}`,
+    );
+    lastFailure = failure("groq", round.error.slice(0, 300), round.retryable);
   }
 
   return lastFailure;
@@ -2410,9 +2534,14 @@ async function openGemini(
     if (!response.ok) {
       const errorText = await response.text();
 
+      console.error(
+        `Gemini failed (status ${response.status}): ${errorText.slice(0, 300)}`,
+      );
+
       return failure(
         "gemini",
-        errorText || `Gemini request failed with status ${response.status}.`,
+        errorText.slice(0, 300) ||
+          `Gemini request failed with status ${response.status}.`,
         response.status === 429 || response.status >= 500,
       );
     }
@@ -2590,6 +2719,22 @@ async function saveAssistantMessage(
   }
 }
 
+async function saveExchange(
+  adminClient: SupabaseClient,
+  userId: string,
+  conversationId: string,
+  userMessage: string,
+  assistantContent: string,
+): Promise<void> {
+  await saveUserMessage(adminClient, userId, conversationId, userMessage);
+  await saveAssistantMessage(
+    adminClient,
+    userId,
+    conversationId,
+    assistantContent,
+  );
+}
+
 async function touchConversation(
   adminClient: SupabaseClient,
   userId: string,
@@ -2641,6 +2786,7 @@ type SseResponseInput = {
   readonly requestId: string;
   readonly conversationId: string;
   readonly userId: string;
+  readonly userMessage: string;
   readonly adminClient: SupabaseClient;
   readonly master: AbortController;
   readonly totalTimer: number;
@@ -2679,6 +2825,10 @@ function createSseResponse(input: SseResponseInput): Response {
         const finalContent = content.trim();
 
         if (!finalContent) {
+          console.error(
+            `request ${input.requestId}: the AI provider returned an empty response.`,
+          );
+
           send("error", {
             error: {
               code: "AI_PROVIDER_ERROR",
@@ -2692,18 +2842,25 @@ function createSseResponse(input: SseResponseInput): Response {
           return;
         }
 
-        await saveAssistantMessage(
-          input.adminClient,
-          input.userId,
-          input.conversationId,
-          finalContent,
-        );
+        try {
+          await saveExchange(
+            input.adminClient,
+            input.userId,
+            input.conversationId,
+            input.userMessage,
+            finalContent,
+          );
 
-        await touchConversation(
-          input.adminClient,
-          input.userId,
-          input.conversationId,
-        );
+          await touchConversation(
+            input.adminClient,
+            input.userId,
+            input.conversationId,
+          );
+        } catch (saveError) {
+          console.error(
+            `request ${input.requestId}: failed to save the exchange: ${describeError(saveError)}`,
+          );
+        }
 
         send("done", {
           requestId: input.requestId,
@@ -2713,10 +2870,14 @@ function createSseResponse(input: SseResponseInput): Response {
           content: finalContent,
         });
       } catch (error) {
+        console.error(
+          `request ${input.requestId}: stream failed: ${describeError(error).slice(0, 300)}`,
+        );
+
         send("error", {
           error: {
             code: "AI_PROVIDER_ERROR",
-            message: describeError(error),
+            message: describeError(error).slice(0, 300),
             retryable: true,
           },
           requestId: input.requestId,
@@ -2815,9 +2976,9 @@ Deno.serve(async (request: Request): Promise<Response> => {
       conversationId = await createConversation(adminClient, user.id);
     }
 
-    const history = await loadHistory(adminClient, user.id, conversationId);
-
-    await saveUserMessage(adminClient, user.id, conversationId, message);
+    const history = trimHistory(
+      await loadHistory(adminClient, user.id, conversationId),
+    );
 
     const ctx: ToolContext = {
       now: new Date(),
@@ -2828,7 +2989,7 @@ Deno.serve(async (request: Request): Promise<Response> => {
     };
 
     console.log(
-      `request ${requestId}: web_search=${ctx.tavilyKey ? "on" : "off"}, location=${ctx.location ? "yes" : "no"}`,
+      `request ${requestId}: web_search=${ctx.tavilyKey ? "on" : "off"}, location=${ctx.location ? "yes" : "no"}, history=${history.length}`,
     );
 
     const aiMessages: AIMessage[] = [
@@ -2858,12 +3019,16 @@ Deno.serve(async (request: Request): Promise<Response> => {
     if (!opened.success) {
       clearTimeout(totalTimer);
 
+      console.error(
+        `request ${requestId}: provider ${opened.provider} failed: ${opened.error.slice(0, 300)}`,
+      );
+
       return jsonResponse(
         {
           success: false,
           error: {
             code: "AI_PROVIDER_ERROR",
-            message: opened.error,
+            message: opened.error.slice(0, 300),
             retryable: opened.retryable,
           },
           requestId,
@@ -2881,6 +3046,7 @@ Deno.serve(async (request: Request): Promise<Response> => {
         requestId,
         conversationId,
         userId: user.id,
+        userMessage: message,
         adminClient,
         master,
         totalTimer,
@@ -2892,12 +3058,16 @@ Deno.serve(async (request: Request): Promise<Response> => {
     try {
       content = (await collectChunks(opened.chunks)).trim();
     } catch (error) {
+      console.error(
+        `request ${requestId}: generation failed: ${describeError(error).slice(0, 300)}`,
+      );
+
       return jsonResponse(
         {
           success: false,
           error: {
             code: "AI_PROVIDER_ERROR",
-            message: describeError(error),
+            message: describeError(error).slice(0, 300),
             retryable: true,
           },
           requestId,
@@ -2925,9 +3095,21 @@ Deno.serve(async (request: Request): Promise<Response> => {
       );
     }
 
-    await saveAssistantMessage(adminClient, user.id, conversationId, content);
+    try {
+      await saveExchange(
+        adminClient,
+        user.id,
+        conversationId,
+        message,
+        content,
+      );
 
-    await touchConversation(adminClient, user.id, conversationId);
+      await touchConversation(adminClient, user.id, conversationId);
+    } catch (saveError) {
+      console.error(
+        `request ${requestId}: failed to save the exchange: ${describeError(saveError)}`,
+      );
+    }
 
     return jsonResponse({
       success: true,
@@ -2946,6 +3128,8 @@ Deno.serve(async (request: Request): Promise<Response> => {
     const isAuthError =
       message === "Authentication is required." ||
       message === "Authentication is invalid or expired.";
+
+    console.error(`request ${requestId}: failed: ${message.slice(0, 300)}`);
 
     return jsonResponse(
       {
