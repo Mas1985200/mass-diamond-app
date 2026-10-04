@@ -34,6 +34,7 @@ const TOTAL_TIMEOUT_MS = 120_000;
 const MAX_TOOL_ROUNDS = 3;
 const MAX_CARDS = 4;
 const GROQ_ENDPOINT = "https://api.groq.com/openai/v1/chat/completions";
+const GROQ_TEMPERATURE = 0.4;
 const NOMINATIM_USER_AGENT =
   "MassDiamond/1.0 (https://mass-diamond.netlify.app)";
 
@@ -47,6 +48,9 @@ const FACT_KEYS: readonly string[] = [
   "start_date",
   "operator",
 ];
+
+const PHOTO_SKIP_PATTERN =
+  /(flag|logo|icon|locator|map|coat[_ ]of[_ ]arms|symbol|seal|emblem|edit-clear|question[_ ]book|wiktionary|disambig)/i;
 
 const UUID_PATTERN =
   /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
@@ -126,6 +130,17 @@ type PlaceCandidate = {
   readonly wikipedia: string;
 };
 
+type PhotoItem = {
+  readonly src: string;
+  readonly title: string;
+};
+
+type WebResult = {
+  readonly title: string;
+  readonly source: string;
+  readonly snippet: string;
+};
+
 type CardPayload =
   | {
       readonly t: "clock";
@@ -139,11 +154,16 @@ type CardPayload =
       readonly t: "places";
       readonly lang: Lang;
       readonly items: readonly PlaceItem[];
+    }
+  | {
+      readonly t: "photos";
+      readonly lang: Lang;
+      readonly items: readonly PhotoItem[];
     };
 
 type ToolOutcome = {
   readonly data: unknown;
-  readonly card?: CardPayload;
+  readonly cards?: readonly CardPayload[];
   readonly cardFirst?: boolean;
   readonly finalText?: string;
 };
@@ -327,6 +347,21 @@ function getTavilyKey(): string | undefined {
     getOptionalEnv("TAVILY_KEY") ??
     getOptionalEnv("TAVILY_API")
   );
+}
+
+function groqModelCandidates(): string[] {
+  const unique: string[] = [];
+
+  for (const candidate of [
+    getOptionalEnv("GROQ_MODEL_PREFERRED"),
+    getOptionalEnv("GROQ_MODEL"),
+  ]) {
+    if (candidate && !unique.includes(candidate)) {
+      unique.push(candidate);
+    }
+  }
+
+  return unique;
 }
 
 function describeError(error: unknown): string {
@@ -521,6 +556,10 @@ function describeCardForHistory(body: string): string {
     return zone ? `[clock card shown for ${zone}]` : "";
   }
 
+  if (decoded.t === "photos") {
+    return "[photo strip shown]";
+  }
+
   return "";
 }
 
@@ -568,7 +607,7 @@ const FIND_PLACE_TOOL: ToolDefinition = {
   function: {
     name: "find_place",
     description:
-      "Look up a place on the map. Use it whenever the user asks where something is, asks for an address or location, or wants places near them. The app shows the map card first and you then write general information about the place.",
+      "Look up a place on the map. Use it whenever the user asks where something is, asks for an address or location, or wants places near them. The app shows the map card (and photos when available) first and you then write general information about the place.",
     parameters: {
       type: "object",
       properties: {
@@ -795,14 +834,16 @@ function runGetDatetime(
   return {
     data,
     finalText: readyAnswer,
-    card: {
-      t: "clock",
-      iso: now.toISOString(),
-      zone,
-      ref: userZone,
-      ...(placeName ? { label: placeName } : {}),
-      lang: ctx.lang,
-    },
+    cards: [
+      {
+        t: "clock",
+        iso: now.toISOString(),
+        zone,
+        ref: userZone,
+        ...(placeName ? { label: placeName } : {}),
+        lang: ctx.lang,
+      },
+    ],
   };
 }
 
@@ -1041,20 +1082,28 @@ async function searchPhoton(
   }
 }
 
-async function fetchWikipediaSummary(
+function parseWikiTag(
   tag: string,
-  masterSignal: AbortSignal,
-): Promise<string> {
+): { readonly lang: string; readonly title: string } | null {
   const match = /^([a-z]{2,3}(?:-[a-z]{2,8})?):(.+)$/i.exec(tag.trim());
 
   if (!match) {
-    return "";
+    return null;
   }
 
   const lang = (match[1] ?? "").toLowerCase();
   const title = (match[2] ?? "").trim().replace(/ /g, "_");
 
-  if (!lang || !title) {
+  return lang && title ? { lang, title } : null;
+}
+
+async function fetchWikipediaSummary(
+  tag: string,
+  masterSignal: AbortSignal,
+): Promise<string> {
+  const parsed = parseWikiTag(tag);
+
+  if (!parsed) {
     return "";
   }
 
@@ -1062,7 +1111,7 @@ async function fetchWikipediaSummary(
 
   try {
     const response = await fetch(
-      `https://${lang}.wikipedia.org/api/rest_v1/page/summary/${encodeURIComponent(title)}`,
+      `https://${parsed.lang}.wikipedia.org/api/rest_v1/page/summary/${encodeURIComponent(parsed.title)}`,
       {
         headers: {
           "User-Agent": NOMINATIM_USER_AGENT,
@@ -1085,6 +1134,169 @@ async function fetchWikipediaSummary(
     console.error(`wikipedia summary failed: ${describeError(error)}`);
 
     return "";
+  } finally {
+    timed.clearConnectTimer();
+  }
+}
+
+async function fetchWikipediaPhotos(
+  tag: string,
+  masterSignal: AbortSignal,
+): Promise<PhotoItem[]> {
+  const parsed = parseWikiTag(tag);
+
+  if (!parsed) {
+    return [];
+  }
+
+  const timed = createAttempt(masterSignal, WIKI_TIMEOUT_MS);
+
+  try {
+    const response = await fetch(
+      `https://${parsed.lang}.wikipedia.org/api/rest_v1/page/media-list/${encodeURIComponent(parsed.title)}`,
+      {
+        headers: {
+          "User-Agent": NOMINATIM_USER_AGENT,
+          Accept: "application/json",
+        },
+        signal: timed.signal,
+      },
+    );
+
+    if (!response.ok) {
+      return [];
+    }
+
+    const json: unknown = await response.json();
+    const items = isRecord(json) && Array.isArray(json.items) ? json.items : [];
+    const photos: PhotoItem[] = [];
+
+    for (const raw of items) {
+      if (!isRecord(raw) || raw.type !== "image") {
+        continue;
+      }
+
+      const title = pickString(raw, "title");
+
+      if (!title || /\.svg$/i.test(title) || PHOTO_SKIP_PATTERN.test(title)) {
+        continue;
+      }
+
+      const srcset = Array.isArray(raw.srcset) ? raw.srcset : [];
+      const last: unknown = srcset[srcset.length - 1];
+
+      if (!isRecord(last)) {
+        continue;
+      }
+
+      let src = pickString(last, "src");
+
+      if (src.startsWith("//")) {
+        src = `https:${src}`;
+      }
+
+      if (!src.startsWith("https://upload.wikimedia.org/")) {
+        continue;
+      }
+
+      if (photos.some((photo) => photo.src === src)) {
+        continue;
+      }
+
+      photos.push({
+        src,
+        title: title.replace(/^[^:]+:/, "").replace(/_/g, " ").slice(0, 100),
+      });
+
+      if (photos.length >= 5) {
+        break;
+      }
+    }
+
+    return photos;
+  } catch (error) {
+    console.error(`wikipedia photos failed: ${describeError(error)}`);
+
+    return [];
+  } finally {
+    timed.clearConnectTimer();
+  }
+}
+
+async function tavilySearch(
+  query: string,
+  apiKey: string,
+  maxResults: number,
+  masterSignal: AbortSignal,
+): Promise<WebResult[] | null> {
+  const timed = createAttempt(masterSignal, TOOL_TIMEOUT_MS);
+
+  try {
+    const response = await fetch("https://api.tavily.com/search", {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        Authorization: `Bearer ${apiKey}`,
+      },
+      body: JSON.stringify({
+        query,
+        max_results: maxResults,
+        search_depth: "basic",
+        include_answer: false,
+      }),
+      signal: timed.signal,
+    });
+
+    if (!response.ok) {
+      console.error(`web_search failed with status ${response.status}.`);
+
+      return null;
+    }
+
+    const json: unknown = await response.json();
+    const rawResults =
+      isRecord(json) && Array.isArray(json.results) ? json.results : [];
+    const results: WebResult[] = [];
+
+    for (const raw of rawResults) {
+      if (!isRecord(raw)) {
+        continue;
+      }
+
+      const title = pickString(raw, "title").trim();
+      const rawUrl = pickString(raw, "url");
+      const content = pickString(raw, "content");
+
+      let host = "";
+
+      try {
+        const parsed = new URL(rawUrl);
+
+        if (parsed.protocol !== "https:" && parsed.protocol !== "http:") {
+          continue;
+        }
+
+        host = parsed.hostname.replace(/^www\./, "");
+      } catch {
+        continue;
+      }
+
+      if (!title) {
+        continue;
+      }
+
+      results.push({
+        title: title.slice(0, 140),
+        source: host.slice(0, 80),
+        snippet: content.slice(0, 500),
+      });
+    }
+
+    return results;
+  } catch (error) {
+    console.error(`web_search threw: ${describeError(error)}`);
+
+    return null;
   } finally {
     timed.clearConnectTimer();
   }
@@ -1202,6 +1414,26 @@ function selectNearby(candidates: readonly PlaceCandidate[]): PlaceItem[] {
   return picked;
 }
 
+function nearbyOutcome(
+  items: readonly PlaceItem[],
+  ctx: ToolContext,
+): ToolOutcome {
+  return {
+    data: {
+      results: items.map((item) => ({
+        name: item.name,
+        address: item.address,
+        lat: item.lat,
+        lon: item.lon,
+        distance_km: item.km,
+      })),
+    },
+    finalText: "",
+    cardFirst: true,
+    cards: [{ t: "places", lang: ctx.lang, items }],
+  };
+}
+
 async function runNearbySearch(
   query: string,
   ctx: ToolContext,
@@ -1257,26 +1489,6 @@ async function runNearbySearch(
   }
 
   return { data: { results: [], note: "No places were found." } };
-}
-
-function nearbyOutcome(
-  items: readonly PlaceItem[],
-  ctx: ToolContext,
-): ToolOutcome {
-  return {
-    data: {
-      results: items.map((item) => ({
-        name: item.name,
-        address: item.address,
-        lat: item.lat,
-        lon: item.lon,
-        distance_km: item.km,
-      })),
-    },
-    finalText: "",
-    cardFirst: true,
-    card: { t: "places", lang: ctx.lang, items },
-  };
 }
 
 async function runSpecificPlace(
@@ -1346,11 +1558,45 @@ async function runSpecificPlace(
   }
 
   const pick = pickSpecific(top, candidates, ctx);
-  const about = pick.chosen.wikipedia
-    ? await fetchWikipediaSummary(pick.chosen.wikipedia, signal)
-    : "";
-
   const chosen = pick.chosen;
+
+  let about = "";
+  let photos: PhotoItem[] = [];
+
+  if (chosen.wikipedia) {
+    const [summary, gallery] = await Promise.all([
+      fetchWikipediaSummary(chosen.wikipedia, signal),
+      fetchWikipediaPhotos(chosen.wikipedia, signal),
+    ]);
+
+    about = summary;
+    photos = gallery;
+  }
+
+  let webContext: Array<{ readonly source: string; readonly snippet: string }> =
+    [];
+
+  if (!about && ctx.tavilyKey) {
+    const found = await tavilySearch(
+      `${chosen.item.name} ${chosen.item.address}`.trim(),
+      ctx.tavilyKey,
+      3,
+      signal,
+    );
+
+    webContext = (found ?? []).map((result) => ({
+      source: result.source,
+      snippet: result.snippet.slice(0, 400),
+    }));
+  }
+
+  const cards: CardPayload[] = [
+    { t: "places", lang: ctx.lang, items: [chosen.item] },
+  ];
+
+  if (photos.length > 0) {
+    cards.push({ t: "photos", lang: ctx.lang, items: photos });
+  }
 
   return {
     data: {
@@ -1365,6 +1611,7 @@ async function runSpecificPlace(
         about,
         about_source: about ? "wikipedia" : "",
       },
+      web_context: webContext,
       ambiguous: pick.ambiguous,
       picked_reason: pick.reason,
       other_matches: pick.alternatives.map((candidate) => ({
@@ -1374,7 +1621,7 @@ async function runSpecificPlace(
       })),
     },
     cardFirst: true,
-    card: { t: "places", lang: ctx.lang, items: [chosen.item] },
+    cards,
   };
 }
 
@@ -1411,84 +1658,17 @@ async function runWebSearch(
     return { data: { error: "Web search is not available." } };
   }
 
-  const timed = createAttempt(signal, TOOL_TIMEOUT_MS);
+  const results = await tavilySearch(query, ctx.tavilyKey, 5, signal);
 
-  try {
-    const response = await fetch("https://api.tavily.com/search", {
-      method: "POST",
-      headers: {
-        "Content-Type": "application/json",
-        Authorization: `Bearer ${ctx.tavilyKey}`,
-      },
-      body: JSON.stringify({
-        query,
-        max_results: 5,
-        search_depth: "basic",
-        include_answer: false,
-      }),
-      signal: timed.signal,
-    });
-
-    if (!response.ok) {
-      console.error(`web_search failed with status ${response.status}.`);
-
-      return {
-        data: { error: `Web search failed with status ${response.status}.` },
-      };
-    }
-
-    const json: unknown = await response.json();
-    const rawResults =
-      isRecord(json) && Array.isArray(json.results) ? json.results : [];
-
-    const results: Array<{
-      readonly title: string;
-      readonly source: string;
-      readonly snippet: string;
-    }> = [];
-
-    for (const raw of rawResults) {
-      if (!isRecord(raw)) {
-        continue;
-      }
-
-      const title = pickString(raw, "title").trim();
-      const rawUrl = pickString(raw, "url");
-      const content = pickString(raw, "content");
-
-      let host = "";
-
-      try {
-        const parsed = new URL(rawUrl);
-
-        if (parsed.protocol !== "https:" && parsed.protocol !== "http:") {
-          continue;
-        }
-
-        host = parsed.hostname.replace(/^www\./, "");
-      } catch {
-        continue;
-      }
-
-      if (!title) {
-        continue;
-      }
-
-      results.push({
-        title: title.slice(0, 140),
-        source: host.slice(0, 80),
-        snippet: content.slice(0, 500),
-      });
-    }
-
-    if (results.length === 0) {
-      return { data: { results: [], note: "No web results were found." } };
-    }
-
-    return { data: { results } };
-  } finally {
-    timed.clearConnectTimer();
+  if (results === null) {
+    return { data: { error: "Web search failed." } };
   }
+
+  if (results.length === 0) {
+    return { data: { results: [], note: "No web results were found." } };
+  }
+
+  return { data: { results } };
 }
 
 async function executeTool(
@@ -1543,6 +1723,26 @@ function buildSystemPrompt(ctx: ToolContext): string {
       now,
     ) || now.toISOString();
 
+  const hour = Number(
+    safeFormat(
+      "en-GB",
+      { timeZone: zone, hour: "2-digit", hourCycle: "h23" },
+      now,
+    ),
+  );
+
+  const partOfDay = !Number.isFinite(hour)
+    ? "day"
+    : hour < 5
+      ? "night"
+      : hour < 12
+        ? "morning"
+        : hour < 17
+          ? "afternoon"
+          : hour < 21
+            ? "evening"
+            : "night";
+
   const lines: string[] = [
     "You are Mass Diamond, a brilliant, warm and precise AI assistant inside the Mass Diamond app.",
     "",
@@ -1554,7 +1754,10 @@ function buildSystemPrompt(ctx: ToolContext): string {
     lines.push(`- Persian (Solar Hijri) date: ${persian}`);
   }
 
-  lines.push(`- Local time: ${time} (time zone: ${zone})`);
+  lines.push(
+    `- Local time: ${time} (time zone: ${zone})`,
+    `- Part of the day for the user: ${partOfDay} (use it only to pick a fitting greeting when the user greets you).`,
+  );
 
   if (!ctx.timeZone) {
     lines.push(
@@ -1573,26 +1776,25 @@ function buildSystemPrompt(ctx: ToolContext): string {
   }
 
   lines.push(
-    "Rules for date and time: mention the date or time ONLY when the user explicitly asks, or when the task truly needs it (an age, a deadline, a countdown). Never mention them in greetings or small talk.",
+    "Rules for date and time: mention the date or time ONLY when the user explicitly asks, or when the task truly needs it (an age, a deadline, a countdown). Never mention them in greetings or small talk, except a fitting time-of-day greeting word.",
     "",
     "Core behaviour:",
-    "- Answer exactly what was asked, nothing more. Lead with the answer. No filler openings and no closing lines such as 'anything else?', 'let me know', 'shall we start?' or 'how can I help further?'. Ask a question only when you truly cannot proceed without the answer, and then ask just one short question.",
-    "- For prices, news and other quick facts answer in ONE short sentence unless the user asks for detail.",
-    "- When greeted, reply with one short warm line and stop.",
-    "- Never address the user with honorifics such as 'قربان'. Match the user's own register.",
-    "- When asked to create something (an ad, a text, a plan, names), deliver a concrete, polished, complete result immediately, using sensible assumptions. Put every unknown specific in [square brackets] as a placeholder. Never invent facts such as ratings, prices, discount codes, phone numbers, addresses or statistics.",
+    "- Task requests (questions, lookups, writing, plans): answer exactly what was asked, nothing more. Lead with the answer. No filler openings and no closing lines such as 'anything else?', 'let me know', 'shall we start?' or 'how can I help further?'. Ask a question only when you truly cannot proceed without the answer, and then ask just one short question (if the topic is unknown, list 3 or 4 concrete options in that one line).",
+    "- Small talk (greetings, 'how are you?', thanks, compliments, the user's mood) is where you are a warm, cheerful, close friend. Reply in 1 to 3 natural sentences: answer the personal question genuinely, react to the user's mood, and invite them to continue with something specific and inviting. Never answer a greeting with only the greeting word. Use a time-of-day greeting (صبح بخیر، عصر بخیر، شب بخیر) when it fits. Use at most one exclamation mark in the whole reply and never end a greeting with a bare '!'. Match the user's register (informal 'تو' if they are informal). Vary your wording and never copy the same reply twice.",
+    "- Never address the user with honorifics such as 'قربان'.",
+    "- When asked to create something (an ad, a text, names), deliver a concrete, polished, complete result immediately, using sensible assumptions. Put every unknown specific in [square brackets] as a placeholder. Never invent facts such as ratings, prices, discount codes, phone numbers, addresses or statistics.",
     "",
     "Writing quality:",
     "- Write like an expert human writer: vivid, precise, confident, never generic. Prefer concrete details, numbers and examples over filler. Keep paragraphs short.",
-    "- Plans and schedules (workouts, study, meals, trips) must be complete and well structured: start with one line summarising goal, level and duration; then one section per day with a short bold heading such as '**روز ۱ — پایین‌تنه**' followed by its OWN Markdown table with clear columns (for training: تمرین | ست × تکرار | استراحت | نکته). Include warm-up and cool-down rows, estimated duration and intensity, and finish with 3 or 4 short tips (progression, recovery, hydration or nutrition). Never put several days in one table and never leave cells vague. Keep each table cell short (at most 8 words) with the item name in the first column.",
-    "- In Persian use natural, idiomatic, polished Persian that does not sound translated, correct half-spaces (ZWNJ), Persian digits in Persian prose, and a tone that matches the user's. Use only words you are sure exist; if unsure, choose a simpler common word. Re-read before answering and fix typos and odd words.",
+    "- In Persian use natural, idiomatic, polished Persian that does not sound translated, correct half-spaces (ZWNJ) and Persian digits. Never type Latin letters inside Persian words and never mix English words into Persian sentences unless it is a brand or an established term (like HIIT). Use only words you are sure exist; if unsure, choose a simpler common word. Re-read before answering and fix typos and odd words.",
+    "- Plans and schedules (workouts, study, meals, trips) must be complete and numbered. (1) A title line such as '**برنامه‌ی ورزشی ۴ روزه**' that always states the total number of days or weeks (and the week when it matters, e.g. 'هفته‌ی ۱'). (2) One line summarising goal, level, session length and rest days. (3) One section per day with a heading exactly like '### روز ۱ — پایین‌تنه' (the word روز, هفته or جلسه, a number, a dash, a short title). (4) Under each day ONE Markdown table; for workouts use exactly these columns: تمرین | ست | تکرار یا مدت | استراحت | نکته. Warm-up and cool-down are rows too (ست ۱, duration in minutes). A rest day gets a short list instead of a table. (5) Keep cells short (at most 6 words) and write exercise names in Persian. (6) Finish with '### نکات' and 3 or 4 short tips (progression, recovery, hydration, safety). Never put several days in one table.",
     "- Emojis: sparingly, 0 to 2 per reply, only where they add warmth. None in code, tables or serious topics (illness, grief, legal or financial risk, errors).",
     "",
     "Tools:",
     '- get_datetime: use it for ANY question about today\'s date, the weekday, the current time, or the time in another city or country; never answer these from memory and never use web_search for them. If the user mentions ANY city, country or region you MUST pass its IANA time zone id and a place_label; pass timezone "local" only when no place is mentioned. Set show_clock=true only when the user asks for the time of day; false for date or weekday questions. The app writes the answer itself, so after this tool returns just stop.',
-    "- find_place: call it FIRST for any question about where a place, business, landmark or address is, or for places near the user. Never answer locations from memory. Use intent specific_place for one named place (query = its full name plus city, region or country when you know it, in the user's language) and intent nearby_search for 'near me' category questions (query = the English category word, e.g. pharmacy). After nearby_search the app shows the cards, so just stop. After specific_place the app has already shown the map card; now write 2 to 4 sentences of general information about the place: what it is, where it is (region and country) and why it is notable. Base them on the tool's `about` text, its other fields, web_search results (if `about` is empty and web_search is available, first call web_search with '<name> <region>'), and only facts you are certain of; never invent numbers, dates or history; if little is known say only what is certain. Do not repeat the address or coordinates. If `ambiguous` is true add one short clause saying which one you picked (for example 'نزدیک‌ترین به موقعیت شما'). If it reports a failure, say in one short sentence that the map could not be reached right now.",
+    "- find_place: call it FIRST for any question about where a place, business, landmark or address is, or for places near the user. Never answer locations from memory. Use intent specific_place for one named place (query = its full name plus city, region or country when you know it, in the user's language) and intent nearby_search for 'near me' category questions (query = the English category word, e.g. pharmacy). After nearby_search the app shows the cards, so just stop. After specific_place the app has already shown the map card (and a photo strip when available); now write 2 to 4 sentences of general information about the place: what it is, where it is (region and country) and why it is notable. Use ONLY facts found in the tool data: first `about`, then `web_context`, then the category and region fields. Never add roads, landmarks, populations, dates or history that are not in the data; if there is little data, write one short factual sentence from the category and region and stop. Do not repeat the address or coordinates and do not mention photos. If `ambiguous` is true add one short clause saying which one you picked (for example 'نزدیک‌ترین به موقعیت شما'). If it reports a failure, say in one short sentence that the map could not be reached right now.",
     ctx.tavilyKey
-      ? "- web_search: call it FIRST for anything that changes over time: prices and exchange rates (currency, gold, crypto), news, weather, sports results, schedules. Write the query in the language best suited to the topic (Persian for Iranian prices and news). Answer in ONE short sentence with the key number exactly as in the results; for prices say 'حدود' or 'approximately' and give a range if sources disagree. Never write source names or URLs."
+      ? "- web_search: call it FIRST for anything that changes over time: prices and exchange rates (currency, gold, crypto), news, weather, sports results, schedules. Write the query in the language best suited to the topic (Persian for Iranian prices and news). Answer in ONE short sentence with the key number exactly as in the results. For prices keep the unit exactly as the source states it (تومان or ریال, never convert), write numbers with the thousands separator ٬ (for example ۲۶٬۲۴۰٬۹۰۰), say 'حدود' or 'approximately', and give a range if sources disagree. If a number looks implausible next to the other data, say you could not confirm it. Never write source names or URLs."
       : "- You cannot browse the internet or check live information (news, prices, weather). If asked, say so in one short sentence.",
     "- Never mention tools, function names, JSON or internal data to the user. If a tool reports an error, say in one short sentence that the lookup failed right now; never invent the answer.",
     "- Bracketed notes such as [map card shown: ...] in the conversation are internal records of cards the app already displayed. Never write such notes yourself.",
@@ -1609,7 +1811,7 @@ function buildSystemPrompt(ctx: ToolContext): string {
 function getConfiguredProviders(): AIProviderId[] {
   const providers: AIProviderId[] = [];
 
-  if (getOptionalEnv("GROQ_API_KEY") && getOptionalEnv("GROQ_MODEL")) {
+  if (getOptionalEnv("GROQ_API_KEY") && groqModelCandidates().length > 0) {
     providers.push("groq");
   }
 
@@ -1751,9 +1953,13 @@ async function requestGroqRound(
     const payload: Record<string, unknown> = {
       model,
       messages,
-      temperature: 0.7,
+      temperature: GROQ_TEMPERATURE,
       stream: true,
     };
+
+    if (model.includes("gpt-oss")) {
+      payload.reasoning_effort = getOptionalEnv("GROQ_REASONING_EFFORT") ?? "medium";
+    }
 
     if (toolOptions) {
       payload.tools = toolOptions.tools;
@@ -1969,8 +2175,8 @@ async function* groqAgentChunks(
         content: JSON.stringify(outcome.data).slice(0, 12_000),
       });
 
-      if (outcome.card) {
-        const marker = encodeCard(outcome.card);
+      for (const card of outcome.cards ?? []) {
+        const marker = encodeCard(card);
 
         if (outcome.cardFirst) {
           if (!emitted.has(marker) && emitted.size < MAX_CARDS) {
@@ -1993,8 +2199,8 @@ async function* groqAgentChunks(
           yield `${outcome.finalText}\n\n`;
         }
 
-        if (outcome.card) {
-          const marker = encodeCard(outcome.card);
+        for (const card of outcome.cards ?? []) {
+          const marker = encodeCard(card);
 
           if (!emitted.has(marker)) {
             emitted.add(marker);
@@ -2038,55 +2244,68 @@ async function openGroqAgent(
   masterSignal: AbortSignal,
 ): Promise<StreamOpenResult> {
   const apiKey = getOptionalEnv("GROQ_API_KEY");
-  const model = getOptionalEnv("GROQ_MODEL");
+  const models = groqModelCandidates();
 
-  if (!apiKey || !model) {
+  if (!apiKey || models.length === 0) {
     return failure("groq", "Groq provider is not configured.", false);
   }
 
   const tools = buildToolDefinitions(ctx);
   const oaiMessages = messages.map(toOAIMessage);
 
-  let withTools = true;
-  let round = await requestGroqRound(
-    apiKey,
-    model,
-    oaiMessages,
-    { tools, toolChoice: "auto" },
-    masterSignal,
+  let lastFailure: StreamOpenFailure = failure(
+    "groq",
+    "Groq request failed.",
+    true,
   );
 
-  if (!round.ok && round.status === 400) {
-    console.error(`Groq rejected the tool request: ${round.error}`);
-    withTools = false;
-    round = await requestGroqRound(
+  for (const model of models) {
+    let withTools = true;
+    let round = await requestGroqRound(
       apiKey,
       model,
       oaiMessages,
-      null,
+      { tools, toolChoice: "auto" },
       masterSignal,
     );
+
+    if (!round.ok && round.status === 400) {
+      console.error(
+        `Groq model ${model} rejected the tool request: ${round.error}`,
+      );
+      withTools = false;
+      round = await requestGroqRound(
+        apiKey,
+        model,
+        oaiMessages,
+        null,
+        masterSignal,
+      );
+    }
+
+    if (round.ok) {
+      return {
+        success: true,
+        provider: "groq",
+        model,
+        chunks: groqAgentChunks({
+          apiKey,
+          model,
+          messages,
+          tools,
+          withTools,
+          firstBody: round.body,
+          ctx,
+          signal: masterSignal,
+        }),
+      };
+    }
+
+    console.error(`Groq model ${model} failed: ${round.error}`);
+    lastFailure = failure("groq", round.error, round.retryable);
   }
 
-  if (!round.ok) {
-    return failure("groq", round.error, round.retryable);
-  }
-
-  return {
-    success: true,
-    provider: "groq",
-    model,
-    chunks: groqAgentChunks({
-      apiKey,
-      model,
-      messages,
-      tools,
-      withTools,
-      firstBody: round.body,
-      ctx,
-      signal: masterSignal,
-    }),
-  };
+  return lastFailure;
 }
 
 function extractGeminiText(payload: unknown): string {
@@ -2171,7 +2390,7 @@ async function openGemini(
 
   const body: Record<string, unknown> = {
     contents,
-    generationConfig: { temperature: 0.7 },
+    generationConfig: { temperature: 0.5 },
   };
 
   if (systemText) {
