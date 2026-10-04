@@ -29,12 +29,24 @@ const MAX_MESSAGE_LENGTH = 32_000;
 const MAX_HISTORY_MESSAGES = 40;
 const CONNECT_TIMEOUT_MS = 30_000;
 const TOOL_TIMEOUT_MS = 9_000;
+const WIKI_TIMEOUT_MS = 5_000;
 const TOTAL_TIMEOUT_MS = 120_000;
 const MAX_TOOL_ROUNDS = 3;
 const MAX_CARDS = 4;
 const GROQ_ENDPOINT = "https://api.groq.com/openai/v1/chat/completions";
 const NOMINATIM_USER_AGENT =
   "MassDiamond/1.0 (https://mass-diamond.netlify.app)";
+
+const FACT_KEYS: readonly string[] = [
+  "website",
+  "phone",
+  "opening_hours",
+  "population",
+  "description",
+  "height",
+  "start_date",
+  "operator",
+];
 
 const UUID_PATTERN =
   /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
@@ -107,10 +119,11 @@ type PlaceItem = {
   readonly km?: number;
 };
 
-type SourceItem = {
-  readonly title: string;
-  readonly url: string;
-  readonly domain: string;
+type PlaceCandidate = {
+  readonly item: PlaceItem;
+  readonly category: string;
+  readonly facts: Readonly<Record<string, string>>;
+  readonly wikipedia: string;
 };
 
 type CardPayload =
@@ -126,16 +139,12 @@ type CardPayload =
       readonly t: "places";
       readonly lang: Lang;
       readonly items: readonly PlaceItem[];
-    }
-  | {
-      readonly t: "sources";
-      readonly lang: Lang;
-      readonly items: readonly SourceItem[];
     };
 
 type ToolOutcome = {
   readonly data: unknown;
   readonly card?: CardPayload;
+  readonly cardFirst?: boolean;
   readonly finalText?: string;
 };
 
@@ -179,6 +188,12 @@ function jsonResponse(body: unknown, status = 200): Response {
 
 function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === "object" && value !== null;
+}
+
+function pickString(record: Record<string, unknown>, key: string): string {
+  const value = record[key];
+
+  return typeof value === "string" ? value : "";
 }
 
 function getBearerToken(request: Request): string | null {
@@ -331,6 +346,12 @@ function resolveTimeZone(candidate: string | undefined): string | null {
   }
 }
 
+function cityFromZone(zone: string): string {
+  const last = zone.split("/").pop() ?? zone;
+
+  return last.replace(/_/g, " ");
+}
+
 function safeFormat(
   locale: string,
   options: Intl.DateTimeFormatOptions,
@@ -429,6 +450,18 @@ function haversineKm(a: GeoPoint, lat: number, lon: number): number {
   return 2 * 6371 * Math.asin(Math.min(1, Math.sqrt(h)));
 }
 
+function distanceBetween(a: PlaceItem, b: PlaceItem): number {
+  return haversineKm({ lat: a.lat, lon: a.lon }, b.lat, b.lon);
+}
+
+function normalizePlaceName(name: string): string {
+  return name
+    .toLowerCase()
+    .replace(/ي/g, "ی")
+    .replace(/ك/g, "ک")
+    .replace(/[\u200c\s\-_.,'"«»()]/g, "");
+}
+
 function encodeCard(card: CardPayload): string {
   const bytes = new TextEncoder().encode(JSON.stringify(card));
   let binary = "";
@@ -488,17 +521,6 @@ function describeCardForHistory(body: string): string {
     return zone ? `[clock card shown for ${zone}]` : "";
   }
 
-  if (decoded.t === "sources" && Array.isArray(decoded.items)) {
-    const domains = decoded.items
-      .filter(isRecord)
-      .map((item) => (typeof item.domain === "string" ? item.domain : ""))
-      .filter(Boolean);
-
-    return domains.length > 0
-      ? `[sources card shown: ${domains.join(", ")}]`
-      : "";
-  }
-
   return "";
 }
 
@@ -516,19 +538,19 @@ const GET_DATETIME_TOOL: ToolDefinition = {
   function: {
     name: "get_datetime",
     description:
-      "Get the exact current date, weekday and time, for the user's own time zone or for any other place. Always use this for questions about today's date, the weekday, the current time, or the time in another city or country. Never use web_search for these.",
+      "Get the exact current date, weekday and time, for the user's own place or for any other place. Always use this for questions about today's date, the weekday, the current time, or the time in another city or country. Never use web_search for these.",
     parameters: {
       type: "object",
       properties: {
         timezone: {
           type: "string",
           description:
-            "IANA time zone id of the place, for example Asia/Tokyo, Europe/London, America/New_York, Asia/Tehran. Omit it to use the user's own time zone.",
+            'IANA time zone id of the place the user asks about (for example Asia/Tokyo, Europe/Nicosia, America/New_York). If the user names ANY city, country or region you MUST pass its IANA id. Pass the exact string "local" ONLY when the user mentions no other place.',
         },
         place_label: {
           type: "string",
           description:
-            "Name of the place as 'City, Country' in the user's language (for example 'توکیو، ژاپن'). Only when timezone is given.",
+            "Name of the place as 'City, Country' or just the country, in the user's language (for example 'قبرس' or 'توکیو، ژاپن'). Required whenever timezone is not \"local\".",
         },
         show_clock: {
           type: "boolean",
@@ -536,7 +558,7 @@ const GET_DATETIME_TOOL: ToolDefinition = {
             "true when the user asks for the time of day (here or elsewhere), which shows a clock card; false when they only ask about the date or the weekday.",
         },
       },
-      required: ["show_clock"],
+      required: ["timezone", "show_clock"],
     },
   },
 };
@@ -546,22 +568,23 @@ const FIND_PLACE_TOOL: ToolDefinition = {
   function: {
     name: "find_place",
     description:
-      "Look up a place, business, landmark or address on the map and show a map card to the user. Use it when the user asks where something is, asks for an address or location, or wants places near them.",
+      "Look up a place on the map. Use it whenever the user asks where something is, asks for an address or location, or wants places near them. The app shows the map card first and you then write general information about the place.",
     parameters: {
       type: "object",
       properties: {
         query: {
           type: "string",
           description:
-            "What to look for, as specific as possible, for example 'برج میلاد تهران' or, for a category, the English word such as 'pharmacy'.",
+            "For intent specific_place: the full name plus city, region or country when you know it, for example 'برج میلاد تهران'. For intent nearby_search: the English category word such as 'pharmacy' or 'restaurant'.",
         },
-        near_user: {
-          type: "boolean",
+        intent: {
+          type: "string",
+          enum: ["specific_place", "nearby_search"],
           description:
-            "true only when the user wants places near their own position. Requires that the user's location is available.",
+            "specific_place for one named place, landmark, business or address. nearby_search for 'near me' or 'nearest' questions about a category.",
         },
       },
-      required: ["query"],
+      required: ["query", "intent"],
     },
   },
 };
@@ -571,7 +594,7 @@ const WEB_SEARCH_TOOL: ToolDefinition = {
   function: {
     name: "web_search",
     description:
-      "Search the web for current or recent information such as news, prices and exchange rates, weather, sports results, or anything that may have changed after your training. Never use it for the date, the time or where a place is.",
+      "Search the web for current or recent information such as news, prices and exchange rates, weather, sports results, facts about a place, or anything that may have changed after your training. Never use it for the date, the time or where a place is.",
     parameters: {
       type: "object",
       properties: {
@@ -695,7 +718,8 @@ function runGetDatetime(
   const userZone = ctx.timeZone ?? "UTC";
   const requested =
     typeof args.timezone === "string" ? args.timezone.trim() : "";
-  const zone = requested ? resolveTimeZone(requested) : userZone;
+  const isLocalRequest = requested === "" || requested.toLowerCase() === "local";
+  const zone = isLocalRequest ? userZone : resolveTimeZone(requested);
 
   if (!zone) {
     return {
@@ -725,7 +749,9 @@ function runGetDatetime(
         : "yesterday";
 
   const isUserZone = zone === userZone;
-  const placeName = label || (isUserZone ? "" : zone);
+  const placeName = isLocalRequest
+    ? ""
+    : label || (isUserZone ? "" : cityFromZone(zone));
 
   const readyAnswer = buildReadyAnswer(
     ctx.lang,
@@ -774,16 +800,19 @@ function runGetDatetime(
       iso: now.toISOString(),
       zone,
       ref: userZone,
-      ...(label ? { label } : {}),
+      ...(placeName ? { label: placeName } : {}),
       lang: ctx.lang,
     },
   };
 }
 
-type NominatimAttempt = {
-  readonly delta: number;
-  readonly bounded: boolean;
-} | null;
+type NominatimOptions = {
+  readonly limit: number;
+  readonly viewbox: {
+    readonly delta: number;
+    readonly bounded: boolean;
+  } | null;
+};
 
 function withDistance(
   ctx: ToolContext,
@@ -808,26 +837,28 @@ function withDistance(
 async function searchNominatim(
   query: string,
   ctx: ToolContext,
-  attempt: NominatimAttempt,
+  options: NominatimOptions,
   masterSignal: AbortSignal,
-): Promise<PlaceItem[]> {
+): Promise<PlaceCandidate[]> {
   const params = new URLSearchParams({
     q: query,
     format: "jsonv2",
-    limit: "5",
+    limit: String(options.limit),
+    addressdetails: "1",
+    extratags: "1",
     "accept-language": ctx.lang === "fa" ? "fa,en" : "en",
   });
 
-  if (attempt && ctx.location) {
+  if (options.viewbox && ctx.location) {
     const { lat, lon } = ctx.location;
-    const d = attempt.delta;
+    const d = options.viewbox.delta;
 
     params.set(
       "viewbox",
       [lon - d, lat + d, lon + d, lat - d].map((n) => n.toFixed(5)).join(","),
     );
 
-    if (attempt.bounded) {
+    if (options.viewbox.bounded) {
       params.set("bounded", "1");
     }
   }
@@ -856,7 +887,7 @@ async function searchNominatim(
       return [];
     }
 
-    const items: PlaceItem[] = [];
+    const candidates: PlaceCandidate[] = [];
 
     for (const raw of json) {
       if (!isRecord(raw)) {
@@ -870,17 +901,48 @@ async function searchNominatim(
         continue;
       }
 
-      const displayName =
-        typeof raw.display_name === "string" ? raw.display_name : "";
-      const name =
-        typeof raw.name === "string" && raw.name
-          ? raw.name
-          : displayName.split(",")[0]?.trim() || query;
+      const address = isRecord(raw.address) ? raw.address : {};
+      const extratags = isRecord(raw.extratags) ? raw.extratags : {};
+      const displayName = pickString(raw, "display_name");
 
-      items.push(withDistance(ctx, name, displayName, lat, lon));
+      const name =
+        pickString(raw, "name") ||
+        displayName.split(",")[0]?.trim() ||
+        query;
+
+      const region = [
+        pickString(address, "city") ||
+          pickString(address, "town") ||
+          pickString(address, "village") ||
+          pickString(address, "municipality") ||
+          pickString(address, "county"),
+        pickString(address, "state"),
+        pickString(address, "country"),
+      ]
+        .filter(Boolean)
+        .join(", ");
+
+      const facts: Record<string, string> = {};
+
+      for (const key of FACT_KEYS) {
+        const value = pickString(extratags, key);
+
+        if (value) {
+          facts[key] = value.slice(0, 200);
+        }
+      }
+
+      candidates.push({
+        item: withDistance(ctx, name, region || displayName, lat, lon),
+        category: [pickString(raw, "category"), pickString(raw, "type")]
+          .filter(Boolean)
+          .join("/"),
+        facts,
+        wikipedia: pickString(extratags, "wikipedia"),
+      });
     }
 
-    return items;
+    return candidates;
   } finally {
     timed.clearConnectTimer();
   }
@@ -890,8 +952,8 @@ async function searchPhoton(
   query: string,
   ctx: ToolContext,
   masterSignal: AbortSignal,
-): Promise<PlaceItem[]> {
-  const params = new URLSearchParams({ q: query, limit: "5" });
+): Promise<PlaceCandidate[]> {
+  const params = new URLSearchParams({ q: query, limit: "8" });
 
   if (ctx.location) {
     params.set("lat", String(ctx.location.lat));
@@ -920,7 +982,7 @@ async function searchPhoton(
     const features =
       isRecord(json) && Array.isArray(json.features) ? json.features : [];
 
-    const items: PlaceItem[] = [];
+    const candidates: PlaceCandidate[] = [];
 
     for (const feature of features) {
       if (
@@ -945,44 +1007,265 @@ async function searchPhoton(
       }
 
       const props = feature.properties;
-      const text = (key: string): string => {
-        const value = props[key];
-
-        return typeof value === "string" ? value : "";
-      };
-
-      const name = text("name") || text("street") || query;
-      const street = [text("street"), text("housenumber")]
+      const name =
+        pickString(props, "name") || pickString(props, "street") || query;
+      const street = [
+        pickString(props, "street"),
+        pickString(props, "housenumber"),
+      ]
         .filter(Boolean)
         .join(" ");
       const address = [
         street,
-        text("district"),
-        text("city"),
-        text("state"),
-        text("country"),
+        pickString(props, "district"),
+        pickString(props, "city"),
+        pickString(props, "state"),
+        pickString(props, "country"),
       ]
         .filter(Boolean)
         .join(", ");
 
-      items.push(withDistance(ctx, name, address, lat, lon));
+      candidates.push({
+        item: withDistance(ctx, name, address, lat, lon),
+        category: [pickString(props, "osm_key"), pickString(props, "osm_value")]
+          .filter(Boolean)
+          .join("/"),
+        facts: {},
+        wikipedia: "",
+      });
     }
 
-    return items;
+    return candidates;
   } finally {
     timed.clearConnectTimer();
   }
 }
 
-function placesOutcome(
+async function fetchWikipediaSummary(
+  tag: string,
+  masterSignal: AbortSignal,
+): Promise<string> {
+  const match = /^([a-z]{2,3}(?:-[a-z]{2,8})?):(.+)$/i.exec(tag.trim());
+
+  if (!match) {
+    return "";
+  }
+
+  const lang = (match[1] ?? "").toLowerCase();
+  const title = (match[2] ?? "").trim().replace(/ /g, "_");
+
+  if (!lang || !title) {
+    return "";
+  }
+
+  const timed = createAttempt(masterSignal, WIKI_TIMEOUT_MS);
+
+  try {
+    const response = await fetch(
+      `https://${lang}.wikipedia.org/api/rest_v1/page/summary/${encodeURIComponent(title)}`,
+      {
+        headers: {
+          "User-Agent": NOMINATIM_USER_AGENT,
+          Accept: "application/json",
+        },
+        signal: timed.signal,
+      },
+    );
+
+    if (!response.ok) {
+      return "";
+    }
+
+    const json: unknown = await response.json();
+
+    return isRecord(json) && typeof json.extract === "string"
+      ? json.extract.slice(0, 900)
+      : "";
+  } catch (error) {
+    console.error(`wikipedia summary failed: ${describeError(error)}`);
+
+    return "";
+  } finally {
+    timed.clearConnectTimer();
+  }
+}
+
+function distinctLocations(
+  list: readonly PlaceCandidate[],
+): PlaceCandidate[] {
+  const distinct: PlaceCandidate[] = [];
+
+  for (const candidate of list) {
+    const isNew = distinct.every(
+      (existing) => distanceBetween(existing.item, candidate.item) > 2,
+    );
+
+    if (isNew) {
+      distinct.push(candidate);
+    }
+  }
+
+  return distinct;
+}
+
+function mergeCandidates(
+  base: readonly PlaceCandidate[],
+  extra: readonly PlaceCandidate[],
+): PlaceCandidate[] {
+  const merged = [...base];
+
+  for (const candidate of extra) {
+    const exists = merged.some(
+      (existing) => distanceBetween(existing.item, candidate.item) < 0.05,
+    );
+
+    if (!exists) {
+      merged.push(candidate);
+    }
+  }
+
+  return merged;
+}
+
+type SpecificPick = {
+  readonly chosen: PlaceCandidate;
+  readonly alternatives: readonly PlaceCandidate[];
+  readonly ambiguous: boolean;
+  readonly reason: "best_match" | "nearest_to_user";
+};
+
+function pickSpecific(
+  top: PlaceCandidate,
+  all: readonly PlaceCandidate[],
+  ctx: ToolContext,
+): SpecificPick {
+  const topKey = normalizePlaceName(top.item.name);
+  const sameName = all.filter(
+    (candidate) => normalizePlaceName(candidate.item.name) === topKey,
+  );
+  const distinct = distinctLocations(sameName);
+
+  if (distinct.length <= 1) {
+    return {
+      chosen: top,
+      alternatives: [],
+      ambiguous: false,
+      reason: "best_match",
+    };
+  }
+
+  if (ctx.location) {
+    const sorted = distinct
+      .slice()
+      .sort((a, b) => (a.item.km ?? 1e9) - (b.item.km ?? 1e9));
+    const nearest = sorted[0] ?? top;
+
+    return {
+      chosen: nearest,
+      alternatives: sorted.filter((candidate) => candidate !== nearest).slice(0, 2),
+      ambiguous: true,
+      reason: "nearest_to_user",
+    };
+  }
+
+  return {
+    chosen: top,
+    alternatives: distinct.filter((candidate) => candidate !== top).slice(0, 2),
+    ambiguous: true,
+    reason: "best_match",
+  };
+}
+
+function selectNearby(candidates: readonly PlaceCandidate[]): PlaceItem[] {
+  const sorted = candidates
+    .slice()
+    .sort((a, b) => (a.item.km ?? 1e9) - (b.item.km ?? 1e9));
+  const picked: PlaceItem[] = [];
+
+  for (const candidate of sorted) {
+    const key = normalizePlaceName(candidate.item.name);
+    const duplicate = picked.some(
+      (existing) =>
+        normalizePlaceName(existing.name) === key &&
+        distanceBetween(existing, candidate.item) < 0.2,
+    );
+
+    if (!duplicate) {
+      picked.push(candidate.item);
+    }
+
+    if (picked.length >= 3) {
+      break;
+    }
+  }
+
+  return picked;
+}
+
+async function runNearbySearch(
+  query: string,
+  ctx: ToolContext,
+  signal: AbortSignal,
+): Promise<ToolOutcome> {
+  if (!ctx.location) {
+    return {
+      data: {
+        error: "user_location_not_available",
+        hint: "The user's location is not available. Tell them, in one short sentence, to allow location access for this site in the browser settings.",
+      },
+    };
+  }
+
+  const attempts: NominatimOptions[] = [
+    { limit: 10, viewbox: { delta: 0.06, bounded: true } },
+    { limit: 10, viewbox: { delta: 0.3, bounded: true } },
+    { limit: 10, viewbox: { delta: 0.3, bounded: false } },
+  ];
+
+  let lastError = "";
+
+  for (const options of attempts) {
+    try {
+      const found = await searchNominatim(query, ctx, options, signal);
+      const items = selectNearby(found);
+
+      if (items.length > 0) {
+        return nearbyOutcome(items, ctx);
+      }
+    } catch (error) {
+      lastError = describeError(error);
+      console.error(`find_place nominatim failed: ${lastError}`);
+    }
+  }
+
+  try {
+    const found = await searchPhoton(query, ctx, signal);
+    const items = selectNearby(found);
+
+    if (items.length > 0) {
+      return nearbyOutcome(items, ctx);
+    }
+  } catch (error) {
+    lastError = describeError(error);
+    console.error(`find_place photon failed: ${lastError}`);
+  }
+
+  if (lastError) {
+    return {
+      data: { error: "map_lookup_failed", detail: lastError.slice(0, 200) },
+    };
+  }
+
+  return { data: { results: [], note: "No places were found." } };
+}
+
+function nearbyOutcome(
   items: readonly PlaceItem[],
   ctx: ToolContext,
 ): ToolOutcome {
-  const top = items.slice(0, 3);
-
   return {
     data: {
-      results: top.map((item) => ({
+      results: items.map((item) => ({
         name: item.name,
         address: item.address,
         lat: item.lat,
@@ -991,7 +1274,107 @@ function placesOutcome(
       })),
     },
     finalText: "",
-    card: { t: "places", lang: ctx.lang, items: top },
+    cardFirst: true,
+    card: { t: "places", lang: ctx.lang, items },
+  };
+}
+
+async function runSpecificPlace(
+  query: string,
+  ctx: ToolContext,
+  signal: AbortSignal,
+): Promise<ToolOutcome> {
+  let candidates: PlaceCandidate[] = [];
+  let lastError = "";
+
+  try {
+    candidates = await searchNominatim(
+      query,
+      ctx,
+      { limit: 8, viewbox: null },
+      signal,
+    );
+  } catch (error) {
+    lastError = describeError(error);
+    console.error(`find_place nominatim failed: ${lastError}`);
+  }
+
+  const first = candidates[0];
+
+  if (first && ctx.location) {
+    const key = normalizePlaceName(first.item.name);
+    const sameName = candidates.filter(
+      (candidate) => normalizePlaceName(candidate.item.name) === key,
+    );
+
+    if (distinctLocations(sameName).length > 1) {
+      try {
+        const biased = await searchNominatim(
+          query,
+          ctx,
+          { limit: 8, viewbox: { delta: 0.4, bounded: false } },
+          signal,
+        );
+
+        candidates = mergeCandidates(candidates, biased);
+      } catch (error) {
+        console.error(`find_place biased search failed: ${describeError(error)}`);
+      }
+    }
+  }
+
+  if (candidates.length === 0) {
+    try {
+      candidates = await searchPhoton(query, ctx, signal);
+    } catch (error) {
+      lastError = describeError(error);
+      console.error(`find_place photon failed: ${lastError}`);
+    }
+  }
+
+  const top = candidates[0];
+
+  if (!top) {
+    return lastError
+      ? {
+          data: {
+            error: "map_lookup_failed",
+            detail: lastError.slice(0, 200),
+          },
+        }
+      : { data: { results: [], note: "No places were found." } };
+  }
+
+  const pick = pickSpecific(top, candidates, ctx);
+  const about = pick.chosen.wikipedia
+    ? await fetchWikipediaSummary(pick.chosen.wikipedia, signal)
+    : "";
+
+  const chosen = pick.chosen;
+
+  return {
+    data: {
+      place: {
+        name: chosen.item.name,
+        region: chosen.item.address,
+        category: chosen.category,
+        lat: chosen.item.lat,
+        lon: chosen.item.lon,
+        distance_km: chosen.item.km,
+        facts: chosen.facts,
+        about,
+        about_source: about ? "wikipedia" : "",
+      },
+      ambiguous: pick.ambiguous,
+      picked_reason: pick.reason,
+      other_matches: pick.alternatives.map((candidate) => ({
+        name: candidate.item.name,
+        region: candidate.item.address,
+        distance_km: candidate.item.km,
+      })),
+    },
+    cardFirst: true,
+    card: { t: "places", lang: ctx.lang, items: [chosen.item] },
   };
 }
 
@@ -1007,62 +1390,9 @@ async function runFindPlace(
     return { data: { error: "query is required." } };
   }
 
-  const nearUser = args.near_user === true;
-
-  if (nearUser && !ctx.location) {
-    return {
-      data: {
-        error: "user_location_not_available",
-        hint: "The user's location is not available. Tell them to allow location access for this site in the browser settings, then ask again.",
-      },
-    };
-  }
-
-  const attempts: NominatimAttempt[] =
-    nearUser && ctx.location
-      ? [
-          { delta: 0.06, bounded: true },
-          { delta: 0.3, bounded: true },
-          { delta: 0.3, bounded: false },
-        ]
-      : [null];
-
-  let lastError = "";
-
-  for (const attempt of attempts) {
-    try {
-      const items = await searchNominatim(query, ctx, attempt, signal);
-
-      if (items.length > 0) {
-        return placesOutcome(items, ctx);
-      }
-    } catch (error) {
-      lastError = describeError(error);
-      console.error(`find_place nominatim failed: ${lastError}`);
-    }
-  }
-
-  try {
-    const items = await searchPhoton(query, ctx, signal);
-
-    if (items.length > 0) {
-      return placesOutcome(items, ctx);
-    }
-  } catch (error) {
-    lastError = describeError(error);
-    console.error(`find_place photon failed: ${lastError}`);
-  }
-
-  if (lastError) {
-    return {
-      data: {
-        error: "map_lookup_failed",
-        detail: lastError.slice(0, 200),
-      },
-    };
-  }
-
-  return { data: { results: [], note: "No places were found." } };
+  return args.intent === "nearby_search"
+    ? await runNearbySearch(query, ctx, signal)
+    : await runSpecificPlace(query, ctx, signal);
 }
 
 async function runWebSearch(
@@ -1113,19 +1443,18 @@ async function runWebSearch(
 
     const results: Array<{
       readonly title: string;
-      readonly url: string;
+      readonly source: string;
       readonly snippet: string;
     }> = [];
-    const sources: SourceItem[] = [];
 
     for (const raw of rawResults) {
       if (!isRecord(raw)) {
         continue;
       }
 
-      const title = typeof raw.title === "string" ? raw.title.trim() : "";
-      const rawUrl = typeof raw.url === "string" ? raw.url : "";
-      const content = typeof raw.content === "string" ? raw.content : "";
+      const title = pickString(raw, "title").trim();
+      const rawUrl = pickString(raw, "url");
+      const content = pickString(raw, "content");
 
       let host = "";
 
@@ -1147,13 +1476,8 @@ async function runWebSearch(
 
       results.push({
         title: title.slice(0, 140),
-        url: rawUrl,
+        source: host.slice(0, 80),
         snippet: content.slice(0, 500),
-      });
-      sources.push({
-        title: title.slice(0, 140),
-        url: rawUrl,
-        domain: host.slice(0, 80),
       });
     }
 
@@ -1161,10 +1485,7 @@ async function runWebSearch(
       return { data: { results: [], note: "No web results were found." } };
     }
 
-    return {
-      data: { results },
-      card: { t: "sources", lang: ctx.lang, items: sources },
-    };
+    return { data: { results } };
   } finally {
     timed.clearConnectTimer();
   }
@@ -1243,7 +1564,7 @@ function buildSystemPrompt(ctx: ToolContext): string {
 
   if (ctx.location) {
     lines.push(
-      "- The user's position is already known automatically. For 'near me' or 'nearest' questions call find_place with near_user=true. Never ask them to share it.",
+      "- The user's position is already known automatically. For 'near me' or 'nearest' questions call find_place with intent nearby_search. Never ask them to share it.",
     );
   } else {
     lines.push(
@@ -1256,20 +1577,22 @@ function buildSystemPrompt(ctx: ToolContext): string {
     "",
     "Core behaviour:",
     "- Answer exactly what was asked, nothing more. Lead with the answer. No filler openings and no closing lines such as 'anything else?', 'let me know', 'shall we start?' or 'how can I help further?'. Ask a question only when you truly cannot proceed without the answer, and then ask just one short question.",
+    "- For prices, news and other quick facts answer in ONE short sentence unless the user asks for detail.",
     "- When greeted, reply with one short warm line and stop.",
     "- Never address the user with honorifics such as 'قربان'. Match the user's own register.",
-    "- When asked to create something (an ad, a text, a plan, names), deliver a concrete, polished result immediately, using sensible assumptions. Put every unknown specific in [square brackets] as a placeholder. Never invent facts such as ratings, prices, discount codes, phone numbers, addresses or statistics.",
+    "- When asked to create something (an ad, a text, a plan, names), deliver a concrete, polished, complete result immediately, using sensible assumptions. Put every unknown specific in [square brackets] as a placeholder. Never invent facts such as ratings, prices, discount codes, phone numbers, addresses or statistics.",
     "",
     "Writing quality:",
-    "- Write like an expert human writer: vivid, precise, confident, never generic. Prefer concrete details, numbers and examples over filler. Structure longer answers with short bold headings, tight lists, or a Markdown table when comparing options or presenting a schedule. Keep paragraphs short.",
+    "- Write like an expert human writer: vivid, precise, confident, never generic. Prefer concrete details, numbers and examples over filler. Keep paragraphs short.",
+    "- Plans and schedules (workouts, study, meals, trips) must be complete and well structured: start with one line summarising goal, level and duration; then one section per day with a short bold heading such as '**روز ۱ — پایین‌تنه**' followed by its OWN Markdown table with clear columns (for training: تمرین | ست × تکرار | استراحت | نکته). Include warm-up and cool-down rows, estimated duration and intensity, and finish with 3 or 4 short tips (progression, recovery, hydration or nutrition). Never put several days in one table and never leave cells vague. Keep each table cell short (at most 8 words) with the item name in the first column.",
     "- In Persian use natural, idiomatic, polished Persian that does not sound translated, correct half-spaces (ZWNJ), Persian digits in Persian prose, and a tone that matches the user's. Use only words you are sure exist; if unsure, choose a simpler common word. Re-read before answering and fix typos and odd words.",
     "- Emojis: sparingly, 0 to 2 per reply, only where they add warmth. None in code, tables or serious topics (illness, grief, legal or financial risk, errors).",
     "",
     "Tools:",
-    "- get_datetime: use it for ANY question about today's date, the weekday, the current time, or the time in another city or country. Never answer these from memory and never use web_search for them. Set show_clock=true only when the user asks for the time of day; false for date or weekday questions. Use correct IANA time zone ids. The app writes the answer itself, so after this tool returns just stop.",
-    "- find_place: call it FIRST for any question about where a place, business, landmark or address is, or for places near the user. Never answer locations from memory. For categories such as pharmacy, restaurant or hospital use the English category word as the query. The app shows the map card itself, so after it returns just stop. If it reports a failure, say in one short sentence that the map could not be reached right now.",
+    '- get_datetime: use it for ANY question about today\'s date, the weekday, the current time, or the time in another city or country; never answer these from memory and never use web_search for them. If the user mentions ANY city, country or region you MUST pass its IANA time zone id and a place_label; pass timezone "local" only when no place is mentioned. Set show_clock=true only when the user asks for the time of day; false for date or weekday questions. The app writes the answer itself, so after this tool returns just stop.',
+    "- find_place: call it FIRST for any question about where a place, business, landmark or address is, or for places near the user. Never answer locations from memory. Use intent specific_place for one named place (query = its full name plus city, region or country when you know it, in the user's language) and intent nearby_search for 'near me' category questions (query = the English category word, e.g. pharmacy). After nearby_search the app shows the cards, so just stop. After specific_place the app has already shown the map card; now write 2 to 4 sentences of general information about the place: what it is, where it is (region and country) and why it is notable. Base them on the tool's `about` text, its other fields, web_search results (if `about` is empty and web_search is available, first call web_search with '<name> <region>'), and only facts you are certain of; never invent numbers, dates or history; if little is known say only what is certain. Do not repeat the address or coordinates. If `ambiguous` is true add one short clause saying which one you picked (for example 'نزدیک‌ترین به موقعیت شما'). If it reports a failure, say in one short sentence that the map could not be reached right now.",
     ctx.tavilyKey
-      ? "- web_search: call it FIRST for anything that changes over time: prices and exchange rates (currency, gold, crypto), news, weather, sports results, schedules. Write the query in the language best suited to the topic (Persian for Iranian prices and news). Answer in 1 to 3 short sentences with the key numbers exactly as in the results; for prices say 'حدود' or 'approximately' and give a range if sources disagree. The app shows a collapsible sources list, so never write source names or URLs in your text."
+      ? "- web_search: call it FIRST for anything that changes over time: prices and exchange rates (currency, gold, crypto), news, weather, sports results, schedules. Write the query in the language best suited to the topic (Persian for Iranian prices and news). Answer in ONE short sentence with the key number exactly as in the results; for prices say 'حدود' or 'approximately' and give a range if sources disagree. Never write source names or URLs."
       : "- You cannot browse the internet or check live information (news, prices, weather). If asked, say so in one short sentence.",
     "- Never mention tools, function names, JSON or internal data to the user. If a tool reports an error, say in one short sentence that the lookup failed right now; never invent the answer.",
     "- Bracketed notes such as [map card shown: ...] in the conversation are internal records of cards the app already displayed. Never write such notes yourself.",
@@ -1595,16 +1918,12 @@ type AgentParams = {
   readonly signal: AbortSignal;
 };
 
-type CollectedCard = {
-  readonly kind: CardPayload["t"];
-  readonly marker: string;
-};
-
 async function* groqAgentChunks(
   params: AgentParams,
 ): AsyncGenerator<string, void, void> {
   const convo: OAIMessage[] = params.messages.map(toOAIMessage);
-  const cards: CollectedCard[] = [];
+  const emitted = new Set<string>();
+  const deferred: string[] = [];
   let body = params.firstBody;
 
   for (let round = 0; ; round += 1) {
@@ -1653,11 +1972,17 @@ async function* groqAgentChunks(
       if (outcome.card) {
         const marker = encodeCard(outcome.card);
 
-        if (
-          !cards.some((entry) => entry.marker === marker) &&
-          cards.length < MAX_CARDS
+        if (outcome.cardFirst) {
+          if (!emitted.has(marker) && emitted.size < MAX_CARDS) {
+            emitted.add(marker);
+            yield `${marker}\n\n`;
+          }
+        } else if (
+          !emitted.has(marker) &&
+          !deferred.includes(marker) &&
+          emitted.size + deferred.length < MAX_CARDS
         ) {
-          cards.push({ kind: outcome.card.t, marker });
+          deferred.push(marker);
         }
       }
     }
@@ -1669,7 +1994,12 @@ async function* groqAgentChunks(
         }
 
         if (outcome.card) {
-          yield `${encodeCard(outcome.card)}\n\n`;
+          const marker = encodeCard(outcome.card);
+
+          if (!emitted.has(marker)) {
+            emitted.add(marker);
+            yield `${marker}\n\n`;
+          }
         }
       }
 
@@ -1694,14 +2024,11 @@ async function* groqAgentChunks(
     body = next.body;
   }
 
-  const hasUtilityCard = cards.some((entry) => entry.kind !== "sources");
-
-  for (const entry of cards) {
-    if (hasUtilityCard && entry.kind === "sources") {
-      continue;
+  for (const marker of deferred) {
+    if (!emitted.has(marker)) {
+      emitted.add(marker);
+      yield `\n\n${marker}`;
     }
-
-    yield `\n\n${entry.marker}`;
   }
 }
 
