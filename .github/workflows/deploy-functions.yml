@@ -1,10 +1,6 @@
 name: Deploy Edge Functions
 
 on:
-  push:
-    branches: [dev]
-    paths:
-      - "supabase/functions/**"
   workflow_dispatch:
 
 concurrency:
