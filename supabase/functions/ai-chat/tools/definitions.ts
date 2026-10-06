@@ -79,11 +79,35 @@ export const WEB_SEARCH_TOOL: ToolDefinition = {
   },
 };
 
+export const REMEMBER_TOOL: ToolDefinition = {
+  type: "function",
+  function: {
+    name: "remember",
+    description:
+      "Save ONE short, durable fact about the user for future conversations: their name, what they like to be called, long-term interests, ongoing projects or goals, language or style preferences. Use it when the user shares such a fact about themselves or asks you to remember something. Never save sensitive data: health, money, passwords, ID, card or phone numbers, exact home address, religion, politics, sexuality, or anything about other people. Never save temporary or trivial details.",
+    parameters: {
+      type: "object",
+      properties: {
+        fact: {
+          type: "string",
+          description:
+            "One short sentence in the user's language, for example 'اسم کاربر مسعود است' or 'User is building a travel app'.",
+        },
+      },
+      required: ["fact"],
+    },
+  },
+};
+
 export function buildToolDefinitions(ctx: ToolContext): ToolDefinition[] {
   const tools: ToolDefinition[] = [GET_DATETIME_TOOL, FIND_PLACE_TOOL];
 
   if (ctx.tavilyKey) {
     tools.push(WEB_SEARCH_TOOL);
+  }
+
+  if (ctx.memory) {
+    tools.push(REMEMBER_TOOL);
   }
 
   return tools;
