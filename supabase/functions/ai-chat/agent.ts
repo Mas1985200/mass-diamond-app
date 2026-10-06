@@ -21,6 +21,10 @@ import { readTurn } from "./providers/groq.ts";
 import { openRound, type OpenSuccess } from "./providers/router.ts";
 import type { ToolOptions } from "./providers/types.ts";
 
+// Short "where is X" style questions must always use the map tool.
+const PLACE_QUESTION_PATTERN = /(کجاست|کجا\s?است|لوکیشن|آدرس|where\s+is|where's)/i;
+const PLACE_QUESTION_MAX_LENGTH = 200;
+
 export type AgentStart =
   | {
       readonly success: true;
@@ -62,6 +66,40 @@ function roundOptions(
     tools,
     toolChoice: round + 1 >= MAX_TOOL_ROUNDS ? "none" : "auto",
   };
+}
+
+function lastUserText(messages: readonly AIMessage[]): string {
+  for (let index = messages.length - 1; index >= 0; index -= 1) {
+    const message = messages[index];
+
+    if (message && message.role === "user") {
+      return message.content;
+    }
+  }
+
+  return "";
+}
+
+function firstRoundOptions(
+  messages: readonly AIMessage[],
+  tools: readonly ToolDefinition[],
+): ToolOptions {
+  const text = lastUserText(messages);
+  const isPlaceQuestion =
+    text.length <= PLACE_QUESTION_MAX_LENGTH &&
+    PLACE_QUESTION_PATTERN.test(text);
+
+  if (isPlaceQuestion) {
+    const placeTools = tools.filter(
+      (tool) => tool.function.name === "find_place",
+    );
+
+    if (placeTools.length > 0) {
+      return { tools: placeTools, toolChoice: "required" };
+    }
+  }
+
+  return roundOptions(0, true, tools);
 }
 
 async function* agentChunks(
@@ -210,7 +248,7 @@ export async function startAgent(
 
   const opened = await openRound(
     messages.map(toOAIMessage),
-    roundOptions(0, true, tools),
+    firstRoundOptions(messages, tools),
     signal,
     new Set<string>(),
   );
