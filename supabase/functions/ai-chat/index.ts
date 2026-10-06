@@ -1,10 +1,15 @@
 // supabase/functions/ai-chat/index.ts
-// Entry point: auth, conversation setup, agent run, response.
+// Entry point: auth, conversation setup, memory, agent run, response.
 
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2";
 import { TOTAL_TIMEOUT_MS } from "./config.ts";
 import type { AIMessage, ToolContext } from "./types.ts";
-import { describeError, getRequiredEnv, getTavilyKey } from "./lib/util.ts";
+import {
+  describeError,
+  getRequiredEnv,
+  getTavilyKey,
+  sleep,
+} from "./lib/util.ts";
 import { baseHeaders, jsonResponse } from "./lib/http.ts";
 import { resolveTimeZone } from "./lib/time.ts";
 import {
@@ -24,9 +29,18 @@ import {
   touchConversation,
 } from "./history/store.ts";
 import { trimHistory } from "./history/trim.ts";
-import { buildSystemPrompt } from "./prompt/system.ts";
+import { buildSystemPrompt, type MemoryContext } from "./prompt/system.ts";
+import { addFact, loadFacts, loadRecentSummaries } from "./memory/store.ts";
+import { summarizePreviousConversation } from "./memory/summary.ts";
 import { startAgent } from "./agent.ts";
 import { createSseResponse } from "./sse.ts";
+
+const RECALL_PATTERN =
+  /(کجا\s*بودیم|ادامه\s*بده|ادامه\s*اش|ادامه‌اش|یادته|یادت\s*هست|قبلا|قبلاً|دفعه\s*قبل|دفعه‌ی\s*قبل|where\s+were\s+we|pick\s+up\s+where|continue\s+where|last\s+time|remember\s+when)/i;
+const RECALL_MAX_LENGTH = 300;
+
+const BACKGROUND_DELAY_MS = 8_000;
+const SUMMARY_TIMEOUT_MS = 20_000;
 
 async function collectChunks(
   chunks: AsyncGenerator<string, void, void>,
@@ -38,6 +52,19 @@ async function collectChunks(
   }
 
   return content;
+}
+
+// Keeps a task alive after the response is sent when the runtime supports it.
+function runInBackground(task: Promise<unknown>): void {
+  const runtime = (
+    globalThis as {
+      EdgeRuntime?: { waitUntil?: (promise: Promise<unknown>) => void };
+    }
+  ).EdgeRuntime;
+
+  if (runtime?.waitUntil) {
+    runtime.waitUntil(task);
+  }
 }
 
 Deno.serve(async (request: Request): Promise<Response> => {
@@ -83,6 +110,7 @@ Deno.serve(async (request: Request): Promise<Response> => {
     const location = body.location ?? extracted.location;
 
     let conversationId = body.conversationId;
+    const isNewConversation = !conversationId;
 
     if (conversationId) {
       const exists =
@@ -108,9 +136,38 @@ Deno.serve(async (request: Request): Promise<Response> => {
       conversationId = await createConversation(adminClient, user.id);
     }
 
-    const history = trimHistory(
-      await loadHistory(adminClient, user.id, conversationId),
-    );
+    const wantsRecall =
+      message.length <= RECALL_MAX_LENGTH && RECALL_PATTERN.test(message);
+
+    // A recall question in a brand new chat needs the previous chat's summary
+    // right now, so it is created before the answer.
+    if (isNewConversation && wantsRecall) {
+      const controller = new AbortController();
+      const timer = setTimeout(() => controller.abort(), SUMMARY_TIMEOUT_MS);
+
+      try {
+        await summarizePreviousConversation(
+          adminClient,
+          user.id,
+          conversationId,
+          controller.signal,
+        );
+      } finally {
+        clearTimeout(timer);
+      }
+    }
+
+    const [storedHistory, facts, summaries] = await Promise.all([
+      loadHistory(adminClient, user.id, conversationId),
+      loadFacts(adminClient, user.id),
+      wantsRecall
+        ? loadRecentSummaries(adminClient, user.id, conversationId)
+        : Promise.resolve<string[]>([]),
+    ]);
+
+    const history = trimHistory(storedHistory);
+    const memory: MemoryContext = { facts, summaries };
+    const activeUserId = user.id;
 
     const ctx: ToolContext = {
       now: new Date(),
@@ -118,14 +175,43 @@ Deno.serve(async (request: Request): Promise<Response> => {
       location,
       lang: /[\u0600-\u06FF]/.test(message) ? "fa" : "en",
       tavilyKey: getTavilyKey(),
+      memory: {
+        remember: (text: string) => addFact(adminClient, activeUserId, text),
+      },
     };
 
     console.log(
-      `request ${requestId}: web_search=${ctx.tavilyKey ? "on" : "off"}, location=${ctx.location ? "yes" : "no"}, history=${history.length}`,
+      `request ${requestId}: web_search=${ctx.tavilyKey ? "on" : "off"}, location=${ctx.location ? "yes" : "no"}, history=${history.length}, facts=${facts.length}, summaries=${summaries.length}`,
     );
 
+    // In a new chat the previous chat is summarized shortly after the answer
+    // starts, so the next new chat can recall it.
+    if (isNewConversation && !wantsRecall) {
+      const currentId = conversationId;
+
+      runInBackground(
+        (async () => {
+          await sleep(BACKGROUND_DELAY_MS);
+
+          const controller = new AbortController();
+          const timer = setTimeout(() => controller.abort(), SUMMARY_TIMEOUT_MS);
+
+          try {
+            await summarizePreviousConversation(
+              adminClient,
+              activeUserId,
+              currentId,
+              controller.signal,
+            );
+          } finally {
+            clearTimeout(timer);
+          }
+        })(),
+      );
+    }
+
     const aiMessages: AIMessage[] = [
-      { role: "system", content: buildSystemPrompt(ctx) },
+      { role: "system", content: buildSystemPrompt(ctx, memory) },
       ...history,
       { role: "user", content: message },
     ];
