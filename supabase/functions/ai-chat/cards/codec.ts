@@ -2,7 +2,6 @@
 // Encode/decode the ":::md-card~...:::" markers the client renders.
 
 import type { CardPayload } from "../types.ts";
-import { isRecord } from "../lib/util.ts";
 
 export const CLOCK_MARKER_PATTERN =
   /:::md-clock~[^~\s]+~[A-Za-z0-9_\/+-]+~(?:fa|en):::/g;
@@ -38,50 +37,11 @@ export function decodeCardBody(body: string): unknown {
   }
 }
 
-// Short bracketed description of a card, stored in the model's history
-// instead of the raw marker.
-export function describeCardForHistory(body: string): string {
-  const decoded = decodeCardBody(body);
-
-  if (!isRecord(decoded)) {
-    return "";
-  }
-
-  if (decoded.t === "places" && Array.isArray(decoded.items)) {
-    const entries = decoded.items
-      .filter(isRecord)
-      .slice(0, 3)
-      .map((item) => {
-        const name = typeof item.name === "string" ? item.name : "";
-        const address = typeof item.address === "string" ? item.address : "";
-        const km =
-          typeof item.km === "number" ? `, ${item.km} km from the user` : "";
-
-        return `${name}${address ? ` (${address})` : ""}${km}`;
-      })
-      .filter(Boolean);
-
-    return entries.length > 0 ? `[map card shown: ${entries.join("; ")}]` : "";
-  }
-
-  if (decoded.t === "clock") {
-    const zone = typeof decoded.zone === "string" ? decoded.zone : "";
-
-    return zone ? `[clock card shown for ${zone}]` : "";
-  }
-
-  if (decoded.t === "photos") {
-    return "[photo strip shown]";
-  }
-
-  return "";
-}
-
+// Cards are removed from the history completely. Leaving bracketed notes
+// there made the model imitate them in its own answers.
 export function stripMarkers(content: string): string {
   return content
     .replace(CLOCK_MARKER_PATTERN, "")
-    .replace(CARD_MARKER_PATTERN, (_match: string, body: string) =>
-      describeCardForHistory(body),
-    )
+    .replace(CARD_MARKER_PATTERN, "")
     .trim();
 }
