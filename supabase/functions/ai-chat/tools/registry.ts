@@ -6,6 +6,7 @@ import { describeError, isRecord } from "../lib/util.ts";
 import { runGetDatetime } from "./datetime.ts";
 import { runFindPlace } from "./places.ts";
 import { runWebSearch } from "./web.ts";
+import { runRemember } from "./remember.ts";
 
 function parseToolArguments(raw: string): Record<string, unknown> {
   if (!raw.trim()) {
@@ -37,6 +38,8 @@ export async function executeTool(
         return await runFindPlace(args, ctx, signal);
       case "web_search":
         return await runWebSearch(args, ctx, signal);
+      case "remember":
+        return await runRemember(args, ctx);
       default:
         return { data: { error: `Unknown tool: ${name}` } };
     }
