@@ -29,12 +29,26 @@ export type AIMessage = {
   readonly content: string;
 };
 
+export type RememberResult =
+  | "saved"
+  | "duplicate"
+  | "full"
+  | "invalid"
+  | "error";
+
+// Lets a tool save one long-term fact about the current user without
+// knowing anything about the database.
+export type MemoryPort = {
+  readonly remember: (text: string) => Promise<RememberResult>;
+};
+
 export type ToolContext = {
   readonly now: Date;
   readonly timeZone: string | null;
   readonly location: GeoPoint | null;
   readonly lang: Lang;
   readonly tavilyKey: string | undefined;
+  readonly memory?: MemoryPort | null;
 };
 
 export type PlaceItem = {
