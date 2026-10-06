@@ -1,5 +1,8 @@
 // supabase/functions/ai-chat/tools/places.ts
-// find_place tool: specific places (most prominent match) and near-me search.
+// find_place tool: specific places and near-me search.
+// For a specific place the server writes the short answer itself from the
+// map and Wikipedia data, so the model cannot add invented details.
+// When several places share a lesser-known name, up to 3 are shown together.
 
 import type {
   CardPayload,
@@ -18,6 +21,10 @@ import {
 } from "./places-search.ts";
 import { fetchWikipediaPhotos, fetchWikipediaSummary } from "./wiki.ts";
 import { tavilySearch } from "./web.ts";
+
+const ABOUT_MAX_CHARS = 400;
+const AMBIGUOUS_IMPORTANCE = 0.55;
+const MAX_SAME_NAME = 3;
 
 function distinctLocations(list: readonly PlaceCandidate[]): PlaceCandidate[] {
   const distinct: PlaceCandidate[] = [];
@@ -54,12 +61,12 @@ function pickSpecific(
         normalizePlaceName(candidate.item.name) === topKey &&
         distanceBetween(candidate.item, top.item) > 2,
     ),
-  ).slice(0, 2);
+  ).slice(0, MAX_SAME_NAME - 1);
 
   return {
     chosen: top,
     alternatives: rivals,
-    ambiguous: rivals.length > 0 && top.importance < 0.45,
+    ambiguous: rivals.length > 0 && top.importance < AMBIGUOUS_IMPORTANCE,
   };
 }
 
@@ -107,6 +114,111 @@ function nearbyOutcome(
     cardFirst: true,
     cards: [{ t: "places", lang: ctx.lang, items }],
   };
+}
+
+function trimAbout(text: string): string {
+  const clean = text.replace(/\s+/g, " ").trim();
+
+  if (clean.length <= ABOUT_MAX_CHARS) {
+    return clean;
+  }
+
+  const cut = clean.slice(0, ABOUT_MAX_CHARS);
+  const end = Math.max(
+    cut.lastIndexOf(". "),
+    cut.lastIndexOf("؟ "),
+    cut.lastIndexOf("! "),
+  );
+
+  return end > 80 ? cut.slice(0, end + 1) : `${cut.trimEnd()}…`;
+}
+
+function formatAddress(ctx: ToolContext, address: string): string {
+  return ctx.lang === "fa"
+    ? address.replace(/,\s*/g, "، ").trim()
+    : address.trim();
+}
+
+function formatKm(ctx: ToolContext, km: number): string {
+  const locale = ctx.lang === "fa" ? "fa-IR" : "en-US";
+
+  try {
+    return new Intl.NumberFormat(locale, { maximumFractionDigits: 0 }).format(
+      km,
+    );
+  } catch {
+    return String(Math.round(km));
+  }
+}
+
+// Short answer written by the server from map and Wikipedia data only.
+function buildPlaceAnswer(
+  ctx: ToolContext,
+  item: PlaceItem,
+  about: string,
+): string {
+  const isFa = ctx.lang === "fa";
+  const address = formatAddress(ctx, item.address);
+
+  const hasAddress =
+    address.length > 0 &&
+    normalizePlaceName(address) !== normalizePlaceName(item.name);
+
+  const parts: string[] = [];
+
+  if (hasAddress) {
+    parts.push(
+      isFa
+        ? `${item.name} در ${address} قرار دارد.`
+        : `${item.name} is in ${address}.`,
+    );
+  }
+
+  const summary = trimAbout(about);
+
+  if (summary) {
+    parts.push(summary);
+  }
+
+  if (parts.length === 0) {
+    parts.push(item.name);
+  }
+
+  return parts.join(" ");
+}
+
+// Answer used when several places share the same name.
+function buildAmbiguousAnswer(
+  ctx: ToolContext,
+  group: readonly PlaceCandidate[],
+): string {
+  const isFa = ctx.lang === "fa";
+  const name = group[0]?.item.name ?? "";
+
+  const entries = group.map((candidate) => {
+    const address = formatAddress(ctx, candidate.item.address);
+    const km =
+      candidate.item.km !== undefined
+        ? isFa
+          ? ` (${formatKm(ctx, candidate.item.km)} کیلومتر)`
+          : ` (${formatKm(ctx, candidate.item.km)} km)`
+        : "";
+
+    return `${address || name}${km}`;
+  });
+
+  const joined = entries.join(isFa ? "؛ " : "; ");
+  const nearestFirst = ctx.location !== null;
+
+  if (isFa) {
+    return `چند مکان با نام «${name}» پیدا شد: ${joined}. ${
+      nearestFirst ? "نزدیک‌ترین به شما اول نمایش داده شد." : "شناخته‌شده‌ترین اول نمایش داده شد."
+    }`;
+  }
+
+  return `Several places are named "${name}": ${joined}. ${
+    nearestFirst ? "The nearest to you is shown first." : "The best-known is shown first."
+  }`;
 }
 
 async function runNearbySearch(
@@ -212,7 +324,18 @@ async function runSpecificPlace(
   }
 
   const pick = pickSpecific(top, ranked);
-  const chosen = pick.chosen;
+
+  let group: PlaceCandidate[] = [pick.chosen];
+
+  if (pick.ambiguous) {
+    group = [pick.chosen, ...pick.alternatives];
+
+    if (ctx.location) {
+      group.sort((a, b) => (a.item.km ?? 1e9) - (b.item.km ?? 1e9));
+    }
+  }
+
+  const chosen = group[0] ?? pick.chosen;
 
   let about = "";
   let photos: PhotoItem[] = [];
@@ -230,7 +353,7 @@ async function runSpecificPlace(
   let webContext: Array<{ readonly source: string; readonly snippet: string }> =
     [];
 
-  if (!about && ctx.tavilyKey) {
+  if (!about && ctx.tavilyKey && !pick.ambiguous) {
     const found = await tavilySearch(
       `${chosen.item.name} ${chosen.item.address}`.trim(),
       ctx.tavilyKey,
@@ -245,12 +368,16 @@ async function runSpecificPlace(
   }
 
   const cards: CardPayload[] = [
-    { t: "places", lang: ctx.lang, items: [chosen.item] },
+    { t: "places", lang: ctx.lang, items: group.map((entry) => entry.item) },
   ];
 
-  if (photos.length > 0) {
+  if (photos.length > 0 && !pick.ambiguous) {
     cards.push({ t: "photos", lang: ctx.lang, items: photos });
   }
+
+  const finalText = pick.ambiguous
+    ? buildAmbiguousAnswer(ctx, group)
+    : buildPlaceAnswer(ctx, chosen.item, about);
 
   return {
     data: {
@@ -267,13 +394,9 @@ async function runSpecificPlace(
       },
       web_context: webContext,
       ambiguous: pick.ambiguous,
-      picked_reason: "most_prominent",
-      other_matches: pick.alternatives.map((candidate) => ({
-        name: candidate.item.name,
-        region: candidate.item.address,
-        distance_km: candidate.item.km,
-      })),
+      shown: group.map((entry) => entry.item.address),
     },
+    finalText,
     cardFirst: true,
     cards,
   };
