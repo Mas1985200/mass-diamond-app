@@ -5,7 +5,7 @@ import type { ToolDefinition } from "../types.ts";
 
 export type ToolOptions = {
   readonly tools: readonly ToolDefinition[];
-  readonly toolChoice: "auto" | "none";
+  readonly toolChoice: "auto" | "none" | "required";
 } | null;
 
 export type ParsedToolCall = {
