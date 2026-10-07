@@ -150,6 +150,11 @@ export async function runWebSearch(
     return { data: { error: "Web search failed." } };
   }
 
+  // Temporary diagnostic log: remove once price accuracy is fixed.
+  console.log(
+    `web_search DEBUG query="${query}" fresh=${fresh} results=${JSON.stringify(results)}`,
+  );
+
   if (results.length === 0) {
     return {
       data: {
