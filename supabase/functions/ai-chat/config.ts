@@ -5,7 +5,7 @@ export const MAX_MESSAGE_LENGTH = 32_000;
 export const MAX_HISTORY_MESSAGES = 40;
 export const HISTORY_CHAR_BUDGET = 3_000;
 export const HISTORY_MESSAGE_CAP = 500;
-export const TOOL_RESULT_CHAR_CAP = 2_500;
+export const TOOL_RESULT_CHAR_CAP = 3_500;
 
 export const CONNECT_TIMEOUT_MS = 12_000;
 export const TOOL_TIMEOUT_MS = 8_000;
@@ -24,7 +24,7 @@ export const MAX_QUEUE_WAIT_MS = 3_000;
 export const WEB_CACHE_TTL_MS = 300_000;
 export const WEB_CACHE_MAX_ENTRIES = 40;
 export const WEB_MAX_RESULTS = 4;
-export const WEB_SNIPPET_CHARS = 220;
+export const WEB_SNIPPET_CHARS = 400;
 
 export const GROQ_ENDPOINT = "https://api.groq.com/openai/v1/chat/completions";
 
