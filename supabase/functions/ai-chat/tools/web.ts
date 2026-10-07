@@ -34,8 +34,9 @@ export async function tavilySearch(
   apiKey: string,
   maxResults: number,
   master: AbortSignal,
+  fresh = false,
 ): Promise<WebResult[] | null> {
-  const cacheKey = `${maxResults}:${query.trim().toLowerCase()}`;
+  const cacheKey = `${fresh ? "fresh" : "any"}:${maxResults}:${query.trim().toLowerCase()}`;
   const cached = webCache.get(cacheKey);
 
   if (cached && Date.now() - cached.at < WEB_CACHE_TTL_MS) {
@@ -56,6 +57,7 @@ export async function tavilySearch(
         max_results: maxResults,
         search_depth: "basic",
         include_answer: false,
+        ...(fresh ? { time_range: "week" } : {}),
       }),
       signal: timed.signal,
     });
@@ -126,6 +128,7 @@ export async function runWebSearch(
 ): Promise<ToolOutcome> {
   const query =
     typeof args.query === "string" ? args.query.trim().slice(0, 300) : "";
+  const fresh = args.fresh === true;
 
   if (!query) {
     return { data: { error: "query is required." } };
@@ -140,6 +143,7 @@ export async function runWebSearch(
     ctx.tavilyKey,
     WEB_MAX_RESULTS,
     signal,
+    fresh,
   );
 
   if (results === null) {
@@ -147,7 +151,14 @@ export async function runWebSearch(
   }
 
   if (results.length === 0) {
-    return { data: { results: [], note: "No web results were found." } };
+    return {
+      data: {
+        results: [],
+        note: fresh
+          ? "No recent web results were found."
+          : "No web results were found.",
+      },
+    };
   }
 
   return { data: { results } };
