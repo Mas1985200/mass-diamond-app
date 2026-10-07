@@ -73,6 +73,11 @@ export const WEB_SEARCH_TOOL: ToolDefinition = {
           description:
             "Short, specific query with the user's spelling mistakes silently corrected. For several prices put all items in ONE query.",
         },
+        fresh: {
+          type: "boolean",
+          description:
+            "Set true when the answer must reflect today's or this week's data: prices, exchange rates, gold and coin rates, weather, live scores, breaking news. Old pages are then excluded so outdated numbers are never used. Set false for general knowledge or background questions.",
+        },
       },
       required: ["query"],
     },
