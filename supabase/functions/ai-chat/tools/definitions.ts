@@ -38,7 +38,7 @@ export const FIND_PLACE_TOOL: ToolDefinition = {
   function: {
     name: "find_place",
     description:
-      "Look up a place on the map for where-is, address or near-me questions. The app shows the map card first.",
+      "Look up a place on the map. Use it ONLY when the user names a specific place or address to locate, or asks for nearby places of a category (near-me). Never use it for questions about the conversation itself, such as 'where were we' or 'کجا بودیم' (these mean 'what were we talking about'); answer those from the conversation history instead. The app shows the map card first.",
     parameters: {
       type: "object",
       properties: {
