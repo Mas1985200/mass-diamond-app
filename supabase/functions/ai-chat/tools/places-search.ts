@@ -6,6 +6,7 @@ import type { PlaceCandidate, PlaceItem, ToolContext } from "../types.ts";
 import { isRecord, isValidGeo, pickString, round5 } from "../lib/util.ts";
 import { createAttempt } from "../lib/http.ts";
 import { haversineKm } from "../lib/geo.ts";
+import { waitForNominatimSlot } from "./nominatim-gate.ts";
 
 export type NominatimOptions = {
   readonly limit: number;
@@ -100,6 +101,10 @@ export async function searchNominatim(
       params.set("bounded", "1");
     }
   }
+
+  // Wait for our turn first, so the request timer below only counts the
+  // request itself and not the time spent in the queue.
+  await waitForNominatimSlot(master);
 
   const timed = createAttempt(master, TOOL_TIMEOUT_MS);
 
