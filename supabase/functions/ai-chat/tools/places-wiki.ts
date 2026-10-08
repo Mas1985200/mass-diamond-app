@@ -12,10 +12,15 @@ import { waitForNominatimSlot } from "./nominatim-gate.ts";
 import { searchNominatim } from "./places-search.ts";
 import { searchWikipediaPlaces } from "./wiki.ts";
 
-// A map result counts as the same place as the Wikipedia page when it lies
+// A map result counts as the same place as the Wikipedia page only when it lies
 // within this distance of the page's coordinates.
 const MAX_MATCH_KM = 30;
 const EARTH_RADIUS_KM = 6371;
+
+// A map object without a Wikipedia tag must be at least this important to be
+// trusted as the place. This keeps minor objects that merely contain the name
+// (for example a hotel called "<mountain> View Lodge") from replacing it.
+const MATCH_MIN_IMPORTANCE = 0.4;
 
 // Importance given to a place confirmed by Wikipedia. It must stay above the
 // ambiguity threshold used in places.ts so the result is treated as certain.
@@ -41,6 +46,20 @@ function kmBetween(
     Math.cos(toRad(aLat)) * Math.cos(toRad(bLat)) * Math.sin(dLon / 2) ** 2;
 
   return 2 * EARTH_RADIUS_KM * Math.asin(Math.min(1, Math.sqrt(h)));
+}
+
+// True when `a` is a better stand-in for the Wikipedia page than `b`: a map
+// object that carries a Wikipedia tag beats one that does not, and between two
+// equals the more important one wins.
+function isBetterMatch(a: PlaceCandidate, b: PlaceCandidate): boolean {
+  const aTagged = a.wikipedia.length > 0;
+  const bTagged = b.wikipedia.length > 0;
+
+  if (aTagged !== bTagged) {
+    return aTagged;
+  }
+
+  return a.importance > b.importance;
 }
 
 // Asks the map service which city, state and country a point lies in, in the
@@ -142,7 +161,6 @@ export async function resolveViaWikipedia(
   }
 
   let match: PlaceCandidate | null = null;
-  let matchKm = Number.POSITIVE_INFINITY;
 
   for (const candidate of found) {
     const km = kmBetween(
@@ -152,9 +170,20 @@ export async function resolveViaWikipedia(
       candidate.item.lon,
     );
 
-    if (km <= MAX_MATCH_KM && km < matchKm) {
+    if (km > MAX_MATCH_KM) {
+      continue;
+    }
+
+    const trusted =
+      candidate.wikipedia.length > 0 ||
+      candidate.importance >= MATCH_MIN_IMPORTANCE;
+
+    if (!trusted) {
+      continue;
+    }
+
+    if (match === null || isBetterMatch(candidate, match)) {
       match = candidate;
-      matchKm = km;
     }
   }
 
@@ -166,8 +195,8 @@ export async function resolveViaWikipedia(
     };
   }
 
-  // The map has no entry under that title; trust Wikipedia's coordinates and
-  // look up the address so the card still says where the place is.
+  // The map has no trustworthy entry under that title; use Wikipedia's own
+  // coordinates and look up the address so the card still says where it is.
   const address = await reverseRegion(best.lat, best.lon, ctx, signal);
 
   const km = ctx.location
