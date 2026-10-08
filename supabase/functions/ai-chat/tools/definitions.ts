@@ -38,7 +38,7 @@ export const FIND_PLACE_TOOL: ToolDefinition = {
   function: {
     name: "find_place",
     description:
-      "Look up a place on the map. Use it ONLY when the user names a specific place or address to locate, or asks for nearby places of a category (near-me). Never use it for questions about the conversation itself, such as 'where were we' or 'کجا بودیم' (these mean 'what were we talking about'); answer those from the conversation history instead. The app shows the map card first.",
+      "Look up a place on the map. Use it ONLY when the user names a specific place or address to locate, or asks for nearby places of a category (near-me). Never use it for questions about the conversation itself, such as 'where were we' or 'کجا بودیم' (these mean 'what were we talking about'); answer those from the conversation history instead. The app shows the map card first. If the user asks about SEVERAL places in one message (for example one per line, or joined with 'و' or commas), call this tool ONCE FOR EACH place, all together in the same turn (up to 8 calls), each with its own query and intent. Never look up only the first place, and never promise to look at the others later. Write no text before the calls; the app writes every answer itself.",
     parameters: {
       type: "object",
       properties: {
