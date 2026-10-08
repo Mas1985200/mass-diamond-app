@@ -4,11 +4,13 @@
 
 import {
   MAX_CARDS,
+  MAX_TOOL_CALLS_PER_ROUND,
   MAX_TOOL_ROUNDS,
   TOOL_RESULT_CHAR_CAP,
 } from "./config.ts";
 import type {
   AIMessage,
+  CardPayload,
   OAIMessage,
   ToolContext,
   ToolDefinition,
@@ -25,7 +27,11 @@ import type { ToolOptions } from "./providers/types.ts";
 // Covers formal and colloquial spellings: کجاست، کجاس، کجایه، کجایت، کجاش، کجا هست.
 const PLACE_QUESTION_PATTERN =
   /(کجاست|کجاس|کجایه|کجایت|کجاش|کجا\s?است|کجا\s?هست|لوکیشن|آدرس|where\s+is|where's)/i;
-const PLACE_QUESTION_MAX_LENGTH = 200;
+
+// Every line must be short, so a long paragraph is never mistaken for a place
+// question. Several short lines (one place per line) are allowed together.
+const PLACE_QUESTION_MAX_LINE_LENGTH = 200;
+const PLACE_QUESTION_MAX_TOTAL_LENGTH = 1_000;
 
 export type AgentStart =
   | {
@@ -82,16 +88,28 @@ function lastUserText(messages: readonly AIMessage[]): string {
   return "";
 }
 
+function isPlaceQuestion(text: string): boolean {
+  if (text.length > PLACE_QUESTION_MAX_TOTAL_LENGTH) {
+    return false;
+  }
+
+  const lines = text
+    .split(/\n+/)
+    .map((line) => line.trim())
+    .filter((line) => line.length > 0);
+
+  return (
+    lines.length > 0 &&
+    lines.every((line) => line.length <= PLACE_QUESTION_MAX_LINE_LENGTH) &&
+    PLACE_QUESTION_PATTERN.test(text)
+  );
+}
+
 function firstRoundOptions(
   messages: readonly AIMessage[],
   tools: readonly ToolDefinition[],
 ): ToolOptions {
-  const text = lastUserText(messages);
-  const isPlaceQuestion =
-    text.length <= PLACE_QUESTION_MAX_LENGTH &&
-    PLACE_QUESTION_PATTERN.test(text);
-
-  if (isPlaceQuestion) {
+  if (isPlaceQuestion(lastUserText(messages))) {
     const placeTools = tools.filter(
       (tool) => tool.function.name === "find_place",
     );
@@ -102,6 +120,23 @@ function firstRoundOptions(
   }
 
   return roundOptions(0, true, tools);
+}
+
+// When one message asks about several places, photo galleries are left out so
+// the screen is not flooded; a single place keeps its photos.
+function visibleCards(
+  outcome: ToolOutcome,
+  multiple: boolean,
+): readonly CardPayload[] {
+  return (outcome.cards ?? []).filter(
+    (card) => !(multiple && card.t === "photos"),
+  );
+}
+
+function tooManyNote(ctx: ToolContext): string {
+  return ctx.lang === "fa"
+    ? `فقط ${MAX_TOOL_CALLS_PER_ROUND.toLocaleString("fa-IR")} مورد اول را جواب دادم؛ بقیه را در پیام بعدی بپرس.`
+    : `I answered the first ${MAX_TOOL_CALLS_PER_ROUND} items; ask about the rest in your next message.`;
 }
 
 async function* agentChunks(
@@ -152,24 +187,47 @@ async function* agentChunks(
       yield "\n\n";
     }
 
+    // Several places can be asked in one message: run up to the limit.
+    const calls = turn.toolCalls.slice(0, MAX_TOOL_CALLS_PER_ROUND);
+    const droppedCalls = turn.toolCalls.length - calls.length;
+
     convo.push({
       role: "assistant",
       content: turn.text ? turn.text : null,
-      tool_calls: turn.toolCalls.map((call) => ({
+      tool_calls: calls.map((call) => ({
         id: call.id,
         type: "function",
         function: { name: call.name, arguments: call.arguments || "{}" },
       })),
     });
 
+    // Identical calls run once and share the result.
+    const running = new Map<string, Promise<ToolOutcome>>();
+
     const outcomes: ToolOutcome[] = await Promise.all(
-      turn.toolCalls.map((call) =>
-        executeTool(call.name, call.arguments, params.ctx, params.signal),
-      ),
+      calls.map((call) => {
+        const key = `${call.name}\u0000${call.arguments}`;
+        let pending = running.get(key);
+
+        if (!pending) {
+          pending = executeTool(
+            call.name,
+            call.arguments,
+            params.ctx,
+            params.signal,
+          );
+          running.set(key, pending);
+        }
+
+        return pending;
+      }),
     );
 
-    for (let index = 0; index < turn.toolCalls.length; index += 1) {
-      const call = turn.toolCalls[index];
+    const allFinal = outcomes.every((outcome) => outcome.finalText !== undefined);
+    const multiple = new Set(outcomes).size > 1;
+
+    for (let index = 0; index < calls.length; index += 1) {
+      const call = calls[index];
       const outcome = outcomes[index];
 
       if (!call || !outcome) {
@@ -182,7 +240,12 @@ async function* agentChunks(
         content: JSON.stringify(outcome.data).slice(0, TOOL_RESULT_CHAR_CAP),
       });
 
-      for (const card of outcome.cards ?? []) {
+      if (allFinal) {
+        // Cards and texts are written together, place by place, below.
+        continue;
+      }
+
+      for (const card of visibleCards(outcome, multiple)) {
         const marker = encodeCard(card);
 
         if (outcome.cardFirst) {
@@ -200,20 +263,56 @@ async function* agentChunks(
       }
     }
 
-    if (outcomes.every((outcome) => outcome.finalText !== undefined)) {
+    if (allFinal) {
+      const writtenTexts = new Set<string>();
+      const seenOutcomes = new Set<ToolOutcome>();
+
       for (const outcome of outcomes) {
-        if (outcome.finalText) {
-          yield `${outcome.finalText}\n\n`;
+        if (seenOutcomes.has(outcome)) {
+          continue;
         }
 
-        for (const card of outcome.cards ?? []) {
+        seenOutcomes.add(outcome);
+
+        const markers: string[] = [];
+
+        for (const card of visibleCards(outcome, multiple)) {
           const marker = encodeCard(card);
 
-          if (!emitted.has(marker)) {
+          if (!emitted.has(marker) && emitted.size < MAX_CARDS) {
             emitted.add(marker);
+            markers.push(marker);
+          }
+        }
+
+        const text = (outcome.finalText ?? "").trim();
+        const isNewText = text.length > 0 && !writtenTexts.has(text);
+
+        if (isNewText) {
+          writtenTexts.add(text);
+        }
+
+        if (outcome.cardFirst) {
+          for (const marker of markers) {
+            yield `${marker}\n\n`;
+          }
+
+          if (isNewText) {
+            yield `${text}\n\n`;
+          }
+        } else {
+          if (isNewText) {
+            yield `${text}\n\n`;
+          }
+
+          for (const marker of markers) {
             yield `${marker}\n\n`;
           }
         }
+      }
+
+      if (droppedCalls > 0) {
+        yield `${tooManyNote(params.ctx)}\n\n`;
       }
 
       return;
