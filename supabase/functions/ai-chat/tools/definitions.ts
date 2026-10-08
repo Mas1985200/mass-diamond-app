@@ -59,12 +59,33 @@ export const FIND_PLACE_TOOL: ToolDefinition = {
   },
 };
 
+export const MARKET_PRICES_TOOL: ToolDefinition = {
+  type: "function",
+  function: {
+    name: "get_market_prices",
+    description:
+      "Live market prices from a structured feed: currencies (dollar, euro, pound, Tether, yuan and any other currency by its 3-letter code), gold, gold coins, silver, and a few global prices (gold ounce, Brent oil, base metals, Bitcoin, Ethereum). ALWAYS use this FIRST for any price or exchange-rate question, for example dollar, euro, gold, coin, Tether or Bitcoin price. Iranian prices are already in toman: report the returned number exactly as it is, never multiply or divide it and never convert it to rial. Global items are in US dollars. Put every asked item in ONE call. Use web_search with fresh=true only when this tool returns an error or lists an item under not_found or unavailable.",
+    parameters: {
+      type: "object",
+      properties: {
+        items: {
+          type: "array",
+          items: { type: "string" },
+          description:
+            "Up to 8 item keys. Allowed keys: usd, eur, gbp, usdt, usd_center, eur_center, cny_center, gold18, gold24, mesghal, coin_emami, coin_bahar, coin_half, coin_quarter, coin_gram, silver_gram, gold_ounce, silver_ounce, brent, copper, aluminium, zinc, nickel, lead, tin, btc, eth. Any other currency can be asked by its 3-letter ISO code in lowercase, for example kwd, cny, jpy, try. Use usd for the plain 'dollar' price. Use gold18 for the plain 'gold' price.",
+        },
+      },
+      required: ["items"],
+    },
+  },
+};
+
 export const WEB_SEARCH_TOOL: ToolDefinition = {
   type: "function",
   function: {
     name: "web_search",
     description:
-      "Search the web for current information: news, prices, exchange rates, weather, sports. Never use it for the date, the time or where a place is.",
+      "Search the web for current information: news, weather, sports, and prices that get_market_prices does not cover. Never use it for the date, the time or where a place is. Never use it for dollar, euro, gold, coin, Tether or Bitcoin prices unless get_market_prices failed.",
     parameters: {
       type: "object",
       properties: {
@@ -105,7 +126,11 @@ export const REMEMBER_TOOL: ToolDefinition = {
 };
 
 export function buildToolDefinitions(ctx: ToolContext): ToolDefinition[] {
-  const tools: ToolDefinition[] = [GET_DATETIME_TOOL, FIND_PLACE_TOOL];
+  const tools: ToolDefinition[] = [
+    GET_DATETIME_TOOL,
+    FIND_PLACE_TOOL,
+    MARKET_PRICES_TOOL,
+  ];
 
   if (ctx.tavilyKey) {
     tools.push(WEB_SEARCH_TOOL);
