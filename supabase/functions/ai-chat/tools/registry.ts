@@ -7,6 +7,7 @@ import { runGetDatetime } from "./datetime.ts";
 import { runFindPlace } from "./places.ts";
 import { runWebSearch } from "./web.ts";
 import { runRemember } from "./remember.ts";
+import { runMarketPrices } from "./prices.ts";
 
 function parseToolArguments(raw: string): Record<string, unknown> {
   if (!raw.trim()) {
@@ -38,6 +39,8 @@ export async function executeTool(
         return await runFindPlace(args, ctx, signal);
       case "web_search":
         return await runWebSearch(args, ctx, signal);
+      case "get_market_prices":
+        return await runMarketPrices(args, ctx, signal);
       case "remember":
         return await runRemember(args, ctx);
       default:
