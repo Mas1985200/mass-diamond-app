@@ -1,13 +1,28 @@
 // supabase/functions/ai-chat/tools/wiki.ts
-// Wikipedia summary and photo lookups used by the place tool.
+// Wikipedia summary, photo and place lookups used by the place tool.
 
 import { NOMINATIM_USER_AGENT, WIKI_TIMEOUT_MS } from "../config.ts";
 import type { PhotoItem } from "../types.ts";
-import { describeError, isRecord, pickString } from "../lib/util.ts";
+import {
+  describeError,
+  isRecord,
+  isValidGeo,
+  pickString,
+} from "../lib/util.ts";
 import { createAttempt } from "../lib/http.ts";
 
 const PHOTO_SKIP_PATTERN =
   /(flag|logo|icon|locator|map|coat[_ ]of[_ ]arms|symbol|seal|emblem|edit-clear|question[_ ]book|wiktionary|disambig)/i;
+
+const WIKI_PLACE_MAX_RESULTS = 3;
+const WIKI_SEARCH_MAX_CHARS = 200;
+
+export type WikiPlaceHit = {
+  readonly title: string;
+  readonly lat: number;
+  readonly lon: number;
+  readonly tag: string;
+};
 
 function parseWikiTag(
   tag: string,
@@ -143,6 +158,103 @@ export async function fetchWikipediaPhotos(
     return photos;
   } catch (error) {
     console.error(`wikipedia photos failed: ${describeError(error)}`);
+
+    return [];
+  } finally {
+    timed.clearConnectTimer();
+  }
+}
+
+// Searches Wikipedia (in the given language) and returns only pages that have
+// geographic coordinates, i.e. real places, in the order Wikipedia ranks them.
+// Works for any name in any country; nothing here is specific to one place.
+export async function searchWikipediaPlaces(
+  searchText: string,
+  lang: string,
+  master: AbortSignal,
+): Promise<WikiPlaceHit[]> {
+  const text = searchText.trim().slice(0, WIKI_SEARCH_MAX_CHARS);
+
+  if (!text || !/^[a-z]{2,3}(?:-[a-z]{2,8})?$/i.test(lang)) {
+    return [];
+  }
+
+  const params = new URLSearchParams({
+    action: "query",
+    format: "json",
+    formatversion: "2",
+    generator: "search",
+    gsrsearch: text,
+    gsrlimit: "6",
+    prop: "coordinates",
+    coprimary: "primary",
+    colimit: "6",
+  });
+
+  const timed = createAttempt(master, WIKI_TIMEOUT_MS);
+
+  try {
+    const response = await fetch(
+      `https://${lang.toLowerCase()}.wikipedia.org/w/api.php?${params.toString()}`,
+      {
+        headers: {
+          "User-Agent": NOMINATIM_USER_AGENT,
+          Accept: "application/json",
+        },
+        signal: timed.signal,
+      },
+    );
+
+    if (!response.ok) {
+      return [];
+    }
+
+    const json: unknown = await response.json();
+    const queryBlock =
+      isRecord(json) && isRecord(json.query) ? json.query : null;
+    const pages =
+      queryBlock && Array.isArray(queryBlock.pages) ? queryBlock.pages : [];
+
+    const found: Array<WikiPlaceHit & { readonly index: number }> = [];
+
+    for (const raw of pages) {
+      if (!isRecord(raw)) {
+        continue;
+      }
+
+      const title = pickString(raw, "title");
+      const coordinates = Array.isArray(raw.coordinates) ? raw.coordinates : [];
+      const first: unknown = coordinates[0];
+
+      if (!title || !isRecord(first)) {
+        continue;
+      }
+
+      const lat = Number(first.lat);
+      const lon = Number(first.lon);
+
+      if (!isValidGeo(lat, lon)) {
+        continue;
+      }
+
+      const index = Number(raw.index);
+
+      found.push({
+        title,
+        lat,
+        lon,
+        tag: `${lang.toLowerCase()}:${title}`,
+        index: Number.isFinite(index) ? index : 1e9,
+      });
+    }
+
+    found.sort((a, b) => a.index - b.index);
+
+    return found
+      .slice(0, WIKI_PLACE_MAX_RESULTS)
+      .map(({ title, lat, lon, tag }) => ({ title, lat, lon, tag }));
+  } catch (error) {
+    console.error(`wikipedia place search failed: ${describeError(error)}`);
 
     return [];
   } finally {
