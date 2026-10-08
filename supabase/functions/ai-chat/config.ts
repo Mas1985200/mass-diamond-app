@@ -13,9 +13,13 @@ export const WIKI_TIMEOUT_MS = 4_000;
 export const TOTAL_TIMEOUT_MS = 50_000;
 
 export const MAX_TOOL_ROUNDS = 2;
-export const MAX_CARDS = 4;
+export const MAX_CARDS = 10;
+export const MAX_TOOL_CALLS_PER_ROUND = 8;
 export const MAX_OUTPUT_TOKENS = 2_000;
 export const TEMPERATURE = 0.4;
+
+// The public Nominatim service allows about one request per second.
+export const NOMINATIM_MIN_GAP_MS = 1_100;
 
 export const COOLDOWN_DEFAULT_MS = 20_000;
 export const COOLDOWN_MAX_MS = 60_000;
