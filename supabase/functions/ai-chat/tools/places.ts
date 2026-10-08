@@ -3,6 +3,8 @@
 // For a specific place the server writes the short answer itself from the
 // map and Wikipedia data, so the model cannot add invented details.
 // When several places share a lesser-known name, up to 3 are shown together.
+// When the map only finds weak matches for a name, Wikipedia is asked which
+// place the name most likely means (see places-wiki.ts).
 
 import type {
   CardPayload,
@@ -20,11 +22,13 @@ import {
   type NominatimOptions,
 } from "./places-search.ts";
 import { fetchWikipediaPhotos, fetchWikipediaSummary } from "./wiki.ts";
+import { resolveViaWikipedia } from "./places-wiki.ts";
 import { tavilySearch } from "./web.ts";
 
 const ABOUT_MAX_CHARS = 400;
 const AMBIGUOUS_IMPORTANCE = 0.55;
 const MAX_SAME_NAME = 3;
+const WIKI_FALLBACK_LANG = "en";
 
 function distinctLocations(list: readonly PlaceCandidate[]): PlaceCandidate[] {
   const distinct: PlaceCandidate[] = [];
@@ -187,7 +191,8 @@ function buildPlaceAnswer(
   return parts.join(" ");
 }
 
-// Answer used when several places share the same name.
+// Answer used when several places share the same name. The best-known place
+// is always listed first.
 function buildAmbiguousAnswer(
   ctx: ToolContext,
   group: readonly PlaceCandidate[],
@@ -208,17 +213,82 @@ function buildAmbiguousAnswer(
   });
 
   const joined = entries.join(isFa ? "؛ " : "; ");
-  const nearestFirst = ctx.location !== null;
 
   if (isFa) {
-    return `چند مکان با نام «${name}» پیدا شد: ${joined}. ${
-      nearestFirst ? "نزدیک‌ترین به شما اول نمایش داده شد." : "شناخته‌شده‌ترین اول نمایش داده شد."
-    }`;
+    return `چند مکان با نام «${name}» پیدا شد: ${joined}. شناخته‌شده‌ترین اول نمایش داده شد.`;
   }
 
-  return `Several places are named "${name}": ${joined}. ${
-    nearestFirst ? "The nearest to you is shown first." : "The best-known is shown first."
-  }`;
+  return `Several places are named "${name}": ${joined}. The best-known is shown first.`;
+}
+
+// The part of the query before the first comma is the place name itself; the
+// rest is context such as the city or country.
+function placeNameOf(query: string): string {
+  const first = query.split(/[,،]/)[0]?.trim() ?? "";
+
+  return first || query;
+}
+
+function nameTokens(text: string): string[] {
+  return text
+    .toLowerCase()
+    .split(/[^\p{L}\p{N}]+/u)
+    .filter((token) => token.length >= 2);
+}
+
+function wikiTitleOf(tag: string): string {
+  const colon = tag.indexOf(":");
+
+  return (colon >= 0 ? tag.slice(colon + 1) : tag).replace(/_/g, " ");
+}
+
+// Guards against accepting an unrelated Wikipedia page: more than half of the
+// words of the asked name must appear in the page title.
+function relatesToName(title: string, name: string): boolean {
+  const wanted = nameTokens(name);
+
+  if (wanted.length === 0) {
+    return false;
+  }
+
+  const available = nameTokens(title);
+  const matched = wanted.filter((word) =>
+    available.some(
+      (candidate) =>
+        candidate === word || (word.length >= 3 && candidate.includes(word)),
+    ),
+  );
+
+  return matched.length * 2 > wanted.length;
+}
+
+// Asks Wikipedia which place a weakly matched name most likely means, first in
+// the user's language and then in English. Returns null when nothing relevant
+// is found, so the normal map result is used instead.
+async function resolveWeakMatch(
+  query: string,
+  ctx: ToolContext,
+  signal: AbortSignal,
+): Promise<PlaceCandidate | null> {
+  const name = placeNameOf(query);
+  const contexts: ToolContext[] =
+    ctx.lang === WIKI_FALLBACK_LANG
+      ? [ctx]
+      : [ctx, { ...ctx, lang: WIKI_FALLBACK_LANG }];
+
+  for (const context of contexts) {
+    try {
+      const resolved = await resolveViaWikipedia(name, context, signal);
+
+      if (resolved && relatesToName(wikiTitleOf(resolved.wikipedia), name)) {
+        return resolved;
+      }
+    } catch (error) {
+      console.error(`find_place wikipedia resolve failed: ${describeError(error)}`);
+    }
+  }
+
+  return null;
 }
 
 async function runNearbySearch(
@@ -307,10 +377,18 @@ async function runSpecificPlace(
     }
   }
 
-  const ranked = candidates
-    .slice()
-    .sort((a, b) => b.importance - a.importance);
-  const top = ranked[0];
+  let ranked = candidates.slice().sort((a, b) => b.importance - a.importance);
+  let top = ranked[0];
+
+  // Weak or missing map match: let Wikipedia decide which place is meant.
+  if (!top || top.importance < AMBIGUOUS_IMPORTANCE) {
+    const resolved = await resolveWeakMatch(query, ctx, signal);
+
+    if (resolved) {
+      ranked = [resolved, ...ranked];
+      top = resolved;
+    }
+  }
 
   if (!top) {
     return lastError
@@ -329,10 +407,6 @@ async function runSpecificPlace(
 
   if (pick.ambiguous) {
     group = [pick.chosen, ...pick.alternatives];
-
-    if (ctx.location) {
-      group.sort((a, b) => (a.item.km ?? 1e9) - (b.item.km ?? 1e9));
-    }
   }
 
   const chosen = group[0] ?? pick.chosen;
