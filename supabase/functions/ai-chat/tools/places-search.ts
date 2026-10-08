@@ -14,6 +14,8 @@ export type NominatimOptions = {
     readonly delta: number;
     readonly bounded: boolean;
   } | null;
+  // Two-letter ISO country code; when given, only that country is searched.
+  readonly countryCode?: string;
 };
 
 const FACT_KEYS: readonly string[] = [
@@ -87,6 +89,12 @@ export async function searchNominatim(
     extratags: "1",
     "accept-language": ctx.lang === "fa" ? "fa,en" : "en",
   });
+
+  const countryCode = options.countryCode?.trim().toLowerCase() ?? "";
+
+  if (/^[a-z]{2}$/.test(countryCode)) {
+    params.set("countrycodes", countryCode);
+  }
 
   if (options.viewbox && ctx.location) {
     const { lat, lon } = ctx.location;
