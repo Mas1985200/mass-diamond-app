@@ -45,7 +45,7 @@ export const FIND_PLACE_TOOL: ToolDefinition = {
         query: {
           type: "string",
           description:
-            "specific_place: full name plus city, region or country, with any spelling mistakes of the user corrected. nearby_search: English category word (pharmacy, restaurant).",
+            "specific_place: the full, well-known name of the place together with its type and its city or country, in the user's language, with any spelling mistakes corrected. If the user gives only a short or ambiguous name and no region, choose the most famous place in the world that has that name and write its type and city or country, for example 'Lake Chitgar, Tehran, Iran' instead of just 'Chitgar'. Never add details you are unsure of. nearby_search: English category word (pharmacy, restaurant).",
         },
         intent: {
           type: "string",
