@@ -8,6 +8,7 @@ import { NOMINATIM_USER_AGENT, TOOL_TIMEOUT_MS } from "../config.ts";
 import type { PlaceCandidate, ToolContext } from "../types.ts";
 import { describeError, isRecord, pickString, round5 } from "../lib/util.ts";
 import { createAttempt } from "../lib/http.ts";
+import { waitForNominatimSlot } from "./nominatim-gate.ts";
 import { searchNominatim } from "./places-search.ts";
 import { searchWikipediaPlaces } from "./wiki.ts";
 
@@ -58,6 +59,14 @@ async function reverseRegion(
     addressdetails: "1",
     "accept-language": ctx.lang === "fa" ? "fa,en" : "en",
   });
+
+  // Wait for our turn first, so the request timer below only counts the
+  // request itself. A cancelled wait just means no address.
+  try {
+    await waitForNominatimSlot(master);
+  } catch {
+    return "";
+  }
 
   const timed = createAttempt(master, TOOL_TIMEOUT_MS);
 
