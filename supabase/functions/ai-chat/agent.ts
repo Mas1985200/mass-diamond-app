@@ -22,7 +22,9 @@ import { openRound, type OpenSuccess } from "./providers/router.ts";
 import type { ToolOptions } from "./providers/types.ts";
 
 // Short "where is X" style questions must always use the map tool.
-const PLACE_QUESTION_PATTERN = /(کجاست|کجا\s?است|لوکیشن|آدرس|where\s+is|where's)/i;
+// Covers formal and colloquial spellings: کجاست، کجاس، کجایه، کجایت، کجاش، کجا هست.
+const PLACE_QUESTION_PATTERN =
+  /(کجاست|کجاس|کجایه|کجایت|کجاش|کجا\s?است|کجا\s?هست|لوکیشن|آدرس|where\s+is|where's)/i;
 const PLACE_QUESTION_MAX_LENGTH = 200;
 
 export type AgentStart =
