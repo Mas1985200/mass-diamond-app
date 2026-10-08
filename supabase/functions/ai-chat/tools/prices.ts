@@ -76,6 +76,35 @@ const SPEC_LIST: ReadonlyArray<readonly [string, PriceSpec]> = [
 
 const SPECS: ReadonlyMap<string, PriceSpec> = new Map(SPEC_LIST);
 
+// Persian "per ..." wording for items whose unit is certain. Items missing
+// here (for example base metals) get no per_text, so nothing is guessed.
+const PER_TEXT: ReadonlyMap<string, string> = new Map([
+  ["gold18", "هر گرم"],
+  ["gold24", "هر گرم"],
+  ["silver_gram", "هر گرم"],
+  ["mesghal", "هر مثقال"],
+  ["coin_emami", "هر سکه"],
+  ["coin_bahar", "هر سکه"],
+  ["coin_half", "هر عدد"],
+  ["coin_quarter", "هر عدد"],
+  ["coin_gram", "هر عدد"],
+  ["gold_ounce", "هر انس"],
+  ["silver_ounce", "هر انس"],
+  ["brent", "هر بشکه"],
+]);
+
+const CURRENCY_KEYS: ReadonlySet<string> = new Set([
+  "usd",
+  "eur",
+  "gbp",
+  "usdt",
+  "usd_center",
+  "eur_center",
+  "cny_center",
+  "btc",
+  "eth",
+]);
+
 const PERSIAN_DIGITS: readonly string[] = [
   "۰",
   "۱",
@@ -299,6 +328,24 @@ function lookup(
   return { key: item, label: item, entry: undefined };
 }
 
+// Persian "per unit" wording shown next to the price, or null when the unit
+// is not certain.
+function perText(found: Lookup): string | null {
+  const fixed = PER_TEXT.get(found.key);
+
+  if (fixed) {
+    return fixed;
+  }
+
+  if (CURRENCY_KEYS.has(found.key) || /^[A-Z]{3}$/.test(found.key)) {
+    const name = found.label.replace(/\s*\(.*\)\s*$/, "").trim();
+
+    return name ? `هر ${name}` : null;
+  }
+
+  return null;
+}
+
 function ageInMinutes(timestamp: string, now: number): number | null {
   const parsed = Date.parse(timestamp);
 
@@ -317,6 +364,7 @@ function toResult(
     name: found.label,
     price: entry.price,
     price_text: formatPersianNumber(entry.price),
+    per_text: perText(found),
     currency: entry.currency === "IRT" ? "toman" : entry.currency,
     unit: entry.unit,
     unit_size: entry.unitSize,
@@ -380,7 +428,7 @@ export async function runMarketPrices(
       source: "Iran Market Data (TGJU)",
       feed_published_at: feed.publishedAt,
       format_note:
-        "Write every price exactly as its price_text, with the same digits and separators. Do not reformat, round or convert it.",
+        "Write every price exactly as its price_text, with the same digits and separators; do not reformat, round or convert it. Always write each price together with its name and its per_text (for example 'طلای ۱۸ عیار هر گرم حدود ...'). When per_text is null, give the name and the number without a unit word.",
       prices,
       unavailable,
       not_found: notFound,
