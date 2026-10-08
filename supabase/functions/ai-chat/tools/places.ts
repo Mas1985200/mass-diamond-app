@@ -2,9 +2,10 @@
 // find_place tool: specific places and near-me search.
 // For a specific place the server writes the short answer itself from the
 // map and Wikipedia data, so the model cannot add invented details.
-// When several places share a lesser-known name, up to 3 are shown together.
-// When the map only finds weak matches for a name, Wikipedia is asked which
-// place the name most likely means (see places-wiki.ts).
+// The model says which place it means (country, local name, approximate
+// coordinates from its own knowledge); the server only verifies it on the map.
+// When nothing is found the server writes a fixed "not found" sentence, so the
+// model never invents an answer.
 
 import type {
   CardPayload,
@@ -29,6 +30,78 @@ const ABOUT_MAX_CHARS = 400;
 const AMBIGUOUS_IMPORTANCE = 0.55;
 const MAX_SAME_NAME = 3;
 const WIKI_FALLBACK_LANG = "en";
+
+// Hints from the model: results within this distance of its approximate
+// coordinates are preferred, but they are never the marker position itself.
+const APPROX_RADIUS_KM = 60;
+const HINT_MIN_IMPORTANCE = 0.3;
+const WIKI_TAG_BONUS = 0.15;
+const EARTH_RADIUS_KM = 6371;
+
+type PlaceHints = {
+  readonly countryCode?: string;
+  readonly localName?: string;
+  readonly approx?: { readonly lat: number; readonly lon: number };
+};
+
+type Attempt = {
+  readonly text: string;
+  readonly countryCode?: string;
+};
+
+function kmApart(
+  aLat: number,
+  aLon: number,
+  bLat: number,
+  bLon: number,
+): number {
+  const toRad = (degrees: number): number => (degrees * Math.PI) / 180;
+  const dLat = toRad(bLat - aLat);
+  const dLon = toRad(bLon - aLon);
+  const h =
+    Math.sin(dLat / 2) ** 2 +
+    Math.cos(toRad(aLat)) * Math.cos(toRad(bLat)) * Math.sin(dLon / 2) ** 2;
+
+  return 2 * EARTH_RADIUS_KM * Math.asin(Math.min(1, Math.sqrt(h)));
+}
+
+function toCoordinate(value: unknown): number {
+  if (typeof value === "number") {
+    return value;
+  }
+
+  if (typeof value === "string" && value.trim().length > 0) {
+    return Number(value);
+  }
+
+  return Number.NaN;
+}
+
+function readHints(args: Record<string, unknown>): PlaceHints {
+  const code =
+    typeof args.country_code === "string"
+      ? args.country_code.trim().toLowerCase()
+      : "";
+  const local =
+    typeof args.local_name === "string"
+      ? args.local_name.trim().slice(0, 120)
+      : "";
+  const lat = toCoordinate(args.approx_lat);
+  const lon = toCoordinate(args.approx_lon);
+
+  const hasApprox =
+    Number.isFinite(lat) &&
+    Number.isFinite(lon) &&
+    Math.abs(lat) <= 90 &&
+    Math.abs(lon) <= 180 &&
+    !(lat === 0 && lon === 0);
+
+  return {
+    ...(/^[a-z]{2}$/.test(code) ? { countryCode: code } : {}),
+    ...(local ? { localName: local } : {}),
+    ...(hasApprox ? { approx: { lat, lon } } : {}),
+  };
+}
 
 function distinctLocations(list: readonly PlaceCandidate[]): PlaceCandidate[] {
   const distinct: PlaceCandidate[] = [];
@@ -72,6 +145,62 @@ function pickSpecific(
     alternatives: rivals,
     ambiguous: rivals.length > 0 && top.importance < AMBIGUOUS_IMPORTANCE,
   };
+}
+
+function rankScore(candidate: PlaceCandidate): number {
+  return candidate.importance + (candidate.wikipedia ? WIKI_TAG_BONUS : 0);
+}
+
+// Orders candidates best first. When the model gave approximate coordinates,
+// a believable candidate near them goes first; otherwise the overall best.
+function chooseCandidates(
+  all: readonly PlaceCandidate[],
+  hints: PlaceHints,
+): PlaceCandidate[] {
+  const sorted = all.slice().sort((a, b) => rankScore(b) - rankScore(a));
+  const approx = hints.approx;
+
+  if (!approx) {
+    return sorted;
+  }
+
+  const near = sorted.filter(
+    (candidate) =>
+      kmApart(
+        candidate.item.lat,
+        candidate.item.lon,
+        approx.lat,
+        approx.lon,
+      ) <= APPROX_RADIUS_KM,
+  );
+  const best = near[0];
+
+  if (best && (best.wikipedia || best.importance >= HINT_MIN_IMPORTANCE)) {
+    return [...near, ...sorted.filter((candidate) => !near.includes(candidate))];
+  }
+
+  return sorted;
+}
+
+// A candidate is trusted as the place when it has a Wikipedia tag, is very
+// important, or is reasonably important and lies near the model's coordinates.
+function isTrusted(candidate: PlaceCandidate, hints: PlaceHints): boolean {
+  if (candidate.wikipedia) {
+    return true;
+  }
+
+  if (candidate.importance >= AMBIGUOUS_IMPORTANCE) {
+    return true;
+  }
+
+  const approx = hints.approx;
+
+  return (
+    approx !== undefined &&
+    candidate.importance >= HINT_MIN_IMPORTANCE &&
+    kmApart(candidate.item.lat, candidate.item.lon, approx.lat, approx.lon) <=
+      APPROX_RADIUS_KM
+  );
 }
 
 function selectNearby(candidates: readonly PlaceCandidate[]): PlaceItem[] {
@@ -284,11 +413,70 @@ async function resolveWeakMatch(
         return resolved;
       }
     } catch (error) {
-      console.error(`find_place wikipedia resolve failed: ${describeError(error)}`);
+      console.error(
+        `find_place wikipedia resolve failed: ${describeError(error)}`,
+      );
     }
   }
 
   return null;
+}
+
+function uniqueTexts(values: readonly string[]): string[] {
+  const unique: string[] = [];
+
+  for (const value of values) {
+    const text = value.trim();
+
+    if (text && !unique.includes(text)) {
+      unique.push(text);
+    }
+  }
+
+  return unique;
+}
+
+// Searches to try, most specific first. When a country code is known every
+// search is limited to that country, plus one unrestricted safety-net search in
+// case the code was wrong.
+function buildAttempts(query: string, hints: PlaceHints): Attempt[] {
+  const texts = uniqueTexts([
+    hints.localName ?? "",
+    query,
+    placeNameOf(query),
+  ]);
+
+  const attempts: Attempt[] = texts.map((text) =>
+    hints.countryCode ? { text, countryCode: hints.countryCode } : { text },
+  );
+
+  if (hints.countryCode) {
+    attempts.push({ text: query });
+  }
+
+  return attempts;
+}
+
+function notFoundOutcome(ctx: ToolContext, query: string): ToolOutcome {
+  const name = placeNameOf(query);
+
+  return {
+    data: { results: [], note: "No places were found." },
+    finalText:
+      ctx.lang === "fa"
+        ? `«${name}» را روی نقشه پیدا نکردم. اگر شهر یا کشورش را هم بنویسی دوباره امتحان می‌کنم.`
+        : `I could not find "${name}" on the map. If you add its city or country I will try again.`,
+  };
+}
+
+function mapDownOutcome(ctx: ToolContext, detail: string): ToolOutcome {
+  return {
+    data: { error: "map_lookup_failed", detail: detail.slice(0, 200) },
+    finalText:
+      ctx.lang === "fa"
+        ? "الان به نقشه دسترسی ندارم. کمی بعد دوباره امتحان کن."
+        : "I cannot reach the map right now. Please try again in a moment.",
+  };
 }
 
 async function runNearbySearch(
@@ -298,10 +486,11 @@ async function runNearbySearch(
 ): Promise<ToolOutcome> {
   if (!ctx.location) {
     return {
-      data: {
-        error: "user_location_not_available",
-        hint: "The user's location is not available. Tell them, in one short sentence, to allow location access for this site in the browser settings.",
-      },
+      data: { error: "user_location_not_available" },
+      finalText:
+        ctx.lang === "fa"
+          ? "برای پیدا کردن جاهای اطراف، دسترسی به موقعیت مکانی را برای این سایت در تنظیمات مرورگر فعال کن."
+          : "To find places near you, allow location access for this site in your browser settings.",
     };
   }
 
@@ -340,48 +529,67 @@ async function runNearbySearch(
   }
 
   if (lastError) {
-    return {
-      data: { error: "map_lookup_failed", detail: lastError.slice(0, 200) },
-    };
+    return mapDownOutcome(ctx, lastError);
   }
 
-  return { data: { results: [], note: "No places were found." } };
+  return {
+    data: { results: [], note: "No places were found." },
+    finalText:
+      ctx.lang === "fa"
+        ? "جای مناسبی نزدیک شما پیدا نشد."
+        : "I could not find a suitable place near you.",
+  };
 }
 
 async function runSpecificPlace(
   query: string,
+  hints: PlaceHints,
   ctx: ToolContext,
   signal: AbortSignal,
 ): Promise<ToolOutcome> {
-  let candidates: PlaceCandidate[] = [];
+  let collected: PlaceCandidate[] = [];
   let lastError = "";
 
-  try {
-    candidates = await searchNominatim(
-      query,
-      ctx,
-      { limit: 8, viewbox: null },
-      signal,
-    );
-  } catch (error) {
-    lastError = describeError(error);
-    console.error(`find_place nominatim failed: ${lastError}`);
+  for (const attempt of buildAttempts(query, hints)) {
+    try {
+      const found = await searchNominatim(
+        attempt.text,
+        ctx,
+        {
+          limit: 8,
+          viewbox: null,
+          ...(attempt.countryCode ? { countryCode: attempt.countryCode } : {}),
+        },
+        signal,
+      );
+
+      collected = collected.concat(found);
+    } catch (error) {
+      lastError = describeError(error);
+      console.error(`find_place nominatim failed: ${lastError}`);
+    }
+
+    const best = chooseCandidates(collected, hints)[0];
+
+    if (best && isTrusted(best, hints)) {
+      break;
+    }
   }
 
-  if (candidates.length === 0) {
+  if (collected.length === 0) {
     try {
-      candidates = await searchPhoton(query, ctx, signal, false);
+      collected = await searchPhoton(query, ctx, signal, false);
     } catch (error) {
       lastError = describeError(error);
       console.error(`find_place photon failed: ${lastError}`);
     }
   }
 
-  let ranked = candidates.slice().sort((a, b) => b.importance - a.importance);
+  let ranked = chooseCandidates(collected, hints);
   let top = ranked[0];
 
-  // Weak or missing map match: let Wikipedia decide which place is meant.
-  if (!top || top.importance < AMBIGUOUS_IMPORTANCE) {
+  // No trustworthy map match: let Wikipedia decide which place is meant.
+  if (!top || !isTrusted(top, hints)) {
     const resolved = await resolveWeakMatch(query, ctx, signal);
 
     if (resolved) {
@@ -392,16 +600,22 @@ async function runSpecificPlace(
 
   if (!top) {
     return lastError
-      ? {
-          data: {
-            error: "map_lookup_failed",
-            detail: lastError.slice(0, 200),
-          },
-        }
-      : { data: { results: [], note: "No places were found." } };
+      ? mapDownOutcome(ctx, lastError)
+      : notFoundOutcome(ctx, query);
   }
 
-  const pick = pickSpecific(top, ranked);
+  console.log(
+    `find_place "${query}" -> ${top.item.name} (${top.item.lat}, ${top.item.lon}) importance ${top.importance.toFixed(2)} hints ${JSON.stringify(hints)}`,
+  );
+
+  // When the model has said exactly which place it means, show that single
+  // place; several same-name places are shown only when nothing was specified.
+  const hinted =
+    hints.approx !== undefined || hints.countryCode !== undefined;
+
+  const pick: SpecificPick = hinted
+    ? { chosen: top, alternatives: [], ambiguous: false }
+    : pickSpecific(top, ranked);
 
   let group: PlaceCandidate[] = [pick.chosen];
 
@@ -490,5 +704,5 @@ export async function runFindPlace(
 
   return args.intent === "nearby_search"
     ? await runNearbySearch(query, ctx, signal)
-    : await runSpecificPlace(query, ctx, signal);
+    : await runSpecificPlace(query, readHints(args), ctx, signal);
 }
