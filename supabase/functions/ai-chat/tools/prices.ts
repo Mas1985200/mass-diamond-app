@@ -76,7 +76,41 @@ const SPEC_LIST: ReadonlyArray<readonly [string, PriceSpec]> = [
 
 const SPECS: ReadonlyMap<string, PriceSpec> = new Map(SPEC_LIST);
 
+const PERSIAN_DIGITS: readonly string[] = [
+  "۰",
+  "۱",
+  "۲",
+  "۳",
+  "۴",
+  "۵",
+  "۶",
+  "۷",
+  "۸",
+  "۹",
+];
+
 let cachedFeed: Feed | null = null;
+
+// Formats a number for Persian text: Persian digits, ٬ as the thousands
+// separator and ٫ as the decimal separator. Large values are rounded to whole
+// numbers; small values keep up to two decimals.
+function formatPersianNumber(value: number): string {
+  const rounded =
+    Math.abs(value) >= 1000
+      ? Math.round(value)
+      : Math.round(value * 100) / 100;
+  const negative = rounded < 0;
+  const [whole = "0", fraction] = String(Math.abs(rounded)).split(".");
+  const grouped = whole.replace(/\B(?=(\d{3})+(?!\d))/g, ",");
+  const text = fraction ? `${grouped}.${fraction}` : grouped;
+
+  const converted = text
+    .replace(/\d/g, (digit) => PERSIAN_DIGITS[Number(digit)] ?? digit)
+    .replace(/,/g, "٬")
+    .replace(/\./g, "٫");
+
+  return negative ? `-${converted}` : converted;
+}
 
 function toNumber(value: unknown): number | null {
   return typeof value === "number" && Number.isFinite(value) ? value : null;
@@ -282,6 +316,7 @@ function toResult(
     key: found.key,
     name: found.label,
     price: entry.price,
+    price_text: formatPersianNumber(entry.price),
     currency: entry.currency === "IRT" ? "toman" : entry.currency,
     unit: entry.unit,
     unit_size: entry.unitSize,
@@ -344,6 +379,8 @@ export async function runMarketPrices(
     data: {
       source: "Iran Market Data (TGJU)",
       feed_published_at: feed.publishedAt,
+      format_note:
+        "Write every price exactly as its price_text, with the same digits and separators. Do not reformat, round or convert it.",
       prices,
       unavailable,
       not_found: notFound,
