@@ -4,9 +4,15 @@
 // map and Wikipedia data, so the model cannot add invented details.
 // The model says which place it means (country, local name, approximate
 // coordinates from its own knowledge); the server only verifies it on the map.
-// When nothing is found the server writes a fixed "not found" sentence, so the
-// model never invents an answer.
+// Several places can be asked in one call (the "places" list); each gets its
+// own card and answer, in order.
+// Names and summaries always come in the user's language; when no article
+// exists in that language the summary is left out instead of showing a
+// foreign language. When nothing is found the server writes a fixed "not
+// found" sentence, so the model never invents an answer.
 
+import { MAX_TOOL_CALLS_PER_ROUND } from "../config.ts";
+import { encodeCard } from "../cards/codec.ts";
 import type {
   CardPayload,
   PhotoItem,
@@ -15,16 +21,19 @@ import type {
   ToolContext,
   ToolOutcome,
 } from "../types.ts";
-import { describeError } from "../lib/util.ts";
+import { describeError, isRecord } from "../lib/util.ts";
 import { distanceBetween, normalizePlaceName } from "../lib/geo.ts";
 import {
   searchNominatim,
   searchPhoton,
   type NominatimOptions,
 } from "./places-search.ts";
-import { fetchWikipediaPhotos, fetchWikipediaSummary } from "./wiki.ts";
+import {
+  fetchWikipediaPhotos,
+  fetchWikipediaSummary,
+  findLocalizedArticle,
+} from "./wiki.ts";
 import { resolveViaWikipedia } from "./places-wiki.ts";
-import { tavilySearch } from "./web.ts";
 
 const ABOUT_MAX_CHARS = 400;
 const AMBIGUOUS_IMPORTANCE = 0.55;
@@ -44,9 +53,20 @@ type PlaceHints = {
   readonly approx?: { readonly lat: number; readonly lon: number };
 };
 
+type PlaceRequest = {
+  readonly query: string;
+  readonly hints: PlaceHints;
+};
+
 type Attempt = {
   readonly text: string;
   readonly countryCode?: string;
+};
+
+type WikipediaInfo = {
+  readonly about: string;
+  readonly localName: string;
+  readonly photos: PhotoItem[];
 };
 
 function kmApart(
@@ -101,6 +121,37 @@ function readHints(args: Record<string, unknown>): PlaceHints {
     ...(local ? { localName: local } : {}),
     ...(hasApprox ? { approx: { lat, lon } } : {}),
   };
+}
+
+// Reads the "places" list: several places asked in one call.
+function readPlaceRequests(args: Record<string, unknown>): PlaceRequest[] {
+  const raw = args.places;
+
+  if (!Array.isArray(raw)) {
+    return [];
+  }
+
+  const requests: PlaceRequest[] = [];
+  const seen = new Set<string>();
+
+  for (const entry of raw) {
+    if (!isRecord(entry)) {
+      continue;
+    }
+
+    const query =
+      typeof entry.query === "string" ? entry.query.trim().slice(0, 200) : "";
+    const key = query.toLowerCase();
+
+    if (!query || seen.has(key)) {
+      continue;
+    }
+
+    seen.add(key);
+    requests.push({ query, hints: readHints(entry) });
+  }
+
+  return requests;
 }
 
 function distinctLocations(list: readonly PlaceCandidate[]): PlaceCandidate[] {
@@ -422,6 +473,29 @@ async function resolveWeakMatch(
   return null;
 }
 
+// Loads the Wikipedia summary and the place's name in the user's language.
+// When the article does not exist in that language the summary stays empty,
+// so text in a foreign language is never shown.
+async function loadWikipediaInfo(
+  tag: string,
+  ctx: ToolContext,
+  signal: AbortSignal,
+  withPhotos: boolean,
+): Promise<WikipediaInfo> {
+  const localized = await findLocalizedArticle(tag, ctx.lang, signal);
+
+  const [about, photos] = await Promise.all([
+    localized
+      ? fetchWikipediaSummary(localized.tag, signal)
+      : Promise.resolve(""),
+    withPhotos
+      ? fetchWikipediaPhotos(tag, signal)
+      : Promise.resolve<PhotoItem[]>([]),
+  ]);
+
+  return { about, localName: localized?.title ?? "", photos };
+}
+
 function uniqueTexts(values: readonly string[]): string[] {
   const unique: string[] = [];
 
@@ -546,6 +620,7 @@ async function runSpecificPlace(
   hints: PlaceHints,
   ctx: ToolContext,
   signal: AbortSignal,
+  withPhotos: boolean,
 ): Promise<ToolOutcome> {
   let collected: PlaceCandidate[] = [];
   let lastError = "";
@@ -627,36 +702,32 @@ async function runSpecificPlace(
 
   let about = "";
   let photos: PhotoItem[] = [];
+  let displayItem: PlaceItem = chosen.item;
 
   if (chosen.wikipedia) {
-    const [summary, gallery] = await Promise.all([
-      fetchWikipediaSummary(chosen.wikipedia, signal),
-      fetchWikipediaPhotos(chosen.wikipedia, signal),
-    ]);
-
-    about = summary;
-    photos = gallery;
-  }
-
-  let webContext: Array<{ readonly source: string; readonly snippet: string }> =
-    [];
-
-  if (!about && ctx.tavilyKey && !pick.ambiguous) {
-    const found = await tavilySearch(
-      `${chosen.item.name} ${chosen.item.address}`.trim(),
-      ctx.tavilyKey,
-      3,
+    const info = await loadWikipediaInfo(
+      chosen.wikipedia,
+      ctx,
       signal,
+      withPhotos && !pick.ambiguous,
     );
 
-    webContext = (found ?? []).map((result) => ({
-      source: result.source,
-      snippet: result.snippet.slice(0, 200),
-    }));
+    about = info.about;
+    photos = info.photos;
+
+    if (info.localName && !pick.ambiguous) {
+      displayItem = { ...chosen.item, name: info.localName.slice(0, 80) };
+    }
   }
 
   const cards: CardPayload[] = [
-    { t: "places", lang: ctx.lang, items: group.map((entry) => entry.item) },
+    {
+      t: "places",
+      lang: ctx.lang,
+      items: group.map((entry) =>
+        entry === chosen ? displayItem : entry.item,
+      ),
+    },
   ];
 
   if (photos.length > 0 && !pick.ambiguous) {
@@ -665,13 +736,13 @@ async function runSpecificPlace(
 
   const finalText = pick.ambiguous
     ? buildAmbiguousAnswer(ctx, group)
-    : buildPlaceAnswer(ctx, chosen.item, about);
+    : buildPlaceAnswer(ctx, displayItem, about);
 
   return {
     data: {
       place: {
-        name: chosen.item.name,
-        region: chosen.item.address,
+        name: displayItem.name,
+        region: displayItem.address,
         category: chosen.category,
         lat: chosen.item.lat,
         lon: chosen.item.lon,
@@ -680,7 +751,6 @@ async function runSpecificPlace(
         about,
         about_source: about ? "wikipedia" : "",
       },
-      web_context: webContext,
       ambiguous: pick.ambiguous,
       shown: group.map((entry) => entry.item.address),
     },
@@ -690,11 +760,78 @@ async function runSpecificPlace(
   };
 }
 
+// Several places in one call: each place gets its card followed by its own
+// answer, in the order asked. The cards are written into the text so the
+// order is kept. Photo galleries are left out to keep the screen tidy.
+async function runManyPlaces(
+  requests: readonly PlaceRequest[],
+  ctx: ToolContext,
+  signal: AbortSignal,
+): Promise<ToolOutcome> {
+  const limited = requests.slice(0, MAX_TOOL_CALLS_PER_ROUND);
+  const dropped = requests.length - limited.length;
+
+  const outcomes = await Promise.all(
+    limited.map((request) =>
+      runSpecificPlace(request.query, request.hints, ctx, signal, false),
+    ),
+  );
+
+  const parts: string[] = [];
+  const summary: Array<{ readonly query: string; readonly found: boolean }> =
+    [];
+
+  limited.forEach((request, index) => {
+    const outcome = outcomes[index];
+
+    if (!outcome) {
+      return;
+    }
+
+    const cards = outcome.cards ?? [];
+    const markers = cards.map((card) => encodeCard(card));
+    const text = (outcome.finalText ?? "").trim();
+    const block = [...markers, text].filter(Boolean).join("\n\n");
+
+    if (block) {
+      parts.push(block);
+    }
+
+    summary.push({ query: request.query, found: cards.length > 0 });
+  });
+
+  if (dropped > 0) {
+    parts.push(
+      ctx.lang === "fa"
+        ? `فقط ${MAX_TOOL_CALLS_PER_ROUND.toLocaleString("fa-IR")} مکان اول را جواب دادم؛ بقیه را در پیام بعدی بپرس.`
+        : `I answered the first ${MAX_TOOL_CALLS_PER_ROUND} places; ask about the rest in your next message.`,
+    );
+  }
+
+  return {
+    data: { places: summary },
+    finalText: parts.join("\n\n"),
+  };
+}
+
 export async function runFindPlace(
   args: Record<string, unknown>,
   ctx: ToolContext,
   signal: AbortSignal,
 ): Promise<ToolOutcome> {
+  if (args.intent !== "nearby_search") {
+    const requests = readPlaceRequests(args);
+    const only = requests[0];
+
+    if (requests.length > 1) {
+      return await runManyPlaces(requests, ctx, signal);
+    }
+
+    if (requests.length === 1 && only) {
+      return await runSpecificPlace(only.query, only.hints, ctx, signal, true);
+    }
+  }
+
   const query =
     typeof args.query === "string" ? args.query.trim().slice(0, 200) : "";
 
@@ -704,5 +841,5 @@ export async function runFindPlace(
 
   return args.intent === "nearby_search"
     ? await runNearbySearch(query, ctx, signal)
-    : await runSpecificPlace(query, readHints(args), ctx, signal);
+    : await runSpecificPlace(query, readHints(args), ctx, signal, true);
 }
