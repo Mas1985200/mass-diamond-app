@@ -38,43 +38,79 @@ export const FIND_PLACE_TOOL: ToolDefinition = {
   function: {
     name: "find_place",
     description:
-      "Look up a place on the map. Use it ONLY when the user names a specific place or address to locate, or asks for nearby places of a category (near-me). Never use it for questions about the conversation itself, such as 'where were we' or 'کجا بودیم' (these mean 'what were we talking about'); answer those from the conversation history instead. The app shows the map card first. If the user asks about SEVERAL places in one message (for example one per line, or joined with 'و' or commas), call this tool ONCE FOR EACH place, all together in the same turn (up to 8 calls), each with its own query and intent. Never look up only the first place, and never promise to look at the others later. Write no text before the calls; the app writes every answer itself. For a specific place, first use your own knowledge to work out exactly which place the user means, then fill in country_code, local_name and approx_lat/approx_lon whenever you are sure of them; the app uses them to find and verify the right place on the map.",
+      "Look up a place on the map. Use it ONLY when the user names a specific place or address to locate, or asks for nearby places of a category (near-me). Never use it for questions about the conversation itself, such as 'where were we' or 'کجا بودیم' (these mean 'what were we talking about'); answer those from the conversation history instead. The app shows the map card first. If the user asks about SEVERAL places in one message (for example one per line, or joined with 'و' or commas), make exactly ONE call with intent specific_place and put every place in the places list, in the order asked (up to 8). Never look up only the first place and never promise to look at the others later. Write no text before the call; the app writes every answer itself. For a specific place, first use your own knowledge to work out exactly which place the user means, then fill in country_code, local_name and approx_lat/approx_lon whenever you are sure of them; the app uses them to find and verify the right place on the map.",
     parameters: {
       type: "object",
       properties: {
         query: {
           type: "string",
           description:
-            "specific_place: the full, well-known name of the place together with its type and its city or country, in the user's language, with any spelling mistakes corrected. If the user gives only a short or ambiguous name and no region, choose the most famous place in the world that has that name and write its type and city or country, for example 'Lake Chitgar, Tehran, Iran' instead of just 'Chitgar'. Never add details you are unsure of. nearby_search: English category word (pharmacy, restaurant).",
+            "ONE place only. specific_place: the full, well-known name of the place together with its type and its city or country, in the user's language, with any spelling mistakes corrected. If the user gives only a short or ambiguous name and no region, choose the most famous place in the world that has that name and write its type and city or country, for example 'Lake Chitgar, Tehran, Iran' instead of just 'Chitgar'. Never add details you are unsure of. nearby_search: English category word (pharmacy, restaurant).",
         },
         intent: {
           type: "string",
           enum: ["specific_place", "nearby_search"],
           description:
-            "specific_place for one named place or address; nearby_search for near-me category questions.",
+            "specific_place for one or several named places or addresses; nearby_search for near-me category questions.",
         },
         country_code: {
           type: "string",
           description:
-            "specific_place only. Two-letter ISO 3166-1 code of the country where the place is, in lowercase (for example ir, kz, cn, ae). Give it only when you are sure.",
+            "ONE specific place only. Two-letter ISO 3166-1 code of the country where the place is, in lowercase (for example ir, kz, cn, ae). Give it only when you are sure.",
         },
         local_name: {
           type: "string",
           description:
-            "specific_place only. The place's official name in the local language and script of its country (for example Chinese characters for a place in China, Cyrillic for Kazakhstan). Give it only when it differs from the name in the user's language and you are sure of it.",
+            "ONE specific place only. The place's official name in the local language and script of its country (for example Chinese characters for a place in China, Cyrillic for Kazakhstan). Give it only when it differs from the name in the user's language and you are sure of it.",
         },
         approx_lat: {
           type: "number",
           description:
-            "specific_place only. Approximate latitude of the place in decimal degrees, from your own knowledge. Give it only for well-known places when you are fairly sure it is within about 20 km. Never guess.",
+            "ONE specific place only. Approximate latitude of the place in decimal degrees, from your own knowledge. Give it only for well-known places when you are fairly sure it is within about 20 km. Never guess.",
         },
         approx_lon: {
           type: "number",
           description:
-            "specific_place only. Approximate longitude of the place in decimal degrees, from your own knowledge. Give it only together with approx_lat and under the same condition.",
+            "ONE specific place only. Approximate longitude of the place in decimal degrees, from your own knowledge. Give it only together with approx_lat and under the same condition.",
+        },
+        places: {
+          type: "array",
+          description:
+            "SEVERAL specific places in one message: every place the user asked about, in the order asked, up to 8. Each item has the same fields as a single place. When this list is given, the single-place fields above are not used.",
+          items: {
+            type: "object",
+            properties: {
+              query: {
+                type: "string",
+                description:
+                  "The full, well-known name of this place together with its type and its city or country, in the user's language, with spelling mistakes corrected.",
+              },
+              country_code: {
+                type: "string",
+                description:
+                  "Two-letter ISO 3166-1 code of the country where this place is, in lowercase. Give it only when you are sure.",
+              },
+              local_name: {
+                type: "string",
+                description:
+                  "This place's official name in the local language and script of its country. Give it only when it differs from the name in the user's language and you are sure of it.",
+              },
+              approx_lat: {
+                type: "number",
+                description:
+                  "Approximate latitude of this place in decimal degrees, from your own knowledge, only when you are fairly sure it is within about 20 km. Never guess.",
+              },
+              approx_lon: {
+                type: "number",
+                description:
+                  "Approximate longitude of this place in decimal degrees, only together with approx_lat and under the same condition.",
+              },
+            },
+            required: ["query"],
+          },
         },
       },
-      required: ["query", "intent"],
+      required: ["intent"],
     },
   },
 };
