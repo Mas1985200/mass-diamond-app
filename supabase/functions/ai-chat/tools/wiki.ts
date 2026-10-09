@@ -16,12 +16,18 @@ const PHOTO_SKIP_PATTERN =
 
 const WIKI_PLACE_MAX_RESULTS = 3;
 const WIKI_SEARCH_MAX_CHARS = 200;
+const WIKI_LANG_PATTERN = /^[a-z]{2,3}(?:-[a-z]{2,8})?$/;
 
 export type WikiPlaceHit = {
   readonly title: string;
   readonly lat: number;
   readonly lon: number;
   readonly tag: string;
+};
+
+export type LocalizedArticle = {
+  readonly tag: string;
+  readonly title: string;
 };
 
 function parseWikiTag(
@@ -175,7 +181,7 @@ export async function searchWikipediaPlaces(
 ): Promise<WikiPlaceHit[]> {
   const text = searchText.trim().slice(0, WIKI_SEARCH_MAX_CHARS);
 
-  if (!text || !/^[a-z]{2,3}(?:-[a-z]{2,8})?$/i.test(lang)) {
+  if (!text || !WIKI_LANG_PATTERN.test(lang)) {
     return [];
   }
 
@@ -257,6 +263,86 @@ export async function searchWikipediaPlaces(
     console.error(`wikipedia place search failed: ${describeError(error)}`);
 
     return [];
+  } finally {
+    timed.clearConnectTimer();
+  }
+}
+
+// Finds the same Wikipedia article in the given language, for example the
+// Persian article of a place whose map tag points to the English one. Returns
+// null when no article exists in that language.
+export async function findLocalizedArticle(
+  tag: string,
+  lang: string,
+  master: AbortSignal,
+): Promise<LocalizedArticle | null> {
+  const parsed = parseWikiTag(tag);
+  const target = lang.toLowerCase();
+
+  if (!parsed || !WIKI_LANG_PATTERN.test(target)) {
+    return null;
+  }
+
+  const sourceTitle = parsed.title.replace(/_/g, " ");
+
+  if (parsed.lang === target) {
+    return { tag: `${target}:${sourceTitle}`, title: sourceTitle };
+  }
+
+  const params = new URLSearchParams({
+    action: "query",
+    format: "json",
+    formatversion: "2",
+    prop: "langlinks",
+    titles: sourceTitle,
+    lllang: target,
+    lllimit: "1",
+    redirects: "1",
+  });
+
+  const timed = createAttempt(master, WIKI_TIMEOUT_MS);
+
+  try {
+    const response = await fetch(
+      `https://${parsed.lang}.wikipedia.org/w/api.php?${params.toString()}`,
+      {
+        headers: {
+          "User-Agent": NOMINATIM_USER_AGENT,
+          Accept: "application/json",
+        },
+        signal: timed.signal,
+      },
+    );
+
+    if (!response.ok) {
+      return null;
+    }
+
+    const json: unknown = await response.json();
+    const queryBlock =
+      isRecord(json) && isRecord(json.query) ? json.query : null;
+    const pages =
+      queryBlock && Array.isArray(queryBlock.pages) ? queryBlock.pages : [];
+    const page: unknown = pages[0];
+
+    if (!isRecord(page)) {
+      return null;
+    }
+
+    const links = Array.isArray(page.langlinks) ? page.langlinks : [];
+    const link: unknown = links[0];
+
+    if (!isRecord(link)) {
+      return null;
+    }
+
+    const title = pickString(link, "title");
+
+    return title ? { tag: `${target}:${title}`, title } : null;
+  } catch (error) {
+    console.error(`wikipedia language link failed: ${describeError(error)}`);
+
+    return null;
   } finally {
     timed.clearConnectTimer();
   }
