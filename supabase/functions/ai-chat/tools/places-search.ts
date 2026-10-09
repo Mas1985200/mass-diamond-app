@@ -6,7 +6,10 @@ import type { PlaceCandidate, PlaceItem, ToolContext } from "../types.ts";
 import { isRecord, isValidGeo, pickString, round5 } from "../lib/util.ts";
 import { createAttempt } from "../lib/http.ts";
 import { haversineKm } from "../lib/geo.ts";
-import { waitForNominatimSlot } from "./nominatim-gate.ts";
+import {
+  reportNominatimStatus,
+  waitForNominatimSlot,
+} from "./nominatim-gate.ts";
 
 export type NominatimOptions = {
   readonly limit: number;
@@ -15,6 +18,13 @@ export type NominatimOptions = {
     readonly bounded: boolean;
   } | null;
   // Two-letter ISO country code; when given, only that country is searched.
+  readonly countryCode?: string;
+};
+
+export type PhotonOptions = {
+  // Results are pulled towards this point (the place the model had in mind).
+  readonly bias?: { readonly lat: number; readonly lon: number };
+  // Two-letter ISO country code, used as a soft filter.
   readonly countryCode?: string;
 };
 
@@ -111,7 +121,8 @@ export async function searchNominatim(
   }
 
   // Wait for our turn first, so the request timer below only counts the
-  // request itself and not the time spent in the queue.
+  // request itself and not the time spent in the queue. This throws at once
+  // while the service is being skipped because it refused our requests.
   await waitForNominatimSlot(master);
 
   const timed = createAttempt(master, TOOL_TIMEOUT_MS);
@@ -127,6 +138,8 @@ export async function searchNominatim(
         signal: timed.signal,
       },
     );
+
+    reportNominatimStatus(response.status);
 
     if (!response.ok) {
       throw new Error(`Nominatim failed with status ${response.status}.`);
@@ -214,10 +227,14 @@ export async function searchPhoton(
   ctx: ToolContext,
   master: AbortSignal,
   useBias: boolean,
+  options: PhotonOptions = {},
 ): Promise<PlaceCandidate[]> {
   const params = new URLSearchParams({ q: query, limit: "8" });
 
-  if (useBias && ctx.location) {
+  if (options.bias) {
+    params.set("lat", String(options.bias.lat));
+    params.set("lon", String(options.bias.lon));
+  } else if (useBias && ctx.location) {
     params.set("lat", String(ctx.location.lat));
     params.set("lon", String(ctx.location.lon));
   }
@@ -245,6 +262,7 @@ export async function searchPhoton(
       isRecord(json) && Array.isArray(json.features) ? json.features : [];
 
     const candidates: PlaceCandidate[] = [];
+    const countries: string[] = [];
 
     for (const feature of features) {
       if (
@@ -303,6 +321,16 @@ export async function searchPhoton(
         wikipedia: "",
         importance: 0,
       });
+
+      countries.push(pickString(props, "countrycode").toLowerCase());
+    }
+
+    // Soft country filter: only applied when at least one result is from the
+    // wanted country, so a wrong country code never removes everything.
+    const wanted = options.countryCode?.trim().toLowerCase() ?? "";
+
+    if (/^[a-z]{2}$/.test(wanted) && countries.includes(wanted)) {
+      return candidates.filter((_, index) => countries[index] === wanted);
     }
 
     return candidates;
