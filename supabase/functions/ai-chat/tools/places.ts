@@ -2,14 +2,16 @@
 // find_place tool: specific places and near-me search.
 // For a specific place the server writes the short answer itself from the
 // map and Wikipedia data, so the model cannot add invented details.
-// The model says which place it means (country, local name, approximate
-// coordinates from its own knowledge); the server only verifies it on the map.
-// Several places can be asked in one call (the "places" list); each gets its
-// own card and answer, in order.
-// Names and summaries always come in the user's language; when no article
-// exists in that language the summary is left out instead of showing a
-// foreign language. When nothing is found the server writes a fixed "not
-// found" sentence, so the model never invents an answer.
+// The model says which place it means (names in several languages, country,
+// approximate coordinates from its own knowledge); the server only verifies it:
+// a result is trusted when it lies near the model's coordinates, or when
+// Wikipedia confirms it. When the main map service refuses our requests the
+// lookup moves to Photon. Several places can be asked in one call (the
+// "places" list); each gets its own card and answer, in order.
+// Names and summaries come in the user's language; when no article exists in
+// that language the summary is left out instead of showing a foreign language.
+// When nothing is found the server writes a fixed "not found" sentence, so the
+// model never invents an answer.
 
 import { MAX_TOOL_CALLS_PER_ROUND } from "../config.ts";
 import { encodeCard } from "../cards/codec.ts";
@@ -21,7 +23,7 @@ import type {
   ToolContext,
   ToolOutcome,
 } from "../types.ts";
-import { describeError, isRecord } from "../lib/util.ts";
+import { describeError, isRecord, round5 } from "../lib/util.ts";
 import { distanceBetween, normalizePlaceName } from "../lib/geo.ts";
 import {
   searchNominatim,
@@ -32,24 +34,33 @@ import {
   fetchWikipediaPhotos,
   fetchWikipediaSummary,
   findLocalizedArticle,
+  searchWikipediaPlaces,
+  type WikiPlaceHit,
 } from "./wiki.ts";
-import { resolveViaWikipedia } from "./places-wiki.ts";
+import { isNominatimBlocked } from "./nominatim-gate.ts";
 
 const ABOUT_MAX_CHARS = 400;
 const AMBIGUOUS_IMPORTANCE = 0.55;
 const MAX_SAME_NAME = 3;
 const WIKI_FALLBACK_LANG = "en";
 
-// Hints from the model: results within this distance of its approximate
-// coordinates are preferred, but they are never the marker position itself.
+// Hints from the model: results near its approximate coordinates are
+// preferred, but those coordinates are never the marker position themselves.
 const APPROX_RADIUS_KM = 60;
+const NEAR_MODEL_KM = 25;
+const SHOW_UNTRUSTED_KM = 30;
+const ADDRESS_SEARCH_KM = 30;
 const HINT_MIN_IMPORTANCE = 0.3;
 const WIKI_TAG_BONUS = 0.15;
+const WIKI_RESOLVED_IMPORTANCE = 0.6;
+const WIKI_ONLY_ZOOM = 14;
 const EARTH_RADIUS_KM = 6371;
 
 type PlaceHints = {
   readonly countryCode?: string;
   readonly localName?: string;
+  readonly displayName?: string;
+  readonly region?: string;
   readonly approx?: { readonly lat: number; readonly lon: number };
 };
 
@@ -106,6 +117,12 @@ function readHints(args: Record<string, unknown>): PlaceHints {
     typeof args.local_name === "string"
       ? args.local_name.trim().slice(0, 120)
       : "";
+  const display =
+    typeof args.display_name === "string"
+      ? args.display_name.trim().slice(0, 80)
+      : "";
+  const region =
+    typeof args.region === "string" ? args.region.trim().slice(0, 120) : "";
   const lat = toCoordinate(args.approx_lat);
   const lon = toCoordinate(args.approx_lon);
 
@@ -119,6 +136,8 @@ function readHints(args: Record<string, unknown>): PlaceHints {
   return {
     ...(/^[a-z]{2}$/.test(code) ? { countryCode: code } : {}),
     ...(local ? { localName: local } : {}),
+    ...(display ? { displayName: display } : {}),
+    ...(region ? { region } : {}),
     ...(hasApprox ? { approx: { lat, lon } } : {}),
   };
 }
@@ -152,6 +171,94 @@ function readPlaceRequests(args: Record<string, unknown>): PlaceRequest[] {
   }
 
   return requests;
+}
+
+// Photon gives no importance. This turns the kind of map object (OpenStreetMap
+// key and value, the same in every country) into a rough importance, so a
+// landmark is preferred over a hotel or a shop that merely contains its name.
+function categoryImportance(category: string): number {
+  const slash = category.indexOf("/");
+  const key = slash >= 0 ? category.slice(0, slash) : category;
+  const value = slash >= 0 ? category.slice(slash + 1) : "";
+
+  switch (key) {
+    case "tourism":
+      return [
+        "hotel",
+        "guest_house",
+        "hostel",
+        "motel",
+        "apartment",
+        "chalet",
+        "camp_site",
+        "caravan_site",
+      ].includes(value)
+        ? 0.1
+        : 0.6;
+    case "historic":
+    case "natural":
+    case "place":
+    case "waterway":
+    case "aeroway":
+      return 0.6;
+    case "leisure":
+      return ["park", "nature_reserve", "stadium", "garden"].includes(value)
+        ? 0.5
+        : 0.2;
+    case "amenity":
+      if (
+        ["place_of_worship", "marketplace", "theatre", "townhall", "library", "university", "arts_centre"].includes(value)
+      ) {
+        return 0.5;
+      }
+
+      return [
+        "restaurant",
+        "cafe",
+        "fast_food",
+        "bar",
+        "pub",
+        "bank",
+        "atm",
+        "pharmacy",
+        "parking",
+        "fuel",
+        "clinic",
+        "dentist",
+        "kindergarten",
+      ].includes(value)
+        ? 0.1
+        : 0.25;
+    case "man_made":
+      return ["tower", "lighthouse", "bridge", "pier", "obelisk"].includes(value)
+        ? 0.5
+        : 0.2;
+    case "building":
+      return [
+        "cathedral",
+        "mosque",
+        "temple",
+        "church",
+        "castle",
+        "palace",
+        "stadium",
+        "train_station",
+        "synagogue",
+        "shrine",
+      ].includes(value)
+        ? 0.5
+        : 0.2;
+    case "shop":
+      return ["mall", "department_store"].includes(value) ? 0.4 : 0.15;
+    default:
+      return 0.3;
+  }
+}
+
+function withCategoryImportance(candidate: PlaceCandidate): PlaceCandidate {
+  return candidate.importance > 0 || !candidate.category
+    ? candidate
+    : { ...candidate, importance: categoryImportance(candidate.category) };
 }
 
 function distinctLocations(list: readonly PlaceCandidate[]): PlaceCandidate[] {
@@ -250,7 +357,7 @@ function isTrusted(candidate: PlaceCandidate, hints: PlaceHints): boolean {
     approx !== undefined &&
     candidate.importance >= HINT_MIN_IMPORTANCE &&
     kmApart(candidate.item.lat, candidate.item.lon, approx.lat, approx.lon) <=
-      APPROX_RADIUS_KM
+      NEAR_MODEL_KM
   );
 }
 
@@ -416,14 +523,8 @@ function nameTokens(text: string): string[] {
     .filter((token) => token.length >= 2);
 }
 
-function wikiTitleOf(tag: string): string {
-  const colon = tag.indexOf(":");
-
-  return (colon >= 0 ? tag.slice(colon + 1) : tag).replace(/_/g, " ");
-}
-
-// Guards against accepting an unrelated Wikipedia page: more than half of the
-// words of the asked name must appear in the page title.
+// Used only when the model gave no coordinates: more than half of the words of
+// the asked name must appear in the Wikipedia page title.
 function relatesToName(title: string, name: string): boolean {
   const wanted = nameTokens(name);
 
@@ -442,31 +543,94 @@ function relatesToName(title: string, name: string): boolean {
   return matched.length * 2 > wanted.length;
 }
 
-// Asks Wikipedia which place a weakly matched name most likely means, first in
-// the user's language and then in English. Returns null when nothing relevant
-// is found, so the normal map result is used instead.
+function uniqueTexts(values: readonly string[]): string[] {
+  const unique: string[] = [];
+
+  for (const value of values) {
+    const text = value.trim();
+
+    if (text && !unique.includes(text)) {
+      unique.push(text);
+    }
+  }
+
+  return unique;
+}
+
+// Turns a Wikipedia page into a map candidate using the page's own
+// coordinates, which are exact for notable places.
+function wikiCandidate(hit: WikiPlaceHit, ctx: ToolContext): PlaceCandidate {
+  const km = ctx.location
+    ? Math.round(
+        kmApart(ctx.location.lat, ctx.location.lon, hit.lat, hit.lon) * 10,
+      ) / 10
+    : undefined;
+
+  return {
+    item: {
+      name: hit.title.slice(0, 80),
+      address: "",
+      lat: round5(hit.lat),
+      lon: round5(hit.lon),
+      ...(km !== undefined ? { km } : {}),
+      zoom: WIKI_ONLY_ZOOM,
+    },
+    category: "wikipedia",
+    facts: {},
+    wikipedia: hit.tag,
+    importance: WIKI_RESOLVED_IMPORTANCE,
+  };
+}
+
+// With coordinates from the model, the first Wikipedia page near them is the
+// place; without them the page title must relate to the asked name.
+function pickWikiHit(
+  hits: readonly WikiPlaceHit[],
+  name: string,
+  hints: PlaceHints,
+): WikiPlaceHit | null {
+  const approx = hints.approx;
+
+  if (approx) {
+    return (
+      hits.find(
+        (hit) =>
+          kmApart(hit.lat, hit.lon, approx.lat, approx.lon) <=
+          APPROX_RADIUS_KM,
+      ) ?? null
+    );
+  }
+
+  return hits.find((hit) => relatesToName(hit.title, name)) ?? null;
+}
+
+// Asks Wikipedia which place a weakly matched name most likely means, with the
+// name in the user's language, the local language and English.
 async function resolveWeakMatch(
   query: string,
+  hints: PlaceHints,
   ctx: ToolContext,
   signal: AbortSignal,
 ): Promise<PlaceCandidate | null> {
   const name = placeNameOf(query);
-  const contexts: ToolContext[] =
-    ctx.lang === WIKI_FALLBACK_LANG
-      ? [ctx]
-      : [ctx, { ...ctx, lang: WIKI_FALLBACK_LANG }];
+  const texts = uniqueTexts([name, hints.localName ?? ""]);
+  const languages =
+    ctx.lang === WIKI_FALLBACK_LANG ? [ctx.lang] : [ctx.lang, WIKI_FALLBACK_LANG];
 
-  for (const context of contexts) {
-    try {
-      const resolved = await resolveViaWikipedia(name, context, signal);
+  for (const lang of languages) {
+    for (const text of texts) {
+      try {
+        const hits = await searchWikipediaPlaces(text, lang, signal);
+        const hit = pickWikiHit(hits, name, hints);
 
-      if (resolved && relatesToName(wikiTitleOf(resolved.wikipedia), name)) {
-        return resolved;
+        if (hit) {
+          return wikiCandidate(hit, ctx);
+        }
+      } catch (error) {
+        console.error(
+          `find_place wikipedia resolve failed: ${describeError(error)}`,
+        );
       }
-    } catch (error) {
-      console.error(
-        `find_place wikipedia resolve failed: ${describeError(error)}`,
-      );
     }
   }
 
@@ -496,18 +660,59 @@ async function loadWikipediaInfo(
   return { about, localName: localized?.title ?? "", photos };
 }
 
-function uniqueTexts(values: readonly string[]): string[] {
-  const unique: string[] = [];
+function isInUserLanguage(text: string, lang: string): boolean {
+  return lang === "fa" ? /[\u0600-\u06FF]/.test(text) : /[A-Za-z]/.test(text);
+}
 
-  for (const value of values) {
-    const text = value.trim();
+// The address line of the card: the map's own address when it is in the user's
+// language, otherwise the region the model gave in that language, otherwise
+// whatever the map has, otherwise a nearby map object's address.
+async function addressFor(
+  candidate: PlaceCandidate,
+  hints: PlaceHints,
+  ctx: ToolContext,
+  signal: AbortSignal,
+): Promise<string> {
+  const existing = candidate.item.address.trim();
 
-    if (text && !unique.includes(text)) {
-      unique.push(text);
-    }
+  if (existing && isInUserLanguage(existing, ctx.lang)) {
+    return existing;
   }
 
-  return unique;
+  if (hints.region) {
+    return hints.region;
+  }
+
+  if (existing) {
+    return existing;
+  }
+
+  try {
+    const found = await searchPhoton(
+      candidate.item.name,
+      ctx,
+      signal,
+      false,
+      { bias: { lat: candidate.item.lat, lon: candidate.item.lon } },
+    );
+
+    const near = found.find(
+      (entry) =>
+        entry.item.address.length > 0 &&
+        kmApart(
+          entry.item.lat,
+          entry.item.lon,
+          candidate.item.lat,
+          candidate.item.lon,
+        ) <= ADDRESS_SEARCH_KM,
+    );
+
+    return near?.item.address ?? "";
+  } catch (error) {
+    console.error(`find_place address lookup failed: ${describeError(error)}`);
+
+    return "";
+  }
 }
 
 // Searches to try, most specific first. When a country code is known every
@@ -529,6 +734,49 @@ function buildAttempts(query: string, hints: PlaceHints): Attempt[] {
   }
 
   return attempts;
+}
+
+// One search: the main map service while it accepts our requests, otherwise
+// Photon (pulled towards the model's coordinates).
+async function lookupText(
+  text: string,
+  countryCode: string | undefined,
+  hints: PlaceHints,
+  ctx: ToolContext,
+  signal: AbortSignal,
+  errors: string[],
+): Promise<PlaceCandidate[]> {
+  if (!isNominatimBlocked()) {
+    try {
+      return await searchNominatim(
+        text,
+        ctx,
+        {
+          limit: 8,
+          viewbox: null,
+          ...(countryCode ? { countryCode } : {}),
+        },
+        signal,
+      );
+    } catch (error) {
+      errors.push(describeError(error));
+      console.error(`find_place nominatim failed: ${describeError(error)}`);
+    }
+  }
+
+  try {
+    const found = await searchPhoton(text, ctx, signal, false, {
+      ...(hints.approx ? { bias: hints.approx } : {}),
+      ...(countryCode ? { countryCode } : {}),
+    });
+
+    return found.map(withCategoryImportance);
+  } catch (error) {
+    errors.push(describeError(error));
+    console.error(`find_place photon failed: ${describeError(error)}`);
+
+    return [];
+  }
 }
 
 function notFoundOutcome(ctx: ToolContext, query: string): ToolOutcome {
@@ -622,27 +870,20 @@ async function runSpecificPlace(
   signal: AbortSignal,
   withPhotos: boolean,
 ): Promise<ToolOutcome> {
+  const errors: string[] = [];
   let collected: PlaceCandidate[] = [];
-  let lastError = "";
 
   for (const attempt of buildAttempts(query, hints)) {
-    try {
-      const found = await searchNominatim(
-        attempt.text,
-        ctx,
-        {
-          limit: 8,
-          viewbox: null,
-          ...(attempt.countryCode ? { countryCode: attempt.countryCode } : {}),
-        },
-        signal,
-      );
+    const found = await lookupText(
+      attempt.text,
+      attempt.countryCode,
+      hints,
+      ctx,
+      signal,
+      errors,
+    );
 
-      collected = collected.concat(found);
-    } catch (error) {
-      lastError = describeError(error);
-      console.error(`find_place nominatim failed: ${lastError}`);
-    }
+    collected = collected.concat(found);
 
     const best = chooseCandidates(collected, hints)[0];
 
@@ -653,10 +894,14 @@ async function runSpecificPlace(
 
   if (collected.length === 0) {
     try {
-      collected = await searchPhoton(query, ctx, signal, false);
+      const found = await searchPhoton(query, ctx, signal, false, {
+        ...(hints.approx ? { bias: hints.approx } : {}),
+      });
+
+      collected = found.map(withCategoryImportance);
     } catch (error) {
-      lastError = describeError(error);
-      console.error(`find_place photon failed: ${lastError}`);
+      errors.push(describeError(error));
+      console.error(`find_place photon failed: ${describeError(error)}`);
     }
   }
 
@@ -665,7 +910,7 @@ async function runSpecificPlace(
 
   // No trustworthy map match: let Wikipedia decide which place is meant.
   if (!top || !isTrusted(top, hints)) {
-    const resolved = await resolveWeakMatch(query, ctx, signal);
+    const resolved = await resolveWeakMatch(query, hints, ctx, signal);
 
     if (resolved) {
       ranked = [resolved, ...ranked];
@@ -674,13 +919,28 @@ async function runSpecificPlace(
   }
 
   if (!top) {
-    return lastError
-      ? mapDownOutcome(ctx, lastError)
+    return errors.length > 0
+      ? mapDownOutcome(ctx, errors[errors.length - 1] ?? "")
       : notFoundOutcome(ctx, query);
   }
 
+  // The model said where the place is, and the best result is neither trusted
+  // nor near that point: a wrong pin is worse than saying it was not found.
+  if (
+    hints.approx &&
+    !isTrusted(top, hints) &&
+    kmApart(
+      top.item.lat,
+      top.item.lon,
+      hints.approx.lat,
+      hints.approx.lon,
+    ) > SHOW_UNTRUSTED_KM
+  ) {
+    return notFoundOutcome(ctx, query);
+  }
+
   console.log(
-    `find_place "${query}" -> ${top.item.name} (${top.item.lat}, ${top.item.lon}) importance ${top.importance.toFixed(2)} hints ${JSON.stringify(hints)}`,
+    `find_place "${query}" -> ${top.item.name} (${top.item.lat}, ${top.item.lon}) importance ${top.importance.toFixed(2)} trusted ${isTrusted(top, hints)} nominatimBlocked ${isNominatimBlocked()} hints ${JSON.stringify(hints)}`,
   );
 
   // When the model has said exactly which place it means, show that single
@@ -704,20 +964,36 @@ async function runSpecificPlace(
   let photos: PhotoItem[] = [];
   let displayItem: PlaceItem = chosen.item;
 
-  if (chosen.wikipedia) {
-    const info = await loadWikipediaInfo(
-      chosen.wikipedia,
-      ctx,
-      signal,
-      withPhotos && !pick.ambiguous,
-    );
+  if (!pick.ambiguous) {
+    let shownName = chosen.item.name;
 
-    about = info.about;
-    photos = info.photos;
+    if (chosen.wikipedia) {
+      const info = await loadWikipediaInfo(
+        chosen.wikipedia,
+        ctx,
+        signal,
+        withPhotos,
+      );
 
-    if (info.localName && !pick.ambiguous) {
-      displayItem = { ...chosen.item, name: info.localName.slice(0, 80) };
+      about = info.about;
+      photos = info.photos;
+
+      if (info.localName) {
+        shownName = info.localName;
+      }
     }
+
+    if (shownName === chosen.item.name && hints.displayName) {
+      shownName = hints.displayName;
+    }
+
+    const address = await addressFor(chosen, hints, ctx, signal);
+
+    displayItem = {
+      ...chosen.item,
+      name: shownName.slice(0, 80),
+      address: address.slice(0, 160),
+    };
   }
 
   const cards: CardPayload[] = [
@@ -762,7 +1038,9 @@ async function runSpecificPlace(
 
 // Several places in one call: each place gets its card followed by its own
 // answer, in the order asked. The cards are written into the text so the
-// order is kept. Photo galleries are left out to keep the screen tidy.
+// order is kept. Places are looked up one after another so the map services
+// are not hit all at once. Photo galleries are left out to keep the screen
+// tidy.
 async function runManyPlaces(
   requests: readonly PlaceRequest[],
   ctx: ToolContext,
@@ -771,22 +1049,18 @@ async function runManyPlaces(
   const limited = requests.slice(0, MAX_TOOL_CALLS_PER_ROUND);
   const dropped = requests.length - limited.length;
 
-  const outcomes = await Promise.all(
-    limited.map((request) =>
-      runSpecificPlace(request.query, request.hints, ctx, signal, false),
-    ),
-  );
-
   const parts: string[] = [];
   const summary: Array<{ readonly query: string; readonly found: boolean }> =
     [];
 
-  limited.forEach((request, index) => {
-    const outcome = outcomes[index];
-
-    if (!outcome) {
-      return;
-    }
+  for (const request of limited) {
+    const outcome = await runSpecificPlace(
+      request.query,
+      request.hints,
+      ctx,
+      signal,
+      false,
+    );
 
     const cards = outcome.cards ?? [];
     const markers = cards.map((card) => encodeCard(card));
@@ -798,7 +1072,7 @@ async function runManyPlaces(
     }
 
     summary.push({ query: request.query, found: cards.length > 0 });
-  });
+  }
 
   if (dropped > 0) {
     parts.push(
