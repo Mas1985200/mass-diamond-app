@@ -3,7 +3,13 @@
 
 import { NOMINATIM_USER_AGENT, TOOL_TIMEOUT_MS } from "../config.ts";
 import type { PlaceCandidate, PlaceItem, ToolContext } from "../types.ts";
-import { isRecord, isValidGeo, pickString, round5 } from "../lib/util.ts";
+import {
+  describeError,
+  isRecord,
+  isValidGeo,
+  pickString,
+  round5,
+} from "../lib/util.ts";
 import { createAttempt } from "../lib/http.ts";
 import { haversineKm } from "../lib/geo.ts";
 import {
@@ -26,6 +32,12 @@ export type PhotonOptions = {
   readonly bias?: { readonly lat: number; readonly lon: number };
   // Two-letter ISO country code, used as a soft filter.
   readonly countryCode?: string;
+};
+
+// What lies at a point on the map: its country and a short address.
+export type PointInfo = {
+  readonly countryCode: string;
+  readonly address: string;
 };
 
 const FACT_KEYS: readonly string[] = [
@@ -350,6 +362,78 @@ export async function searchPhoton(
     }
 
     return candidates;
+  } finally {
+    timed.clearConnectTimer();
+  }
+}
+
+// Asks Photon which country and address lie at a point. Used for places whose
+// position comes from Wikipedia, which carries no country. Returns null when
+// nothing is found or the service cannot be reached.
+export async function reversePhoton(
+  lat: number,
+  lon: number,
+  master: AbortSignal,
+): Promise<PointInfo | null> {
+  if (!isValidGeo(lat, lon)) {
+    return null;
+  }
+
+  const params = new URLSearchParams({
+    lat: String(lat),
+    lon: String(lon),
+    limit: "1",
+  });
+
+  const timed = createAttempt(master, TOOL_TIMEOUT_MS);
+
+  try {
+    const response = await fetch(
+      `https://photon.komoot.io/reverse?${params.toString()}`,
+      {
+        headers: {
+          "User-Agent": NOMINATIM_USER_AGENT,
+          Accept: "application/json",
+        },
+        signal: timed.signal,
+      },
+    );
+
+    if (!response.ok) {
+      return null;
+    }
+
+    const json: unknown = await response.json();
+    const features =
+      isRecord(json) && Array.isArray(json.features) ? json.features : [];
+    const first: unknown = features[0];
+
+    if (!isRecord(first) || !isRecord(first.properties)) {
+      return null;
+    }
+
+    const props = first.properties;
+    const countryCode = pickString(props, "countrycode").toLowerCase();
+
+    if (!COUNTRY_CODE_PATTERN.test(countryCode)) {
+      return null;
+    }
+
+    const address = [
+      pickString(props, "city") ||
+        pickString(props, "district") ||
+        pickString(props, "county"),
+      pickString(props, "state"),
+      pickString(props, "country"),
+    ]
+      .filter(Boolean)
+      .join(", ");
+
+    return { countryCode, address };
+  } catch (error) {
+    console.error(`photon reverse lookup failed: ${describeError(error)}`);
+
+    return null;
   } finally {
     timed.clearConnectTimer();
   }
