@@ -6,8 +6,10 @@
 // approximate coordinates from its own knowledge); the server only verifies it:
 // a result is trusted when it lies near the model's coordinates, or when
 // Wikipedia confirms it. When the main map service refuses our requests the
-// lookup moves to Photon. Several places can be asked in one call (the
-// "places" list); each gets its own card and answer, in order.
+// lookup moves to Photon. When the model's own hints turn out to be wrong, the
+// place is looked up again by name alone through Wikipedia. Several places can
+// be asked in one call (the "places" list); each gets its own card and answer,
+// in order.
 // Names and summaries come in the user's language; when no article exists in
 // that language the summary is left out instead of showing a foreign language,
 // and the model's one-line description is used instead. The country on the
@@ -151,6 +153,15 @@ function readHints(args: Record<string, unknown>): PlaceHints {
     ...(region ? { region } : {}),
     ...(description ? { description } : {}),
     ...(hasApprox ? { approx: { lat, lon } } : {}),
+  };
+}
+
+// Keeps only the names. Used when the model's other hints (country,
+// coordinates, region, description) turned out to be unreliable.
+function withoutLocationHints(hints: PlaceHints): PlaceHints {
+  return {
+    ...(hints.localName ? { localName: hints.localName } : {}),
+    ...(hints.displayName ? { displayName: hints.displayName } : {}),
   };
 }
 
@@ -392,6 +403,23 @@ function isTrusted(candidate: PlaceCandidate, hints: PlaceHints): boolean {
   return tagged && candidate.importance >= AMBIGUOUS_IMPORTANCE;
 }
 
+// True when the model gave coordinates and this result is both unconvincing
+// and far from them: showing it would put a wrong pin on the map.
+function isRejected(candidate: PlaceCandidate, hints: PlaceHints): boolean {
+  const approx = hints.approx;
+
+  return (
+    approx !== undefined &&
+    !isTrusted(candidate, hints) &&
+    kmApart(
+      candidate.item.lat,
+      candidate.item.lon,
+      approx.lat,
+      approx.lon,
+    ) > SHOW_UNTRUSTED_KM
+  );
+}
+
 function selectNearby(candidates: readonly PlaceCandidate[]): PlaceItem[] {
   const sorted = candidates
     .slice()
@@ -557,8 +585,9 @@ function nameTokens(text: string): string[] {
     .filter((token) => token.length >= 2);
 }
 
-// Used only when the model gave no coordinates: more than half of the words of
-// the asked name must appear in the Wikipedia page title.
+// Used when no coordinates are available to judge a Wikipedia page: enough
+// words of the searched name must appear in the page title. Names of one or
+// two words need all their words; longer names need half of them.
 function relatesToName(title: string, name: string): boolean {
   const wanted = nameTokens(name);
 
@@ -574,7 +603,10 @@ function relatesToName(title: string, name: string): boolean {
     ),
   );
 
-  return matched.length * 2 > wanted.length;
+  const needed =
+    wanted.length <= 2 ? wanted.length : Math.ceil(wanted.length / 2);
+
+  return matched.length >= needed;
 }
 
 function uniqueTexts(values: readonly string[]): string[] {
@@ -617,10 +649,10 @@ function wikiCandidate(hit: WikiPlaceHit, ctx: ToolContext): PlaceCandidate {
 }
 
 // With coordinates from the model, the first Wikipedia page near them is the
-// place; without them the page title must relate to the asked name.
+// place; without them the page title must relate to the searched text.
 function pickWikiHit(
   hits: readonly WikiPlaceHit[],
-  name: string,
+  searched: string,
   hints: PlaceHints,
 ): WikiPlaceHit | null {
   const approx = hints.approx;
@@ -635,11 +667,12 @@ function pickWikiHit(
     );
   }
 
-  return hits.find((hit) => relatesToName(hit.title, name)) ?? null;
+  return hits.find((hit) => relatesToName(hit.title, searched)) ?? null;
 }
 
-// Asks Wikipedia which place a weakly matched name most likely means, with the
-// name in the user's language, the local language and English.
+// Asks Wikipedia which place a name most likely means. The name is searched
+// first in the user's language (the name written for the user, then the
+// English name, then the local name) and then in English.
 async function resolveWeakMatch(
   query: string,
   hints: PlaceHints,
@@ -647,15 +680,27 @@ async function resolveWeakMatch(
   signal: AbortSignal,
 ): Promise<PlaceCandidate | null> {
   const name = placeNameOf(query);
-  const texts = uniqueTexts([name, hints.localName ?? ""]);
-  const languages =
-    ctx.lang === WIKI_FALLBACK_LANG ? [ctx.lang] : [ctx.lang, WIKI_FALLBACK_LANG];
 
-  for (const lang of languages) {
-    for (const text of texts) {
+  const rounds: Array<{ readonly lang: string; readonly texts: string[] }> = [
+    {
+      lang: ctx.lang,
+      texts: uniqueTexts([
+        hints.displayName ?? "",
+        name,
+        hints.localName ?? "",
+      ]),
+    },
+  ];
+
+  if (ctx.lang !== WIKI_FALLBACK_LANG) {
+    rounds.push({ lang: WIKI_FALLBACK_LANG, texts: uniqueTexts([name]) });
+  }
+
+  for (const round of rounds) {
+    for (const text of round.texts) {
       try {
-        const hits = await searchWikipediaPlaces(text, lang, signal);
-        const hit = pickWikiHit(hits, name, hints);
+        const hits = await searchWikipediaPlaces(text, round.lang, signal);
+        const hit = pickWikiHit(hits, text, hints);
 
         if (hit) {
           return wikiCandidate(hit, ctx);
@@ -727,8 +772,9 @@ function countryNameFor(code: string, lang: string): string {
 // the model's region keeps only its city and province parts and its last part,
 // the country, is replaced. Order of preference: the map's own address when it
 // is in the user's language, the model's region with the verified country, the
-// verified country alone, the map's address in any language, and the address
-// of a nearby map object.
+// verified country alone, the map's address in any language, and finally the
+// address of a nearby map object (its country in the user's language when its
+// address is in another language).
 async function addressFor(
   candidate: PlaceCandidate,
   hints: PlaceHints,
@@ -785,7 +831,18 @@ async function addressFor(
         ) <= ADDRESS_SEARCH_KM,
     );
 
-    return near?.item.address ?? "";
+    if (!near) {
+      return "";
+    }
+
+    if (isInUserLanguage(near.item.address, ctx.lang)) {
+      return near.item.address;
+    }
+
+    return (
+      countryNameFor(near.facts["country_code"] ?? "", ctx.lang) ||
+      near.item.address
+    );
   } catch (error) {
     console.error(`find_place address lookup failed: ${describeError(error)}`);
 
@@ -991,6 +1048,8 @@ async function runSpecificPlace(
 
   let ranked = chooseCandidates(collected, hints);
   let top = ranked[0];
+  let activeHints: PlaceHints = hints;
+  let rescued = false;
 
   // No trustworthy map match: let Wikipedia decide which place is meant.
   if (!top || !isTrusted(top, hints)) {
@@ -999,6 +1058,29 @@ async function runSpecificPlace(
     if (resolved) {
       ranked = [resolved, ...ranked];
       top = resolved;
+    }
+  }
+
+  // Still nothing believable. The model's own hints (country, coordinates)
+  // may be the wrong part, for example when it confuses two places with the
+  // same name. Ask Wikipedia again by name alone and ignore those hints,
+  // together with the region and description the model wrote.
+  const hasLocationHints =
+    hints.approx !== undefined || hints.countryCode !== undefined;
+
+  if (hasLocationHints && (!top || isRejected(top, hints))) {
+    const stripped = withoutLocationHints(hints);
+    const rescue = await resolveWeakMatch(query, stripped, ctx, signal);
+
+    if (rescue) {
+      console.log(
+        `find_place rescued "${query}" by name -> ${rescue.item.name} (${rescue.item.lat}, ${rescue.item.lon}); the model's hints were ${JSON.stringify(hints)}`,
+      );
+
+      ranked = [rescue, ...ranked];
+      top = rescue;
+      activeHints = stripped;
+      rescued = true;
     }
   }
 
@@ -1012,33 +1094,26 @@ async function runSpecificPlace(
       : notFoundOutcome(ctx, query, hints);
   }
 
-  // The model said where the place is, and the best result is neither trusted
-  // nor near that point: a wrong pin is worse than saying it was not found.
-  if (hints.approx && !isTrusted(top, hints)) {
-    const farKm = kmApart(
-      top.item.lat,
-      top.item.lon,
-      hints.approx.lat,
-      hints.approx.lon,
+  // The best result is neither trusted nor near the model's coordinates: a
+  // wrong pin is worse than saying it was not found.
+  if (isRejected(top, activeHints)) {
+    console.log(
+      `find_place rejected "${query}": best result "${top.item.name}" (${top.item.lat}, ${top.item.lon}) is far from the model's coordinates, importance ${top.importance.toFixed(2)}`,
     );
 
-    if (farKm > SHOW_UNTRUSTED_KM) {
-      console.log(
-        `find_place rejected "${query}": best result "${top.item.name}" is ${Math.round(farKm)} km from the model's coordinates, importance ${top.importance.toFixed(2)}`,
-      );
-
-      return notFoundOutcome(ctx, query, hints);
-    }
+    return notFoundOutcome(ctx, query, hints);
   }
 
   console.log(
-    `find_place "${query}" -> ${top.item.name} (${top.item.lat}, ${top.item.lon}) importance ${top.importance.toFixed(2)} trusted ${isTrusted(top, hints)} nominatimBlocked ${isNominatimBlocked()} hints ${JSON.stringify(hints)}`,
+    `find_place "${query}" -> ${top.item.name} (${top.item.lat}, ${top.item.lon}) importance ${top.importance.toFixed(2)} trusted ${isTrusted(top, activeHints)} rescued ${rescued} nominatimBlocked ${isNominatimBlocked()} hints ${JSON.stringify(hints)}`,
   );
 
   // When the model has said exactly which place it means, show that single
   // place; several same-name places are shown only when nothing was specified.
   const hinted =
-    hints.approx !== undefined || hints.countryCode !== undefined;
+    rescued ||
+    activeHints.approx !== undefined ||
+    activeHints.countryCode !== undefined;
 
   const pick: SpecificPick = hinted
     ? { chosen: top, alternatives: [], ambiguous: false }
@@ -1075,11 +1150,11 @@ async function runSpecificPlace(
       }
     }
 
-    if (shownName === chosen.item.name && hints.displayName) {
-      shownName = hints.displayName;
+    if (shownName === chosen.item.name && activeHints.displayName) {
+      shownName = activeHints.displayName;
     }
 
-    const address = await addressFor(chosen, hints, ctx, signal);
+    const address = await addressFor(chosen, activeHints, ctx, signal);
 
     displayItem = {
       ...chosen.item,
@@ -1104,7 +1179,7 @@ async function runSpecificPlace(
 
   const finalText = pick.ambiguous
     ? buildAmbiguousAnswer(ctx, group)
-    : buildPlaceAnswer(ctx, displayItem, about, hints.description ?? "");
+    : buildPlaceAnswer(ctx, displayItem, about, activeHints.description ?? "");
 
   return {
     data: {
