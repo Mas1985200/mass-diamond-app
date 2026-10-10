@@ -38,14 +38,14 @@ export const FIND_PLACE_TOOL: ToolDefinition = {
   function: {
     name: "find_place",
     description:
-      "Look up a place on the map. Use it ONLY when the user names a specific place or address to locate, or asks for nearby places of a category (near-me). Never use it for questions about the conversation itself, such as 'where were we' or 'کجا بودیم' (these mean 'what were we talking about'); answer those from the conversation history instead. The app shows the map card first. If the user asks about SEVERAL places in one message (for example one per line, or joined with 'و' or commas), make exactly ONE call with intent specific_place and put every place in the places list, in the order asked (up to 8). Never look up only the first place and never promise to look at the others later. Write no text before the call; the app writes every answer itself. For a specific place, first use your own knowledge to work out exactly which place the user means, then fill in country_code, local_name and approx_lat/approx_lon whenever you are sure of them; the app uses them to find and verify the right place on the map.",
+      "Look up a place on the map. Use it ONLY when the user names a specific place or address to locate, or asks for nearby places of a category (near-me). Never use it for questions about the conversation itself, such as 'where were we' or 'کجا بودیم' (these mean 'what were we talking about'); answer those from the conversation history instead. The app shows the map card first. If the user asks about SEVERAL places in one message (for example one per line, or joined with 'و' or commas), make exactly ONE call with intent specific_place and put every place in the places list, in the order asked (up to 8). Never look up only the first place and never promise to look at the others later. Write no text before the call; the app writes every answer itself. For a specific place, first use your own knowledge to work out exactly which place the user means, then fill in country_code, local_name, display_name, region and approx_lat/approx_lon whenever you are sure of them; the app uses them to find and verify the right place on the map and to write the card in the user's language.",
     parameters: {
       type: "object",
       properties: {
         query: {
           type: "string",
           description:
-            "ONE place only. specific_place: the full, well-known name of the place together with its type and its city or country, in the user's language, with any spelling mistakes corrected. If the user gives only a short or ambiguous name and no region, choose the most famous place in the world that has that name and write its type and city or country, for example 'Lake Chitgar, Tehran, Iran' instead of just 'Chitgar'. Never add details you are unsure of. nearby_search: English category word (pharmacy, restaurant).",
+            "ONE place only. specific_place: the full, well-known name of the place in English (or its best-known international spelling) together with its type and its city or country, with any spelling mistakes of the user corrected, for example 'Lake Chitgar, Tehran, Iran' instead of just 'Chitgar'. If the user gives only a short or ambiguous name and no region, choose the most famous place in the world that has that name. Never add details you are unsure of. nearby_search: English category word (pharmacy, restaurant).",
         },
         intent: {
           type: "string",
@@ -61,7 +61,17 @@ export const FIND_PLACE_TOOL: ToolDefinition = {
         local_name: {
           type: "string",
           description:
-            "ONE specific place only. The place's official name in the local language and script of its country (for example Chinese characters for a place in China, Cyrillic for Kazakhstan). Give it only when it differs from the name in the user's language and you are sure of it.",
+            "ONE specific place only. The place's official name in the local language and script of its country (for example Chinese characters for a place in China, Cyrillic for Kazakhstan). Give it only when it differs from the English name and you are sure of it.",
+        },
+        display_name: {
+          type: "string",
+          description:
+            "ONE specific place only. The place's name exactly as it should be shown to the user, written in the user's language (for example the Persian name when the user writes Persian). Give it whenever you are sure of it.",
+        },
+        region: {
+          type: "string",
+          description:
+            "ONE specific place only. Where the place is: city, province or state, and country, written in the user's language (for example 'Isfahan, Iran' in the user's own language). Give it whenever you are sure of it.",
         },
         approx_lat: {
           type: "number",
@@ -83,7 +93,7 @@ export const FIND_PLACE_TOOL: ToolDefinition = {
               query: {
                 type: "string",
                 description:
-                  "The full, well-known name of this place together with its type and its city or country, in the user's language, with spelling mistakes corrected.",
+                  "The full, well-known name of this place in English (or its best-known international spelling) together with its type and its city or country, with spelling mistakes corrected.",
               },
               country_code: {
                 type: "string",
@@ -93,7 +103,17 @@ export const FIND_PLACE_TOOL: ToolDefinition = {
               local_name: {
                 type: "string",
                 description:
-                  "This place's official name in the local language and script of its country. Give it only when it differs from the name in the user's language and you are sure of it.",
+                  "This place's official name in the local language and script of its country. Give it only when it differs from the English name and you are sure of it.",
+              },
+              display_name: {
+                type: "string",
+                description:
+                  "This place's name exactly as it should be shown to the user, written in the user's language. Give it whenever you are sure of it.",
+              },
+              region: {
+                type: "string",
+                description:
+                  "Where this place is: city, province or state, and country, written in the user's language. Give it whenever you are sure of it.",
               },
               approx_lat: {
                 type: "number",
