@@ -58,6 +58,10 @@ const WIKI_RESOLVED_IMPORTANCE = 0.6;
 const WIKI_ONLY_ZOOM = 14;
 const EARTH_RADIUS_KM = 6371;
 
+// Arabic and Persian share one script. These letters are written differently
+// in Arabic, so their presence marks Arabic text.
+const ARABIC_ONLY_LETTERS = /[\u064A\u0643\u0629\u0649]/;
+
 type PlaceHints = {
   readonly countryCode?: string;
   readonly localName?: string;
@@ -690,8 +694,15 @@ async function loadWikipediaInfo(
   return { about, localName: localized?.title ?? "", photos };
 }
 
+// True when the text is in the user's language. Persian text must be Arabic
+// script without the letters that only Arabic uses, so an Arabic address is
+// not mistaken for a Persian one.
 function isInUserLanguage(text: string, lang: string): boolean {
-  return lang === "fa" ? /[\u0600-\u06FF]/.test(text) : /[A-Za-z]/.test(text);
+  if (lang === "fa") {
+    return /[\u0600-\u06FF]/.test(text) && !ARABIC_ONLY_LETTERS.test(text);
+  }
+
+  return /[A-Za-z]/.test(text);
 }
 
 // The country's name in the user's language, from its two-letter code. Empty
@@ -711,11 +722,12 @@ function countryNameFor(code: string, lang: string): string {
   }
 }
 
-// The address line of the card. The country always comes from the pin itself
-// (verified), never from the model's words: the model's region keeps only its
-// city and province parts and its last part, the country, is replaced.
-// Otherwise the map's own address in the user's language is used, then the
-// map's address in any language, then the verified country, then the address
+// The address line of the card, always in the user's language. The country
+// always comes from the pin itself (verified), never from the model's words:
+// the model's region keeps only its city and province parts and its last part,
+// the country, is replaced. Order of preference: the map's own address when it
+// is in the user's language, the model's region with the verified country, the
+// verified country alone, the map's address in any language, and the address
 // of a nearby map object.
 async function addressFor(
   candidate: PlaceCandidate,
@@ -745,12 +757,12 @@ async function addressFor(
     return [...locality, country].join(ctx.lang === "fa" ? "، " : ", ");
   }
 
-  if (existing) {
-    return existing;
-  }
-
   if (country) {
     return country;
+  }
+
+  if (existing) {
+    return existing;
   }
 
   try {
@@ -845,8 +857,14 @@ async function lookupText(
   }
 }
 
-function notFoundOutcome(ctx: ToolContext, query: string): ToolOutcome {
-  const name = placeNameOf(query);
+// The "not found" sentence names the place the way the model wrote it for the
+// user (in the user's language) and falls back to the search name.
+function notFoundOutcome(
+  ctx: ToolContext,
+  query: string,
+  hints: PlaceHints,
+): ToolOutcome {
+  const name = hints.displayName || placeNameOf(query);
 
   return {
     data: { results: [], note: "No places were found." },
@@ -985,24 +1003,32 @@ async function runSpecificPlace(
   }
 
   if (!top) {
+    console.log(
+      `find_place not found "${query}": ${collected.length} map results, ${errors.length} errors, nominatimBlocked ${isNominatimBlocked()}, hints ${JSON.stringify(hints)}`,
+    );
+
     return errors.length > 0
       ? mapDownOutcome(ctx, errors[errors.length - 1] ?? "")
-      : notFoundOutcome(ctx, query);
+      : notFoundOutcome(ctx, query, hints);
   }
 
   // The model said where the place is, and the best result is neither trusted
   // nor near that point: a wrong pin is worse than saying it was not found.
-  if (
-    hints.approx &&
-    !isTrusted(top, hints) &&
-    kmApart(
+  if (hints.approx && !isTrusted(top, hints)) {
+    const farKm = kmApart(
       top.item.lat,
       top.item.lon,
       hints.approx.lat,
       hints.approx.lon,
-    ) > SHOW_UNTRUSTED_KM
-  ) {
-    return notFoundOutcome(ctx, query);
+    );
+
+    if (farKm > SHOW_UNTRUSTED_KM) {
+      console.log(
+        `find_place rejected "${query}": best result "${top.item.name}" is ${Math.round(farKm)} km from the model's coordinates, importance ${top.importance.toFixed(2)}`,
+      );
+
+      return notFoundOutcome(ctx, query, hints);
+    }
   }
 
   console.log(
