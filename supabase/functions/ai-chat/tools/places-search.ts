@@ -39,6 +39,8 @@ const FACT_KEYS: readonly string[] = [
   "operator",
 ];
 
+const COUNTRY_CODE_PATTERN = /^[a-z]{2}$/;
+
 function zoomFromRank(rank: number): number {
   if (!Number.isFinite(rank) || rank <= 0) return 15;
   if (rank <= 4) return 5;
@@ -102,7 +104,7 @@ export async function searchNominatim(
 
   const countryCode = options.countryCode?.trim().toLowerCase() ?? "";
 
-  if (/^[a-z]{2}$/.test(countryCode)) {
+  if (COUNTRY_CODE_PATTERN.test(countryCode)) {
     params.set("countrycodes", countryCode);
   }
 
@@ -196,6 +198,13 @@ export async function searchNominatim(
         if (value) {
           facts[key] = value.slice(0, 160);
         }
+      }
+
+      // The country of the result, used later to write a verified country.
+      const resultCountry = pickString(address, "country_code").toLowerCase();
+
+      if (COUNTRY_CODE_PATTERN.test(resultCountry)) {
+        facts.country_code = resultCountry;
       }
 
       candidates.push({
@@ -305,6 +314,13 @@ export async function searchPhoton(
         .filter(Boolean)
         .join(", ");
 
+      const resultCountry = pickString(props, "countrycode").toLowerCase();
+      const facts: Record<string, string> = COUNTRY_CODE_PATTERN.test(
+        resultCountry,
+      )
+        ? { country_code: resultCountry }
+        : {};
+
       candidates.push({
         item: withDistance(
           ctx,
@@ -317,19 +333,19 @@ export async function searchPhoton(
         category: [pickString(props, "osm_key"), pickString(props, "osm_value")]
           .filter(Boolean)
           .join("/"),
-        facts: {},
+        facts,
         wikipedia: "",
         importance: 0,
       });
 
-      countries.push(pickString(props, "countrycode").toLowerCase());
+      countries.push(resultCountry);
     }
 
     // Soft country filter: only applied when at least one result is from the
     // wanted country, so a wrong country code never removes everything.
     const wanted = options.countryCode?.trim().toLowerCase() ?? "";
 
-    if (/^[a-z]{2}$/.test(wanted) && countries.includes(wanted)) {
+    if (COUNTRY_CODE_PATTERN.test(wanted) && countries.includes(wanted)) {
       return candidates.filter((_, index) => countries[index] === wanted);
     }
 
