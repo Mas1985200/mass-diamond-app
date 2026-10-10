@@ -76,7 +76,7 @@ export const FIND_PLACE_TOOL: ToolDefinition = {
         description: {
           type: "string",
           description:
-            "ONE specific place only. One short factual sentence (about 15 to 25 words) saying what this place is, written in the user's language, from your own knowledge. Give it only for places you know well and only facts you are sure of; never guess.",
+            "ONE specific place only. One short sentence (about 12 to 25 words) saying what kind of place this is and what it is known for, written in the user's language, from your own knowledge. Write only facts you are certain of. Never include numbers, years, dates, rankings, star ratings, heights, prices or superlatives (biggest, tallest, best, oldest). If you are not certain, leave this field out.",
         },
         approx_lat: {
           type: "number",
@@ -123,7 +123,7 @@ export const FIND_PLACE_TOOL: ToolDefinition = {
               description: {
                 type: "string",
                 description:
-                  "One short factual sentence (about 15 to 25 words) saying what this place is, written in the user's language, from your own knowledge. Give it only for places you know well and only facts you are sure of; never guess.",
+                  "One short sentence (about 12 to 25 words) saying what kind of place this is and what it is known for, written in the user's language, from your own knowledge. Write only facts you are certain of. Never include numbers, years, dates, rankings, star ratings, heights, prices or superlatives (biggest, tallest, best, oldest). If you are not certain, leave this field out.",
               },
               approx_lat: {
                 type: "number",
