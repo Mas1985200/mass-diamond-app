@@ -38,7 +38,7 @@ export const FIND_PLACE_TOOL: ToolDefinition = {
   function: {
     name: "find_place",
     description:
-      "Look up a place on the map. Use it ONLY when the user names a specific place or address to locate, or asks for nearby places of a category (near-me). Never use it for questions about the conversation itself, such as 'where were we' or 'کجا بودیم' (these mean 'what were we talking about'); answer those from the conversation history instead. The app shows the map card first. If the user asks about SEVERAL places in one message (for example one per line, or joined with 'و' or commas), make exactly ONE call with intent specific_place and put every place in the places list, in the order asked (up to 8). Never look up only the first place and never promise to look at the others later. Write no text before the call; the app writes every answer itself. For a specific place, first use your own knowledge to work out exactly which place the user means, then fill in country_code, local_name, display_name, region and approx_lat/approx_lon whenever you are sure of them; the app uses them to find and verify the right place on the map and to write the card in the user's language.",
+      "Look up a place on the map. Use it ONLY when the user names a specific place or address to locate, or asks for nearby places of a category (near-me). Never use it for questions about the conversation itself, such as 'where were we' or 'کجا بودیم' (these mean 'what were we talking about'); answer those from the conversation history instead. The app shows the map card first. If the user asks about SEVERAL places in one message (for example one per line, or joined with 'و' or commas), make exactly ONE call with intent specific_place and put every place in the places list, in the order asked (up to 8). Never look up only the first place and never promise to look at the others later. Write no text before the call; the app writes every answer itself. For a specific place, first use your own knowledge to work out exactly which place the user means, then fill in country_code, local_name, display_name, region, description and approx_lat/approx_lon whenever you are sure of them; the app uses them to find and verify the right place on the map and to write the card in the user's language.",
     parameters: {
       type: "object",
       properties: {
@@ -66,12 +66,17 @@ export const FIND_PLACE_TOOL: ToolDefinition = {
         display_name: {
           type: "string",
           description:
-            "ONE specific place only. The place's name exactly as it should be shown to the user, written in the user's language (for example the Persian name when the user writes Persian). Give it whenever you are sure of it.",
+            "ONE specific place only. The place's name as it should be shown to the user: the common, natural name that speakers of the user's language use for it (translated where such a name exists, for example the usual Persian name 'دروازه هند' and not a letter-by-letter spelling of the English name; otherwise a plain transliteration), written in the user's language. Give it whenever you are sure of it.",
         },
         region: {
           type: "string",
           description:
-            "ONE specific place only. Where the place is: city, province or state, and country, written in the user's language (for example 'Isfahan, Iran' in the user's own language). Give it whenever you are sure of it.",
+            "ONE specific place only. Where the place is: city, province or state, and country, written in the user's language. Give it whenever you are sure of it.",
+        },
+        description: {
+          type: "string",
+          description:
+            "ONE specific place only. One short factual sentence (about 15 to 25 words) saying what this place is, written in the user's language, from your own knowledge. Give it only for places you know well and only facts you are sure of; never guess.",
         },
         approx_lat: {
           type: "number",
@@ -108,12 +113,17 @@ export const FIND_PLACE_TOOL: ToolDefinition = {
               display_name: {
                 type: "string",
                 description:
-                  "This place's name exactly as it should be shown to the user, written in the user's language. Give it whenever you are sure of it.",
+                  "This place's name as it should be shown to the user: the common, natural name that speakers of the user's language use for it, translated where such a name exists, otherwise a plain transliteration, written in the user's language. Give it whenever you are sure of it.",
               },
               region: {
                 type: "string",
                 description:
                   "Where this place is: city, province or state, and country, written in the user's language. Give it whenever you are sure of it.",
+              },
+              description: {
+                type: "string",
+                description:
+                  "One short factual sentence (about 15 to 25 words) saying what this place is, written in the user's language, from your own knowledge. Give it only for places you know well and only facts you are sure of; never guess.",
               },
               approx_lat: {
                 type: "number",
