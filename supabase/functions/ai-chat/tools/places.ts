@@ -9,7 +9,9 @@
 // lookup moves to Photon. Several places can be asked in one call (the
 // "places" list); each gets its own card and answer, in order.
 // Names and summaries come in the user's language; when no article exists in
-// that language the summary is left out instead of showing a foreign language.
+// that language the summary is left out instead of showing a foreign language,
+// and the model's one-line description is used instead. The country on the
+// card always comes from the pin itself, never from the model's words.
 // When nothing is found the server writes a fixed "not found" sentence, so the
 // model never invents an answer.
 
@@ -61,6 +63,7 @@ type PlaceHints = {
   readonly localName?: string;
   readonly displayName?: string;
   readonly region?: string;
+  readonly description?: string;
   readonly approx?: { readonly lat: number; readonly lon: number };
 };
 
@@ -123,6 +126,10 @@ function readHints(args: Record<string, unknown>): PlaceHints {
       : "";
   const region =
     typeof args.region === "string" ? args.region.trim().slice(0, 120) : "";
+  const description =
+    typeof args.description === "string"
+      ? args.description.trim().slice(0, 300)
+      : "";
   const lat = toCoordinate(args.approx_lat);
   const lon = toCoordinate(args.approx_lon);
 
@@ -138,6 +145,7 @@ function readHints(args: Record<string, unknown>): PlaceHints {
     ...(local ? { localName: local } : {}),
     ...(display ? { displayName: display } : {}),
     ...(region ? { region } : {}),
+    ...(description ? { description } : {}),
     ...(hasApprox ? { approx: { lat, lon } } : {}),
   };
 }
@@ -207,7 +215,15 @@ function categoryImportance(category: string): number {
         : 0.2;
     case "amenity":
       if (
-        ["place_of_worship", "marketplace", "theatre", "townhall", "library", "university", "arts_centre"].includes(value)
+        [
+          "place_of_worship",
+          "marketplace",
+          "theatre",
+          "townhall",
+          "library",
+          "university",
+          "arts_centre",
+        ].includes(value)
       ) {
         return 0.5;
       }
@@ -340,25 +356,36 @@ function chooseCandidates(
   return sorted;
 }
 
-// A candidate is trusted as the place when it has a Wikipedia tag, is very
-// important, or is reasonably important and lies near the model's coordinates.
+// A candidate is trusted as the place only when it fits where the model said
+// the place is. Near those coordinates a Wikipedia tag or modest importance is
+// enough; farther away more is needed; very far away only a notable object
+// with a Wikipedia tag is accepted, so a same-named object in another country
+// is never taken for the place. Without coordinates a Wikipedia tag or high
+// importance is enough.
 function isTrusted(candidate: PlaceCandidate, hints: PlaceHints): boolean {
-  if (candidate.wikipedia) {
-    return true;
-  }
-
-  if (candidate.importance >= AMBIGUOUS_IMPORTANCE) {
-    return true;
-  }
-
+  const tagged = candidate.wikipedia.length > 0;
   const approx = hints.approx;
 
-  return (
-    approx !== undefined &&
-    candidate.importance >= HINT_MIN_IMPORTANCE &&
-    kmApart(candidate.item.lat, candidate.item.lon, approx.lat, approx.lon) <=
-      NEAR_MODEL_KM
+  if (!approx) {
+    return tagged || candidate.importance >= AMBIGUOUS_IMPORTANCE;
+  }
+
+  const km = kmApart(
+    candidate.item.lat,
+    candidate.item.lon,
+    approx.lat,
+    approx.lon,
   );
+
+  if (km <= NEAR_MODEL_KM) {
+    return tagged || candidate.importance >= HINT_MIN_IMPORTANCE;
+  }
+
+  if (km <= APPROX_RADIUS_KM) {
+    return tagged || candidate.importance >= AMBIGUOUS_IMPORTANCE;
+  }
+
+  return tagged && candidate.importance >= AMBIGUOUS_IMPORTANCE;
 }
 
 function selectNearby(candidates: readonly PlaceCandidate[]): PlaceItem[] {
@@ -442,11 +469,14 @@ function formatKm(ctx: ToolContext, km: number): string {
   }
 }
 
-// Short answer written by the server from map and Wikipedia data only.
+// Short answer written by the server from map and Wikipedia data. When there
+// is no Wikipedia summary in the user's language, the model's one-line
+// description (if any) takes its place.
 function buildPlaceAnswer(
   ctx: ToolContext,
   item: PlaceItem,
   about: string,
+  description: string,
 ): string {
   const isFa = ctx.lang === "fa";
   const address = formatAddress(ctx, item.address);
@@ -465,7 +495,7 @@ function buildPlaceAnswer(
     );
   }
 
-  const summary = trimAbout(about);
+  const summary = trimAbout(about) || trimAbout(description);
 
   if (summary) {
     parts.push(summary);
@@ -664,15 +694,37 @@ function isInUserLanguage(text: string, lang: string): boolean {
   return lang === "fa" ? /[\u0600-\u06FF]/.test(text) : /[A-Za-z]/.test(text);
 }
 
-// The address line of the card: the map's own address when it is in the user's
-// language, otherwise the region the model gave in that language, otherwise
-// whatever the map has, otherwise a nearby map object's address.
+// The country's name in the user's language, from its two-letter code. Empty
+// when the code is unknown or the runtime has no name data for the language.
+function countryNameFor(code: string, lang: string): string {
+  if (!/^[a-z]{2}$/.test(code)) {
+    return "";
+  }
+
+  try {
+    const names = new Intl.DisplayNames([lang], { type: "region" });
+    const name = names.of(code.toUpperCase());
+
+    return name && name.toUpperCase() !== code.toUpperCase() ? name : "";
+  } catch {
+    return "";
+  }
+}
+
+// The address line of the card. The country always comes from the pin itself
+// (verified), never from the model's words: the model's region keeps only its
+// city and province parts and its last part, the country, is replaced.
+// Otherwise the map's own address in the user's language is used, then the
+// map's address in any language, then the verified country, then the address
+// of a nearby map object.
 async function addressFor(
   candidate: PlaceCandidate,
   hints: PlaceHints,
   ctx: ToolContext,
   signal: AbortSignal,
 ): Promise<string> {
+  const code = candidate.facts["country_code"] ?? "";
+  const country = countryNameFor(code, ctx.lang);
   const existing = candidate.item.address.trim();
 
   if (existing && isInUserLanguage(existing, ctx.lang)) {
@@ -680,11 +732,25 @@ async function addressFor(
   }
 
   if (hints.region) {
-    return hints.region;
+    if (!country) {
+      return hints.region;
+    }
+
+    const locality = hints.region
+      .split(/[,،]/)
+      .map((part) => part.trim())
+      .filter((part) => part.length > 0)
+      .slice(0, -1);
+
+    return [...locality, country].join(ctx.lang === "fa" ? "، " : ", ");
   }
 
   if (existing) {
     return existing;
+  }
+
+  if (country) {
+    return country;
   }
 
   try {
@@ -1012,7 +1078,7 @@ async function runSpecificPlace(
 
   const finalText = pick.ambiguous
     ? buildAmbiguousAnswer(ctx, group)
-    : buildPlaceAnswer(ctx, displayItem, about);
+    : buildPlaceAnswer(ctx, displayItem, about, hints.description ?? "");
 
   return {
     data: {
