@@ -6,11 +6,12 @@
 // approximate coordinates from its own knowledge); the server only verifies it:
 // a result is trusted when it lies near the model's coordinates, or when
 // Wikipedia confirms it, and a result in another country than the one the
-// model named is dropped. When the main map service refuses our requests the
-// lookup moves to Photon. When the model's own hints turn out to be wrong, the
-// place is looked up again by name alone through Wikipedia. Several places can
-// be asked in one call (the "places" list); each gets its own card and answer,
-// in order.
+// model named is dropped. When the model gives no country code, the country is
+// read from the end of the search text ("name, city, country"). When the main
+// map service refuses our requests the lookup moves to Photon. When the
+// model's own hints turn out to be wrong, the place is looked up again by name
+// alone through Wikipedia. Several places can be asked in one call (the
+// "places" list); each gets its own card and answer, in order.
 // Names and summaries come in the user's language; when no article exists in
 // that language the summary is left out instead of showing a foreign language,
 // and the model's one-line description is used instead. The country on the
@@ -65,6 +66,40 @@ const EARTH_RADIUS_KM = 6371;
 // Arabic and Persian share one script. These letters are written differently
 // in Arabic, so their presence marks Arabic text.
 const ARABIC_ONLY_LETTERS = /[\u064A\u0643\u0629\u0649]/;
+
+// Common spellings of country names that the runtime's name list does not use.
+// Keys are written the way normalizeCountryName writes them.
+const COUNTRY_ALIASES: ReadonlyMap<string, string> = new Map([
+  ["turkey", "tr"],
+  ["turkiye", "tr"],
+  ["usa", "us"],
+  ["us", "us"],
+  ["unitedstates", "us"],
+  ["unitedstatesofamerica", "us"],
+  ["uk", "gb"],
+  ["unitedkingdom", "gb"],
+  ["greatbritain", "gb"],
+  ["england", "gb"],
+  ["scotland", "gb"],
+  ["wales", "gb"],
+  ["uae", "ae"],
+  ["emirates", "ae"],
+  ["russia", "ru"],
+  ["czechrepublic", "cz"],
+  ["czechia", "cz"],
+  ["burma", "mm"],
+  ["ivorycoast", "ci"],
+  ["southkorea", "kr"],
+  ["northkorea", "kp"],
+  ["vietnam", "vn"],
+  ["laos", "la"],
+  ["iran", "ir"],
+  ["syria", "sy"],
+  ["palestine", "ps"],
+  ["holland", "nl"],
+  ["macedonia", "mk"],
+  ["swaziland", "sz"],
+]);
 
 type PlaceHints = {
   readonly countryCode?: string;
@@ -158,10 +193,12 @@ function readHints(args: Record<string, unknown>): PlaceHints {
   };
 }
 
-// Keeps only the names. Used when the model's other hints (country,
-// coordinates, region, description) turned out to be unreliable.
-function withoutLocationHints(hints: PlaceHints): PlaceHints {
+// Keeps only the names and the country. Used when the model's coordinates,
+// region and description turned out to be unreliable, while the country that
+// was named in the search text itself is still trusted.
+function keepNamesAndCountry(hints: PlaceHints): PlaceHints {
   return {
+    ...(hints.countryCode ? { countryCode: hints.countryCode } : {}),
     ...(hints.localName ? { localName: hints.localName } : {}),
     ...(hints.displayName ? { displayName: hints.displayName } : {}),
   };
@@ -196,6 +233,94 @@ function readPlaceRequests(args: Record<string, unknown>): PlaceRequest[] {
   }
 
   return requests;
+}
+
+// Country names written in any language, reduced to a comparable form: no
+// accents, no spaces or punctuation, one spelling of the letters Persian and
+// Arabic write differently.
+function normalizeCountryName(text: string): string {
+  return text
+    .normalize("NFKD")
+    .replace(/\p{M}/gu, "")
+    .toLowerCase()
+    .replace(/[\u064A\u0649]/g, "\u06CC")
+    .replace(/\u0643/g, "\u06A9")
+    .replace(/\u0629/g, "\u0647")
+    .replace(/[^\p{L}\p{N}]/gu, "");
+}
+
+const countryIndexCache = new Map<string, Map<string, string>>();
+
+// Country name (in the given language) to its two-letter code, built once from
+// the runtime's own list of region names.
+function countryIndex(lang: string): Map<string, string> {
+  const cached = countryIndexCache.get(lang);
+
+  if (cached) {
+    return cached;
+  }
+
+  const index = new Map<string, string>();
+
+  try {
+    const names = new Intl.DisplayNames([lang], { type: "region" });
+
+    for (let first = 65; first <= 90; first += 1) {
+      for (let second = 65; second <= 90; second += 1) {
+        const code = String.fromCharCode(first, second);
+        let name = "";
+
+        try {
+          name = names.of(code) ?? "";
+        } catch {
+          name = "";
+        }
+
+        if (name && name.toUpperCase() !== code) {
+          const key = normalizeCountryName(name);
+
+          if (key && !index.has(key)) {
+            index.set(key, code.toLowerCase());
+          }
+        }
+      }
+    }
+  } catch {
+    // No name data in this runtime: nothing can be inferred.
+  }
+
+  countryIndexCache.set(lang, index);
+
+  return index;
+}
+
+// The country named at the end of a text such as "name, city, country", as a
+// two-letter code, or an empty string when the end is not a known country.
+function inferCountryCode(text: string, lang: string): string {
+  const parts = text
+    .split(/[,،]/)
+    .map((part) => part.trim())
+    .filter((part) => part.length > 0);
+  const last = parts[parts.length - 1] ?? "";
+  const key = normalizeCountryName(last);
+
+  if (!key) {
+    return "";
+  }
+
+  const alias = COUNTRY_ALIASES.get(key);
+
+  if (alias) {
+    return alias;
+  }
+
+  const english = countryIndex("en").get(key);
+
+  if (english) {
+    return english;
+  }
+
+  return lang !== "en" ? (countryIndex(lang).get(key) ?? "") : "";
 }
 
 // Photon gives no importance. This turns the kind of map object (OpenStreetMap
@@ -747,9 +872,10 @@ async function resolveWeakMatch(
 }
 
 // Adds the pin's country (asked from the map service) to a candidate whose
-// position comes from Wikipedia. When the model gave no coordinates and its
-// country disagrees with the pin's, the pin is dropped: the Wikipedia page may
-// be a same-named place somewhere else. Returns null in that case.
+// position comes from Wikipedia. When the model gave no coordinates and the
+// country that was named disagrees with the pin's, the pin is dropped: the
+// Wikipedia page may be a same-named place somewhere else. Returns null in
+// that case.
 async function verifyWikiPin(
   candidate: PlaceCandidate,
   hints: PlaceHints,
@@ -832,13 +958,14 @@ function countryNameFor(code: string, lang: string): string {
 
 // The address line of the card, always in the user's language. The country
 // always comes from the pin itself (verified), never from the model's words.
-// The model's region is used only when the model's own country agrees with the
-// pin's country, and then only its city and province parts are kept; its last
-// part, the country, is replaced. Order of preference: the map's own address
-// when it is in the user's language, the model's region with the verified
-// country, the verified country alone, the map's address in any language, and
-// finally the address of a nearby map object (its country in the user's
-// language when its address is in another language).
+// The model's region is used only when both the country that was named and the
+// country written at the end of the region agree with the pin's country, and
+// then only its city and province parts are kept; its last part, the country,
+// is replaced. Order of preference: the map's own address when it is in the
+// user's language, the model's region with the verified country, the verified
+// country alone, the map's address in any language, and finally the address of
+// a nearby map object (its country in the user's language when its address is
+// in another language).
 async function addressFor(
   candidate: PlaceCandidate,
   hints: PlaceHints,
@@ -854,7 +981,12 @@ async function addressFor(
   }
 
   const claimed = hints.countryCode ?? "";
-  const regionAgrees = claimed === "" || code === "" || claimed === code;
+  const regionCode = hints.region
+    ? inferCountryCode(hints.region, ctx.lang)
+    : "";
+  const regionAgrees =
+    (claimed === "" || code === "" || claimed === code) &&
+    (regionCode === "" || code === "" || regionCode === code);
 
   if (hints.region && regionAgrees) {
     if (!country) {
@@ -1073,11 +1205,21 @@ async function runNearbySearch(
 
 async function runSpecificPlace(
   query: string,
-  hints: PlaceHints,
+  modelHints: PlaceHints,
   ctx: ToolContext,
   signal: AbortSignal,
   withPhotos: boolean,
 ): Promise<ToolOutcome> {
+  // When the model gave no country code, read the country from the end of the
+  // search text ("name, city, country").
+  const inferredCountry = modelHints.countryCode
+    ? ""
+    : inferCountryCode(query, ctx.lang);
+
+  const hints: PlaceHints = inferredCountry
+    ? { ...modelHints, countryCode: inferredCountry }
+    : modelHints;
+
   const errors: string[] = [];
   let collected: PlaceCandidate[] = [];
 
@@ -1108,6 +1250,7 @@ async function runSpecificPlace(
     try {
       const found = await searchPhoton(query, ctx, signal, false, {
         ...(hints.approx ? { bias: hints.approx } : {}),
+        ...(hints.countryCode ? { countryCode: hints.countryCode } : {}),
       });
 
       collected = found
@@ -1137,15 +1280,15 @@ async function runSpecificPlace(
     }
   }
 
-  // Still nothing believable. The model's own hints (country, coordinates)
+  // Still nothing believable. The model's coordinates, region or description
   // may be the wrong part, for example when it confuses two places with the
-  // same name. Ask Wikipedia again by name alone and ignore those hints,
-  // together with the region and description the model wrote.
+  // same name. Ask Wikipedia again by name and country alone and ignore those
+  // hints.
   const hasLocationHints =
     hints.approx !== undefined || hints.countryCode !== undefined;
 
   if (hasLocationHints && (!top || isRejected(top, hints))) {
-    const stripped = withoutLocationHints(hints);
+    const stripped = keepNamesAndCountry(hints);
     const rescue = await resolveWeakMatch(query, stripped, ctx, signal);
     const checked = rescue
       ? await verifyWikiPin(rescue, stripped, signal)
@@ -1165,7 +1308,7 @@ async function runSpecificPlace(
 
   if (!top) {
     console.log(
-      `find_place not found "${query}": ${collected.length} map results, ${errors.length} errors, nominatimBlocked ${isNominatimBlocked()}, hints ${JSON.stringify(hints)}`,
+      `find_place not found "${query}": ${collected.length} map results, ${errors.length} errors, nominatimBlocked ${isNominatimBlocked()}, inferred country ${inferredCountry || "none"}, hints ${JSON.stringify(hints)}`,
     );
 
     return errors.length > 0
@@ -1185,7 +1328,7 @@ async function runSpecificPlace(
   }
 
   console.log(
-    `find_place "${query}" -> ${top.item.name} (${top.item.lat}, ${top.item.lon}) country ${top.facts["country_code"] ?? "?"} importance ${top.importance.toFixed(2)} trusted ${isTrusted(top, activeHints)} rescued ${rescued} nominatimBlocked ${isNominatimBlocked()} hints ${JSON.stringify(hints)}`,
+    `find_place "${query}" -> ${top.item.name} (${top.item.lat}, ${top.item.lon}) country ${top.facts["country_code"] ?? "?"} importance ${top.importance.toFixed(2)} trusted ${isTrusted(top, activeHints)} rescued ${rescued} nominatimBlocked ${isNominatimBlocked()} inferred country ${inferredCountry || "none"} hints ${JSON.stringify(hints)}`,
   );
 
   // When the model has said exactly which place it means, show that single
