@@ -5,7 +5,8 @@
 // The model says which place it means (names in several languages, country,
 // approximate coordinates from its own knowledge); the server only verifies it:
 // a result is trusted when it lies near the model's coordinates, or when
-// Wikipedia confirms it. When the main map service refuses our requests the
+// Wikipedia confirms it, and a result in another country than the one the
+// model named is dropped. When the main map service refuses our requests the
 // lookup moves to Photon. When the model's own hints turn out to be wrong, the
 // place is looked up again by name alone through Wikipedia. Several places can
 // be asked in one call (the "places" list); each gets its own card and answer,
@@ -30,6 +31,7 @@ import type {
 import { describeError, isRecord, round5 } from "../lib/util.ts";
 import { distanceBetween, normalizePlaceName } from "../lib/geo.ts";
 import {
+  reversePhoton,
   searchNominatim,
   searchPhoton,
   type NominatimOptions,
@@ -292,6 +294,24 @@ function withCategoryImportance(candidate: PlaceCandidate): PlaceCandidate {
     : { ...candidate, importance: categoryImportance(candidate.category) };
 }
 
+// True when a map object lies in a different country than the one the model
+// named: it is then a same-named object somewhere else. Objects whose position
+// comes from Wikipedia are exact, so they are never judged this way.
+function conflictsWithCountry(
+  candidate: PlaceCandidate,
+  hints: PlaceHints,
+): boolean {
+  const claimed = hints.countryCode ?? "";
+  const actual = candidate.facts["country_code"] ?? "";
+
+  return (
+    claimed.length > 0 &&
+    actual.length > 0 &&
+    claimed !== actual &&
+    candidate.category !== "wikipedia"
+  );
+}
+
 function distinctLocations(list: readonly PlaceCandidate[]): PlaceCandidate[] {
   const distinct: PlaceCandidate[] = [];
 
@@ -372,12 +392,17 @@ function chooseCandidates(
 }
 
 // A candidate is trusted as the place only when it fits where the model said
-// the place is. Near those coordinates a Wikipedia tag or modest importance is
-// enough; farther away more is needed; very far away only a notable object
-// with a Wikipedia tag is accepted, so a same-named object in another country
-// is never taken for the place. Without coordinates a Wikipedia tag or high
-// importance is enough.
+// the place is. A result in another country than the model named is never
+// trusted. Near the model's coordinates a Wikipedia tag or modest importance
+// is enough; farther away more is needed; very far away only a notable object
+// with a Wikipedia tag is accepted, so a same-named object elsewhere is never
+// taken for the place. Without coordinates a Wikipedia tag or high importance
+// is enough.
 function isTrusted(candidate: PlaceCandidate, hints: PlaceHints): boolean {
+  if (conflictsWithCountry(candidate, hints)) {
+    return false;
+  }
+
   const tagged = candidate.wikipedia.length > 0;
   const approx = hints.approx;
 
@@ -403,9 +428,14 @@ function isTrusted(candidate: PlaceCandidate, hints: PlaceHints): boolean {
   return tagged && candidate.importance >= AMBIGUOUS_IMPORTANCE;
 }
 
-// True when the model gave coordinates and this result is both unconvincing
-// and far from them: showing it would put a wrong pin on the map.
+// True when this result must not be shown: it is in another country than the
+// model named, or the model gave coordinates and this result is both
+// unconvincing and far from them. A wrong pin is worse than "not found".
 function isRejected(candidate: PlaceCandidate, hints: PlaceHints): boolean {
+  if (conflictsWithCountry(candidate, hints)) {
+    return true;
+  }
+
   const approx = hints.approx;
 
   return (
@@ -716,6 +746,39 @@ async function resolveWeakMatch(
   return null;
 }
 
+// Adds the pin's country (asked from the map service) to a candidate whose
+// position comes from Wikipedia. When the model gave no coordinates and its
+// country disagrees with the pin's, the pin is dropped: the Wikipedia page may
+// be a same-named place somewhere else. Returns null in that case.
+async function verifyWikiPin(
+  candidate: PlaceCandidate,
+  hints: PlaceHints,
+  signal: AbortSignal,
+): Promise<PlaceCandidate | null> {
+  const info = await reversePhoton(
+    candidate.item.lat,
+    candidate.item.lon,
+    signal,
+  );
+
+  if (!info) {
+    return candidate;
+  }
+
+  if (
+    hints.approx === undefined &&
+    hints.countryCode !== undefined &&
+    hints.countryCode !== info.countryCode
+  ) {
+    return null;
+  }
+
+  return {
+    ...candidate,
+    facts: { ...candidate.facts, country_code: info.countryCode },
+  };
+}
+
 // Loads the Wikipedia summary and the place's name in the user's language.
 // When the article does not exist in that language the summary stays empty,
 // so text in a foreign language is never shown.
@@ -768,13 +831,14 @@ function countryNameFor(code: string, lang: string): string {
 }
 
 // The address line of the card, always in the user's language. The country
-// always comes from the pin itself (verified), never from the model's words:
-// the model's region keeps only its city and province parts and its last part,
-// the country, is replaced. Order of preference: the map's own address when it
-// is in the user's language, the model's region with the verified country, the
-// verified country alone, the map's address in any language, and finally the
-// address of a nearby map object (its country in the user's language when its
-// address is in another language).
+// always comes from the pin itself (verified), never from the model's words.
+// The model's region is used only when the model's own country agrees with the
+// pin's country, and then only its city and province parts are kept; its last
+// part, the country, is replaced. Order of preference: the map's own address
+// when it is in the user's language, the model's region with the verified
+// country, the verified country alone, the map's address in any language, and
+// finally the address of a nearby map object (its country in the user's
+// language when its address is in another language).
 async function addressFor(
   candidate: PlaceCandidate,
   hints: PlaceHints,
@@ -789,7 +853,10 @@ async function addressFor(
     return existing;
   }
 
-  if (hints.region) {
+  const claimed = hints.countryCode ?? "";
+  const regionAgrees = claimed === "" || code === "" || claimed === code;
+
+  if (hints.region && regionAgrees) {
     if (!country) {
       return hints.region;
     }
@@ -1024,7 +1091,11 @@ async function runSpecificPlace(
       errors,
     );
 
-    collected = collected.concat(found);
+    // Objects in another country than the one the model named are same-named
+    // places elsewhere.
+    collected = collected.concat(
+      found.filter((candidate) => !conflictsWithCountry(candidate, hints)),
+    );
 
     const best = chooseCandidates(collected, hints)[0];
 
@@ -1039,7 +1110,9 @@ async function runSpecificPlace(
         ...(hints.approx ? { bias: hints.approx } : {}),
       });
 
-      collected = found.map(withCategoryImportance);
+      collected = found
+        .map(withCategoryImportance)
+        .filter((candidate) => !conflictsWithCountry(candidate, hints));
     } catch (error) {
       errors.push(describeError(error));
       console.error(`find_place photon failed: ${describeError(error)}`);
@@ -1054,10 +1127,13 @@ async function runSpecificPlace(
   // No trustworthy map match: let Wikipedia decide which place is meant.
   if (!top || !isTrusted(top, hints)) {
     const resolved = await resolveWeakMatch(query, hints, ctx, signal);
+    const checked = resolved
+      ? await verifyWikiPin(resolved, hints, signal)
+      : null;
 
-    if (resolved) {
-      ranked = [resolved, ...ranked];
-      top = resolved;
+    if (checked) {
+      ranked = [checked, ...ranked];
+      top = checked;
     }
   }
 
@@ -1071,14 +1147,17 @@ async function runSpecificPlace(
   if (hasLocationHints && (!top || isRejected(top, hints))) {
     const stripped = withoutLocationHints(hints);
     const rescue = await resolveWeakMatch(query, stripped, ctx, signal);
+    const checked = rescue
+      ? await verifyWikiPin(rescue, stripped, signal)
+      : null;
 
-    if (rescue) {
+    if (checked) {
       console.log(
-        `find_place rescued "${query}" by name -> ${rescue.item.name} (${rescue.item.lat}, ${rescue.item.lon}); the model's hints were ${JSON.stringify(hints)}`,
+        `find_place rescued "${query}" by name -> ${checked.item.name} (${checked.item.lat}, ${checked.item.lon}); the model's hints were ${JSON.stringify(hints)}`,
       );
 
-      ranked = [rescue, ...ranked];
-      top = rescue;
+      ranked = [checked, ...ranked];
+      top = checked;
       activeHints = stripped;
       rescued = true;
     }
@@ -1094,18 +1173,19 @@ async function runSpecificPlace(
       : notFoundOutcome(ctx, query, hints);
   }
 
-  // The best result is neither trusted nor near the model's coordinates: a
-  // wrong pin is worse than saying it was not found.
+  // The best result is neither trusted nor near the model's coordinates, or it
+  // is in another country than the model named: a wrong pin is worse than
+  // saying it was not found.
   if (isRejected(top, activeHints)) {
     console.log(
-      `find_place rejected "${query}": best result "${top.item.name}" (${top.item.lat}, ${top.item.lon}) is far from the model's coordinates, importance ${top.importance.toFixed(2)}`,
+      `find_place rejected "${query}": best result "${top.item.name}" (${top.item.lat}, ${top.item.lon}) country ${top.facts["country_code"] ?? "?"} importance ${top.importance.toFixed(2)}`,
     );
 
     return notFoundOutcome(ctx, query, hints);
   }
 
   console.log(
-    `find_place "${query}" -> ${top.item.name} (${top.item.lat}, ${top.item.lon}) importance ${top.importance.toFixed(2)} trusted ${isTrusted(top, activeHints)} rescued ${rescued} nominatimBlocked ${isNominatimBlocked()} hints ${JSON.stringify(hints)}`,
+    `find_place "${query}" -> ${top.item.name} (${top.item.lat}, ${top.item.lon}) country ${top.facts["country_code"] ?? "?"} importance ${top.importance.toFixed(2)} trusted ${isTrusted(top, activeHints)} rescued ${rescued} nominatimBlocked ${isNominatimBlocked()} hints ${JSON.stringify(hints)}`,
   );
 
   // When the model has said exactly which place it means, show that single
