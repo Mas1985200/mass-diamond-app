@@ -16,6 +16,7 @@ import { useChat } from "../../hooks/useChat";
 import type { ChatErrorCode } from "../../lib/chatClient";
 import DiamondMark from "../DiamondMark";
 import MarkdownText from "./MarkdownText";
+import DirectionsButton from "./DirectionsButton";
 
 const ERROR_MESSAGES: Record<ChatErrorCode, string> = {
   AUTH_REQUIRED: "نشست شما منقضی شده است. لطفاً دوباره وارد شوید.",
@@ -746,10 +747,6 @@ function geoHref(item: PlaceItem): string {
   return `geo:${coord(item.lat)},${coord(item.lon)}?q=${coord(item.lat)},${coord(item.lon)}(${encodeURIComponent(item.name)})`;
 }
 
-function directionsHref(item: PlaceItem): string {
-  return `https://www.google.com/maps/dir/?api=1&destination=${coord(item.lat)},${coord(item.lon)}`;
-}
-
 function embedSrc(item: PlaceItem, lonSpan: number): string {
   const latSpan = lonSpan / 2;
   const bbox = [
@@ -959,14 +956,11 @@ function MapViewer({
         <a href={geoHref(item)} className={PILL_CLASS}>
           {rtl ? "باز کردن در برنامه‌ی نقشه" : "Open in Maps app"}
         </a>
-        <a
-          href={directionsHref(item)}
-          target="_blank"
-          rel="noopener noreferrer"
+        <DirectionsButton
+          target={{ lat: item.lat, lon: item.lon, name: item.name }}
+          rtl={rtl}
           className={PILL_CLASS}
-        >
-          {rtl ? "مسیریابی" : "Directions"}
-        </a>
+        />
         <a
           href={osmHref(item)}
           target="_blank"
@@ -1003,8 +997,7 @@ function PlacesCard({ card }: { readonly card: PlacesCardData }) {
     <div
       dir={rtl ? "rtl" : "ltr"}
       className="md-glass my-3 w-full max-w-sm overflow-hidden rounded-2xl"
-    >
-      <div
+    >      <div
         role="button"
         tabIndex={0}
         aria-label={
@@ -1052,14 +1045,11 @@ function PlacesCard({ card }: { readonly card: PlacesCardData }) {
               <a href={geoHref(item)} className={PILL_CLASS}>
                 {rtl ? "باز کردن در نقشه" : "Open in Maps"}
               </a>
-              <a
-                href={directionsHref(item)}
-                target="_blank"
-                rel="noopener noreferrer"
+              <DirectionsButton
+                target={{ lat: item.lat, lon: item.lon, name: item.name }}
+                rtl={rtl}
                 className={PILL_CLASS}
-              >
-                {rtl ? "مسیریابی" : "Directions"}
-              </a>
+              />
             </div>
           </li>
         ))}
