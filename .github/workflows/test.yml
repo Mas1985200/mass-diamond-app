@@ -5,12 +5,14 @@ on:
     branches: [dev]
     paths:
       - "tests/**"
+      - "src/**"
       - "supabase/functions/**"
       - "package.json"
       - ".github/workflows/test.yml"
   pull_request:
     paths:
       - "tests/**"
+      - "src/**"
       - "supabase/functions/**"
       - "package.json"
       - ".github/workflows/test.yml"
