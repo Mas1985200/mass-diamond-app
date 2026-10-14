@@ -1,7 +1,7 @@
 // supabase/functions/ai-chat/memory/summary.ts
 // Summarizes the user's previous conversation when a new one starts.
 
-import type { SupabaseClient } from "https://esm.sh/@supabase/supabase-js@2";
+import type { SupabaseClient } from "../deps.ts";
 import type { AIMessage, OAIMessage } from "../types.ts";
 import { describeError } from "../lib/util.ts";
 import { loadHistory } from "../history/store.ts";
