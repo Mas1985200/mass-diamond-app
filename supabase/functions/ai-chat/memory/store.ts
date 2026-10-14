@@ -2,7 +2,7 @@
 // Database access for long-term memory: user facts and conversation summaries.
 // The server uses the service role, so every query filters by user_id itself.
 
-import type { SupabaseClient } from "https://esm.sh/@supabase/supabase-js@2";
+import type { SupabaseClient } from "../deps.ts";
 import { describeError } from "../lib/util.ts";
 
 const FACTS_CHAR_BUDGET = 1_500;
