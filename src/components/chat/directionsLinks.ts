@@ -45,7 +45,8 @@ const APPLE_MODE: Record<TravelMode, string> = {
 };
 
 // Origin is left out on purpose: the apps then start from the user's current
-// location.
+// location. dir_action=navigate is left out too, so Google first shows the
+// route preview (time, alternatives) and the user taps Start.
 export function googleDirectionsUrl(
   target: DirectionsTarget,
   mode: TravelMode,
@@ -53,8 +54,7 @@ export function googleDirectionsUrl(
   return (
     "https://www.google.com/maps/dir/?api=1" +
     `&destination=${encodeURIComponent(pair(target))}` +
-    `&travelmode=${GOOGLE_MODE[mode]}` +
-    "&dir_action=navigate"
+    `&travelmode=${GOOGLE_MODE[mode]}`
   );
 }
 
