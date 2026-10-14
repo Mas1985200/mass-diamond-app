@@ -1,7 +1,7 @@
 // supabase/functions/ai-chat/history/store.ts
 // Database access for conversations and messages.
 
-import type { SupabaseClient } from "https://esm.sh/@supabase/supabase-js@2";
+import type { SupabaseClient } from "../deps.ts";
 import { MAX_HISTORY_MESSAGES } from "../config.ts";
 import type { AIMessage, ChatMessageRow } from "../types.ts";
 import { stripMarkers } from "../cards/codec.ts";
