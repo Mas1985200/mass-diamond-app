@@ -81,8 +81,10 @@ export async function tavilySearch(
       const title = pickString(raw, "title").trim();
       const rawUrl = pickString(raw, "url");
       const content = pickString(raw, "content");
+      const published = pickString(raw, "published_date").trim();
 
       let host = "";
+      let address = "";
 
       try {
         const parsed = new URL(rawUrl);
@@ -92,6 +94,7 @@ export async function tavilySearch(
         }
 
         host = parsed.hostname.replace(/^www\./, "");
+        address = parsed.href;
       } catch {
         continue;
       }
@@ -103,6 +106,8 @@ export async function tavilySearch(
       results.push({
         title: title.slice(0, 80),
         source: host.slice(0, 40),
+        url: address,
+        published: published.slice(0, 40),
         snippet: content.slice(0, WEB_SNIPPET_CHARS),
       });
     }
@@ -119,6 +124,16 @@ export async function tavilySearch(
   } finally {
     timed.clearConnectTimer();
   }
+}
+
+// What the model reads: text and date, without the address.
+function forModel(result: WebResult): Record<string, string> {
+  return {
+    title: result.title,
+    source: result.source,
+    snippet: result.snippet,
+    ...(result.published ? { published: result.published } : {}),
+  };
 }
 
 export async function runWebSearch(
@@ -161,5 +176,5 @@ export async function runWebSearch(
     };
   }
 
-  return { data: { results } };
+  return { data: { results: results.map(forModel) } };
 }
