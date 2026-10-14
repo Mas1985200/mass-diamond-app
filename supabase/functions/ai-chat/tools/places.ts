@@ -857,6 +857,10 @@ async function resolveWeakMatch(
         const hits = await searchWikipediaPlaces(text, round.lang, signal);
         const hit = pickWikiHit(hits, text, hints);
 
+        console.log(
+          `find_place wiki "${text}" [${round.lang}] hits ${hits.map((entry) => entry.title).join(" | ") || "none"} picked ${hit ? hit.title : "none"}`,
+        );
+
         if (hit) {
           return wikiCandidate(hit, ctx);
         }
@@ -896,6 +900,10 @@ async function verifyWikiPin(
     hints.countryCode !== undefined &&
     hints.countryCode !== info.countryCode
   ) {
+    console.log(
+      `find_place wiki pin dropped "${candidate.item.name}" (${candidate.item.lat}, ${candidate.item.lon}): pin country ${info.countryCode}, wanted ${hints.countryCode}`,
+    );
+
     return null;
   }
 
@@ -1202,7 +1210,6 @@ async function runNearbySearch(
         : "I could not find a suitable place near you.",
   };
 }
-
 async function runSpecificPlace(
   query: string,
   modelHints: PlaceHints,
@@ -1219,6 +1226,10 @@ async function runSpecificPlace(
   const hints: PlaceHints = inferredCountry
     ? { ...modelHints, countryCode: inferredCountry }
     : modelHints;
+
+  console.log(
+    `find_place start "${query}" hints ${JSON.stringify(modelHints)} inferred country ${inferredCountry || "none"}`,
+  );
 
   const errors: string[] = [];
   let collected: PlaceCandidate[] = [];
