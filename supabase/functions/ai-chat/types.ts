@@ -76,7 +76,15 @@ export type PhotoItem = {
 export type WebResult = {
   readonly title: string;
   readonly source: string;
+  readonly url: string;
+  readonly published: string;
   readonly snippet: string;
+};
+
+// A real address the app shows to the user as the source of an answer.
+export type SourceItem = {
+  readonly url: string;
+  readonly host: string;
 };
 
 export type CardPayload =
@@ -104,6 +112,7 @@ export type ToolOutcome = {
   readonly cards?: readonly CardPayload[];
   readonly cardFirst?: boolean;
   readonly finalText?: string;
+  readonly sources?: readonly SourceItem[];
 };
 
 export type ToolDefinition = {
