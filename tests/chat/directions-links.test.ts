@@ -22,14 +22,15 @@ const istanbul: DirectionsTarget = {
   name: "مسجد آبی",
 };
 
-test("google: exact URL for each travel mode, no origin", () => {
+test("google: exact URL for each travel mode, no origin, route preview", () => {
   assert.equal(
     googleDirectionsUrl(istanbul, "car"),
-    "https://www.google.com/maps/dir/?api=1&destination=41.005400%2C28.976800&travelmode=driving&dir_action=navigate",
+    "https://www.google.com/maps/dir/?api=1&destination=41.005400%2C28.976800&travelmode=driving",
   );
-  assert.match(googleDirectionsUrl(istanbul, "walk"), /&travelmode=walking&/);
-  assert.match(googleDirectionsUrl(istanbul, "transit"), /&travelmode=transit&/);
+  assert.match(googleDirectionsUrl(istanbul, "walk"), /&travelmode=walking$/);
+  assert.match(googleDirectionsUrl(istanbul, "transit"), /&travelmode=transit$/);
   assert.ok(!googleDirectionsUrl(istanbul, "car").includes("origin="));
+  assert.ok(!googleDirectionsUrl(istanbul, "car").includes("dir_action"));
 });
 
 test("apple: dirflg per mode", () => {
