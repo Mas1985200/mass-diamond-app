@@ -22,6 +22,7 @@ import { executeTool } from "./tools/registry.ts";
 import { readTurn } from "./providers/groq.ts";
 import { openRound, type OpenSuccess } from "./providers/router.ts";
 import type { ToolOptions } from "./providers/types.ts";
+import { needsFreshInfo } from "./routing/freshness.ts";
 
 // Short "where is X" style questions must always use the map tool.
 // Covers formal and colloquial spellings: کجاست، کجاس، کجایه، کجایت، کجاش، کجا هست.
@@ -105,9 +106,15 @@ function isPlaceQuestion(text: string): boolean {
   );
 }
 
-function firstRoundOptions(
+// Tools that can answer a question about current information.
+const FRESH_TOOL_NAMES: readonly string[] = ["web_search", "get_market_prices"];
+
+// `fresh` is the router's decision: true = the answer needs live information,
+// false or null = no opinion (normal behaviour).
+export function firstRoundOptions(
   messages: readonly AIMessage[],
   tools: readonly ToolDefinition[],
+  fresh: boolean | null = null,
 ): ToolOptions {
   if (isPlaceQuestion(lastUserText(messages))) {
     const placeTools = tools.filter(
@@ -116,6 +123,16 @@ function firstRoundOptions(
 
     if (placeTools.length > 0) {
       return { tools: placeTools, toolChoice: "required" };
+    }
+  }
+
+  if (fresh === true) {
+    const freshTools = tools.filter((tool) =>
+      FRESH_TOOL_NAMES.includes(tool.function.name),
+    );
+
+    if (freshTools.some((tool) => tool.function.name === "web_search")) {
+      return { tools: freshTools, toolChoice: "required" };
     }
   }
 
@@ -347,9 +364,17 @@ export async function startAgent(
 ): Promise<AgentStart> {
   const tools = buildToolDefinitions(ctx);
 
+  // Ask the router only when a web tool exists and the map tool is not
+  // already forced by the place-question rule.
+  const canSearch = tools.some((tool) => tool.function.name === "web_search");
+  const fresh =
+    canSearch && !isPlaceQuestion(lastUserText(messages))
+      ? await needsFreshInfo(messages, signal)
+      : null;
+
   const opened = await openRound(
     messages.map(toOAIMessage),
-    firstRoundOptions(messages, tools),
+    firstRoundOptions(messages, tools, fresh),
     signal,
     new Set<string>(),
   );
