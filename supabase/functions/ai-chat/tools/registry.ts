@@ -23,7 +23,7 @@ function parseToolArguments(raw: string): Record<string, unknown> {
   }
 }
 
-export async function executeTool(
+async function runTool(
   name: string,
   rawArguments: string,
   ctx: ToolContext,
@@ -51,4 +51,41 @@ export async function executeTool(
 
     return { data: { error: describeError(error) } };
   }
+}
+
+// What is logged: the tool name, the time, success and the number of results.
+// Never the question, the arguments or the answer (privacy).
+function summarize(outcome: ToolOutcome): { ok: boolean; results: number } {
+  const data = outcome.data;
+
+  if (!isRecord(data)) {
+    return { ok: true, results: 0 };
+  }
+
+  const results = Array.isArray(data.results) ? data.results.length : 0;
+
+  return { ok: typeof data.error !== "string", results };
+}
+
+export async function executeTool(
+  name: string,
+  rawArguments: string,
+  ctx: ToolContext,
+  signal: AbortSignal,
+): Promise<ToolOutcome> {
+  const started = Date.now();
+  const outcome = await runTool(name, rawArguments, ctx, signal);
+  const { ok, results } = summarize(outcome);
+
+  console.log(
+    JSON.stringify({
+      event: "tool",
+      name: name.slice(0, 40),
+      ms: Date.now() - started,
+      ok,
+      results,
+    }),
+  );
+
+  return outcome;
 }
