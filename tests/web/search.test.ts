@@ -318,3 +318,85 @@ test("runWebSearch: failure, empty result and missing key are honest", async () 
 
   assert.deepEqual(noQuery.data, { error: "query is required." });
 });
+
+test("tavilySearch: news=true asks for the news topic and keeps the rest", async () => {
+  const fake = fakeFetch(() => jsonResponse({ results: [] }));
+
+  try {
+    await tavilySearch("q news-shape", "key", 4, signal, true, true);
+
+    const body = JSON.parse(String(fake.calls[0]?.init.body)) as Record<
+      string,
+      unknown
+    >;
+
+    assert.deepEqual(body, {
+      query: "q news-shape",
+      max_results: 4,
+      search_depth: "basic",
+      include_answer: false,
+      time_range: "week",
+      topic: "news",
+    });
+  } finally {
+    fake.restore();
+  }
+});
+
+test("tavilySearch: without news there is no topic field", async () => {
+  const fake = fakeFetch(() => jsonResponse({ results: [] }));
+
+  try {
+    await tavilySearch("q no-news-shape", "key", 4, signal);
+
+    const body = JSON.parse(String(fake.calls[0]?.init.body)) as Record<
+      string,
+      unknown
+    >;
+
+    assert.equal("topic" in body, false);
+  } finally {
+    fake.restore();
+  }
+});
+
+test("tavilySearch: if the news filter is refused, it retries without it", async () => {
+  const fake = fakeFetch((call) => {
+    const body = JSON.parse(String(call.init.body)) as Record<string, unknown>;
+
+    return "topic" in body
+      ? jsonResponse({ error: "bad request" }, 400)
+      : jsonResponse({
+          results: [
+            { title: "Story", url: "https://news-a.com/1", content: "Body" },
+          ],
+        });
+  });
+
+  try {
+    const results = await tavilySearch("q news-retry", "key", 4, signal, false, true);
+
+    assert.ok(results);
+    assert.equal(results.length, 1);
+    assert.equal(fake.calls.length, 2);
+  } finally {
+    fake.restore();
+  }
+});
+
+test("runWebSearch: the news flag from the model reaches the search", async () => {
+  const fake = fakeFetch(() => jsonResponse({ results: [] }));
+
+  try {
+    await runWebSearch({ query: "q run-news", news: true }, context, signal);
+
+    const body = JSON.parse(String(fake.calls[0]?.init.body)) as Record<
+      string,
+      unknown
+    >;
+
+    assert.equal(body.topic, "news");
+  } finally {
+    fake.restore();
+  }
+});
