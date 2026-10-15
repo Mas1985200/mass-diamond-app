@@ -1064,6 +1064,7 @@ function buildAttempts(query: string, hints: PlaceHints): Attempt[] {
   const texts = uniqueTexts([
     hints.localName ?? "",
     query,
+    hints.displayName ?? "",
     placeNameOf(query),
   ]);
 
