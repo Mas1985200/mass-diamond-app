@@ -35,8 +35,9 @@ export async function tavilySearch(
   maxResults: number,
   master: AbortSignal,
   fresh = false,
+  news = false,
 ): Promise<WebResult[] | null> {
-  const cacheKey = `${fresh ? "fresh" : "any"}:${maxResults}:${query.trim().toLowerCase()}`;
+  const cacheKey = `${fresh ? "fresh" : "any"}:${news ? "news" : "web"}:${maxResults}:${query.trim().toLowerCase()}`;
   const cached = webCache.get(cacheKey);
 
   if (cached && Date.now() - cached.at < WEB_CACHE_TTL_MS) {
@@ -46,21 +47,34 @@ export async function tavilySearch(
   const timed = createAttempt(master, TOOL_TIMEOUT_MS);
 
   try {
-    const response = await fetch("https://api.tavily.com/search", {
-      method: "POST",
-      headers: {
-        "Content-Type": "application/json",
-        Authorization: `Bearer ${apiKey}`,
-      },
-      body: JSON.stringify({
-        query,
-        max_results: maxResults,
-        search_depth: "basic",
-        include_answer: false,
-        ...(fresh ? { time_range: "week" } : {}),
-      }),
-      signal: timed.signal,
-    });
+    const send = (withNews: boolean): Promise<Response> =>
+      fetch("https://api.tavily.com/search", {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          Authorization: `Bearer ${apiKey}`,
+        },
+        body: JSON.stringify({
+          query,
+          max_results: maxResults,
+          search_depth: "basic",
+          include_answer: false,
+          ...(fresh ? { time_range: "week" } : {}),
+          ...(withNews ? { topic: "news" } : {}),
+        }),
+        signal: timed.signal,
+      });
+
+    let response = await send(news);
+
+    // If the news filter is refused, the ordinary search still works.
+    if (!response.ok && news) {
+      console.error(
+        `web_search news filter failed with status ${response.status}; retrying without it.`,
+      );
+
+      response = await send(false);
+    }
 
     if (!response.ok) {
       console.error(`web_search failed with status ${response.status}.`);
@@ -144,6 +158,7 @@ export async function runWebSearch(
   const query =
     typeof args.query === "string" ? args.query.trim().slice(0, 300) : "";
   const fresh = args.fresh === true;
+  const news = args.news === true;
 
   if (!query) {
     return { data: { error: "query is required." } };
@@ -159,6 +174,7 @@ export async function runWebSearch(
     WEB_MAX_RESULTS,
     signal,
     fresh,
+    news,
   );
 
   if (results === null) {
