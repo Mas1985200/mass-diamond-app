@@ -45,6 +45,7 @@ import {
   type WikiPlaceHit,
 } from "./wiki.ts";
 import { isNominatimBlocked } from "./nominatim-gate.ts";
+import { namesDisagree } from "./places-name.ts";
 
 const ABOUT_MAX_CHARS = 400;
 const AMBIGUOUS_IMPORTANCE = 0.55;
@@ -664,6 +665,7 @@ function buildPlaceAnswer(
   item: PlaceItem,
   about: string,
   description: string,
+  askedName = "",
 ): string {
   const isFa = ctx.lang === "fa";
   const address = formatAddress(ctx, item.address);
@@ -674,6 +676,16 @@ function buildPlaceAnswer(
 
   const parts: string[] = [];
 
+  // The map object has another name than the one asked: say so instead of
+  // presenting it as the place the user asked for.
+  if (askedName) {
+    parts.push(
+      isFa
+        ? `نتیجه‌ی دقیقی برای «${askedName}» پیدا نکردم؛ نزدیک‌ترین مورد روی نقشه «${item.name}» است.`
+        : `I could not find an exact match for "${askedName}"; the closest result on the map is "${item.name}".`,
+    );
+  }
+
   if (hasAddress) {
     parts.push(
       isFa
@@ -682,7 +694,7 @@ function buildPlaceAnswer(
     );
   }
 
-  const summary = trimAbout(about) || trimAbout(description);
+  const summary = askedName ? "" : trimAbout(about) || trimAbout(description);
 
   if (summary) {
     parts.push(summary);
@@ -1365,6 +1377,7 @@ async function runSpecificPlace(
   let about = "";
   let photos: PhotoItem[] = [];
   let displayItem: PlaceItem = chosen.item;
+  let askedName = "";
 
   if (!pick.ambiguous) {
     let shownName = chosen.item.name;
@@ -1385,7 +1398,19 @@ async function runSpecificPlace(
       }
     }
 
-    if (shownName === chosen.item.name && activeHints.displayName) {
+    // A map object without a Wikipedia page whose own name differs from the
+    // name asked is only the closest result; keep its real name.
+    const asked = activeHints.displayName || placeNameOf(query);
+
+    if (!chosen.wikipedia && namesDisagree(asked, chosen.item.name)) {
+      askedName = asked;
+    }
+
+    if (
+      shownName === chosen.item.name &&
+      activeHints.displayName &&
+      !askedName
+    ) {
       shownName = activeHints.displayName;
     }
 
@@ -1414,7 +1439,13 @@ async function runSpecificPlace(
 
   const finalText = pick.ambiguous
     ? buildAmbiguousAnswer(ctx, group)
-    : buildPlaceAnswer(ctx, displayItem, about, activeHints.description ?? "");
+    : buildPlaceAnswer(
+        ctx,
+        displayItem,
+        about,
+        activeHints.description ?? "",
+        askedName,
+      );
 
   return {
     data: {
