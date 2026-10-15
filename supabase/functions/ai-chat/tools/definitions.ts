@@ -185,6 +185,11 @@ export const WEB_SEARCH_TOOL: ToolDefinition = {
           description:
             "Set true when the answer must reflect today's or this week's data: prices, exchange rates, gold and coin rates, weather, live scores, breaking news. Old pages are then excluded so outdated numbers are never used. Set false for general knowledge or background questions.",
         },
+        news: {
+          type: "boolean",
+          description:
+            "Set true for news and current events (what happened, headlines, breaking stories). Then only news articles with their publication dates are searched, not website home pages or menus.",
+        },
       },
       required: ["query"],
     },
