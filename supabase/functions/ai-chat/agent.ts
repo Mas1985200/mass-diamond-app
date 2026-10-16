@@ -22,17 +22,12 @@ import { executeTool } from "./tools/registry.ts";
 import { readTurn } from "./providers/groq.ts";
 import { openRound, type OpenSuccess } from "./providers/router.ts";
 import type { ToolOptions } from "./providers/types.ts";
-import { needsFreshInfo } from "./routing/freshness.ts";
-
-// Short "where is X" style questions must always use the map tool.
-// Covers formal and colloquial spellings: کجاست، کجاس، کجایه، کجایت، کجاش، کجا هست.
-const PLACE_QUESTION_PATTERN =
-  /(کجاست|کجاس|کجایه|کجایت|کجاش|کجا\s?است|کجا\s?هست|لوکیشن|آدرس|where\s+is|where's)/i;
-
-// Every line must be short, so a long paragraph is never mistaken for a place
-// question. Several short lines (one place per line) are allowed together.
-const PLACE_QUESTION_MAX_LINE_LENGTH = 200;
-const PLACE_QUESTION_MAX_TOTAL_LENGTH = 1_000;
+import {
+  isPlaceQuestion,
+  lastUserText,
+  selectTools,
+  type Capability,
+} from "./routing/capability.ts";
 
 export type AgentStart =
   | {
@@ -77,63 +72,46 @@ function roundOptions(
   };
 }
 
-function lastUserText(messages: readonly AIMessage[]): string {
-  for (let index = messages.length - 1; index >= 0; index -= 1) {
-    const message = messages[index];
-
-    if (message && message.role === "user") {
-      return message.content;
-    }
-  }
-
-  return "";
-}
-
-function isPlaceQuestion(text: string): boolean {
-  if (text.length > PLACE_QUESTION_MAX_TOTAL_LENGTH) {
-    return false;
-  }
-
-  const lines = text
-    .split(/\n+/)
-    .map((line) => line.trim())
-    .filter((line) => line.length > 0);
-
-  return (
-    lines.length > 0 &&
-    lines.every((line) => line.length <= PLACE_QUESTION_MAX_LINE_LENGTH) &&
-    PLACE_QUESTION_PATTERN.test(text)
-  );
-}
-
 // Tools that can answer a question about current information.
 const FRESH_TOOL_NAMES: readonly string[] = ["web_search", "get_market_prices"];
 
-// `fresh` is the router's decision: true = the answer needs live information,
-// false or null = no opinion (normal behaviour).
+// `capability` is the router's decision: it says what kind of question this is
+// and `tools` already holds only the tools that kind may use. null = unknown.
 export function firstRoundOptions(
   messages: readonly AIMessage[],
   tools: readonly ToolDefinition[],
-  fresh: boolean | null = null,
+  capability: Capability | null = null,
 ): ToolOptions {
-  if (isPlaceQuestion(lastUserText(messages))) {
-    const placeTools = tools.filter(
-      (tool) => tool.function.name === "find_place",
-    );
+  const only = (names: readonly string[]): ToolDefinition[] =>
+    tools.filter((tool) => names.includes(tool.function.name));
+
+  if (isPlaceQuestion(lastUserText(messages)) || capability === "place") {
+    const placeTools = only(["find_place"]);
 
     if (placeTools.length > 0) {
       return { tools: placeTools, toolChoice: "required" };
     }
   }
 
-  if (fresh === true) {
-    const freshTools = tools.filter((tool) =>
-      FRESH_TOOL_NAMES.includes(tool.function.name),
-    );
+  if (capability === "fresh") {
+    const freshTools = only(FRESH_TOOL_NAMES);
 
     if (freshTools.some((tool) => tool.function.name === "web_search")) {
       return { tools: freshTools, toolChoice: "required" };
     }
+  }
+
+  if (capability === "know") {
+    const knowledgeTools = only(["lookup_knowledge"]);
+
+    if (knowledgeTools.length > 0) {
+      return { tools: knowledgeTools, toolChoice: "required" };
+    }
+  }
+
+  // No tool is needed (for example plain conversation): a single round.
+  if (tools.length === 0) {
+    return null;
   }
 
   return roundOptions(0, true, tools);
@@ -361,20 +339,13 @@ export async function startAgent(
   messages: readonly AIMessage[],
   ctx: ToolContext,
   signal: AbortSignal,
+  capability: Capability | null = null,
 ): Promise<AgentStart> {
-  const tools = buildToolDefinitions(ctx);
-
-  // Ask the router only when a web tool exists and the map tool is not
-  // already forced by the place-question rule.
-  const canSearch = tools.some((tool) => tool.function.name === "web_search");
-  const fresh =
-    canSearch && !isPlaceQuestion(lastUserText(messages))
-      ? await needsFreshInfo(messages, signal)
-      : null;
+  const tools = selectTools(buildToolDefinitions(ctx), capability);
 
   const opened = await openRound(
     messages.map(toOAIMessage),
-    firstRoundOptions(messages, tools, fresh),
+    firstRoundOptions(messages, tools, capability),
     signal,
     new Set<string>(),
   );
