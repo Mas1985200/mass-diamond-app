@@ -1,7 +1,10 @@
 // supabase/functions/ai-chat/tools/knowledge.ts
-// lookup_knowledge tool: encyclopedic facts from Wikipedia (any language) and
-// scholarly papers from OpenAlex (a free index of hundreds of millions of
-// academic works from universities and journals worldwide). No API key needed.
+// lookup_knowledge tool: verified background knowledge.
+//  - Wikipedia in any language: the best article is read in full and only the
+//    passages that answer the user's question are returned (not just the
+//    introduction), so details such as "how does X form" are really grounded.
+//  - OpenAlex: scholarly papers from universities and journals worldwide.
+// No API key is needed.
 
 import { NOMINATIM_USER_AGENT, WIKI_TIMEOUT_MS } from "../config.ts";
 import type { ToolContext, ToolOutcome } from "../types.ts";
@@ -9,10 +12,19 @@ import { describeError, isRecord, pickString } from "../lib/util.ts";
 import { createAttempt } from "../lib/http.ts";
 
 const KNOWLEDGE_QUERY_MAX_CHARS = 200;
+const KNOWLEDGE_FOCUS_MAX_CHARS = 300;
 const WIKI_MAX_ARTICLES = 2;
-const WIKI_EXTRACT_CHARS = 900;
+const WIKI_INTRO_CHARS = 700;
+const SECOND_ARTICLE_CHARS = 400;
+const PASSAGE_BUDGET_CHARS = 3_000;
+const PASSAGE_MIN_CHARS = 60;
+const PASSAGE_MAX_CHARS = 800;
+const PASSAGE_INTRO_CHARS = 500;
 const PAPERS_MAX = 4;
 const WIKI_LANG_PATTERN = /^[a-z]{2,3}(?:-[a-z]{2,8})?$/;
+
+const RESULT_NOTE =
+  "Prefer these passages over your own memory when they differ. If they do not cover the question, answer from careful reasoning and say in one short sentence what you could not verify.";
 
 export type KnowledgeArticle = {
   readonly title: string;
@@ -29,9 +41,14 @@ export type KnowledgePaper = {
   readonly doi: string;
 };
 
-function cleanQuery(value: unknown): string {
+export type Chunk = {
+  readonly heading: string;
+  readonly text: string;
+};
+
+function cleanText(value: unknown, max: number): string {
   return typeof value === "string"
-    ? value.replace(/\s+/g, " ").trim().slice(0, KNOWLEDGE_QUERY_MAX_CHARS)
+    ? value.replace(/\s+/g, " ").trim().slice(0, max)
     : "";
 }
 
@@ -40,6 +57,189 @@ function pickWikiLang(value: unknown, fallback: string): string {
 
   return WIKI_LANG_PATTERN.test(lang) ? lang : fallback;
 }
+
+// ---------------------------------------------------------------------------
+// Passage selection (pure functions, no network)
+// ---------------------------------------------------------------------------
+
+const CJK_PATTERN =
+  /[\p{Script=Han}\p{Script=Hiragana}\p{Script=Katakana}\p{Script=Hangul}]/u;
+
+// Lower case, unify Arabic/Persian letter variants, drop diacritics, and split
+// into words. Chinese, Japanese and Korean have no spaces, so they are split
+// into pairs of characters.
+export function tokenize(text: string): string[] {
+  const normalized = text
+    .toLowerCase()
+    .replace(/ي/g, "ی")
+    .replace(/ك/g, "ک")
+    .replace(/[\u064B-\u065F\u0640]/g, "");
+
+  const words = normalized.match(/[\p{L}\p{N}]+/gu) ?? [];
+  const tokens: string[] = [];
+
+  for (const word of words) {
+    if (CJK_PATTERN.test(word)) {
+      const chars = [...word];
+
+      if (chars.length === 1) {
+        tokens.push(word);
+      }
+
+      for (let index = 0; index + 1 < chars.length; index += 1) {
+        tokens.push(`${chars[index]}${chars[index + 1]}`);
+      }
+    } else if (word.length >= 2) {
+      tokens.push(word);
+    }
+  }
+
+  return tokens;
+}
+
+const HEADING_PATTERN = /^\s*={2,}\s*(.+?)\s*={2,}\s*$/;
+
+function clip(text: string, max: number): string {
+  return text.length > max ? `${text.slice(0, max).trimEnd()}…` : text;
+}
+
+// Splits a plain-text Wikipedia article (sections marked "== Title ==") into
+// paragraphs, each remembering the section it belongs to.
+export function splitIntoChunks(fullText: string): Chunk[] {
+  const chunks: Chunk[] = [];
+  let heading = "";
+  let lines: string[] = [];
+
+  const flush = (): void => {
+    const text = lines.join(" ").replace(/\s+/g, " ").trim();
+
+    lines = [];
+
+    if (text.length >= PASSAGE_MIN_CHARS) {
+      chunks.push({ heading, text: clip(text, PASSAGE_MAX_CHARS) });
+    }
+  };
+
+  for (const line of fullText.split("\n")) {
+    const match = HEADING_PATTERN.exec(line);
+
+    if (match) {
+      flush();
+      heading = (match[1] ?? "").trim();
+    } else if (line.trim().length === 0) {
+      flush();
+    } else {
+      lines.push(line.trim());
+    }
+  }
+
+  flush();
+
+  return chunks;
+}
+
+// Picks the paragraphs that best match the question (term frequency weighted
+// by how rare each term is, with a bonus for matching section titles), always
+// keeps the opening paragraph for context, stays inside the character budget
+// and returns the result in the article's own order.
+export function selectPassages(
+  fullText: string,
+  focus: string,
+  budget: number = PASSAGE_BUDGET_CHARS,
+): string[] {
+  const chunks = splitIntoChunks(fullText);
+
+  if (chunks.length === 0) {
+    return [];
+  }
+
+  const queryTokens = [...new Set(tokenize(focus))];
+  const total = chunks.length;
+  const bodies = chunks.map((chunk) => tokenize(chunk.text));
+  const headings = chunks.map((chunk) => new Set(tokenize(chunk.heading)));
+  const documentFrequency = new Map<string, number>();
+
+  for (const token of queryTokens) {
+    let count = 0;
+
+    for (let index = 0; index < total; index += 1) {
+      if (
+        bodies[index]?.includes(token) ||
+        headings[index]?.has(token)
+      ) {
+        count += 1;
+      }
+    }
+
+    documentFrequency.set(token, count);
+  }
+
+  const scores = chunks.map((_chunk, index) => {
+    let score = 0;
+
+    for (const token of queryTokens) {
+      const df = documentFrequency.get(token) ?? 0;
+      const idf = Math.log(1 + (total - df + 0.5) / (df + 0.5));
+      const body = bodies[index] ?? [];
+      const tf = body.reduce((sum, word) => sum + (word === token ? 1 : 0), 0);
+
+      if (tf > 0) {
+        score += idf * (1 + Math.log(tf));
+      }
+
+      if (headings[index]?.has(token)) {
+        score += idf * 1.5;
+      }
+    }
+
+    return score;
+  });
+
+  const picked = new Set<number>([0]);
+  let used = Math.min(chunks[0]?.text.length ?? 0, PASSAGE_INTRO_CHARS);
+
+  const ranked = chunks
+    .map((_chunk, index) => index)
+    .filter((index) => index !== 0)
+    .sort((a, b) => (scores[b] ?? 0) - (scores[a] ?? 0) || a - b);
+
+  const anyMatch = ranked.some((index) => (scores[index] ?? 0) > 0);
+
+  // With no overlap at all the article's opening paragraphs are the best guess.
+  const order = anyMatch
+    ? ranked.filter((index) => (scores[index] ?? 0) > 0)
+    : [...ranked].sort((a, b) => a - b);
+
+  for (const index of order) {
+    const length = chunks[index]?.text.length ?? 0;
+
+    if (used + length > budget) {
+      continue;
+    }
+
+    picked.add(index);
+    used += length;
+  }
+
+  return [...picked]
+    .sort((a, b) => a - b)
+    .map((index) => {
+      const chunk = chunks[index];
+
+      if (!chunk) {
+        return "";
+      }
+
+      const text = index === 0 ? clip(chunk.text, PASSAGE_INTRO_CHARS) : chunk.text;
+
+      return chunk.heading ? `${chunk.heading}: ${text}` : text;
+    })
+    .filter((passage) => passage.length > 0);
+}
+
+// ---------------------------------------------------------------------------
+// Network
+// ---------------------------------------------------------------------------
 
 async function fetchJson(
   url: string,
@@ -88,7 +288,7 @@ export async function fetchWikipediaArticles(
     prop: "extracts",
     exintro: "1",
     explaintext: "1",
-    exchars: String(WIKI_EXTRACT_CHARS),
+    exchars: String(WIKI_INTRO_CHARS),
     redirects: "1",
   });
 
@@ -126,6 +326,37 @@ export async function fetchWikipediaArticles(
   return ranked
     .sort((a, b) => a.index - b.index)
     .map((entry) => entry.article);
+}
+
+// The whole article as plain text, sections marked "== Title ==".
+export async function fetchWikipediaFullText(
+  title: string,
+  lang: string,
+  master: AbortSignal,
+): Promise<string> {
+  const params = new URLSearchParams({
+    action: "query",
+    format: "json",
+    formatversion: "2",
+    prop: "extracts",
+    explaintext: "1",
+    exsectionformat: "wiki",
+    titles: title,
+    redirects: "1",
+  });
+
+  const json = await fetchJson(
+    `https://${lang}.wikipedia.org/w/api.php?${params.toString()}`,
+    master,
+  );
+
+  const pages =
+    isRecord(json) && isRecord(json.query) && Array.isArray(json.query.pages)
+      ? json.query.pages
+      : [];
+  const first: unknown = pages[0];
+
+  return isRecord(first) ? pickString(first, "extract") : "";
 }
 
 function authorNames(raw: unknown): string {
@@ -207,45 +438,67 @@ export async function runKnowledgeLookup(
   ctx: ToolContext,
   signal: AbortSignal,
 ): Promise<ToolOutcome> {
-  const query = cleanQuery(args.query);
+  const query = cleanText(args.query, KNOWLEDGE_QUERY_MAX_CHARS);
 
   if (!query) {
     return { data: { error: "query is required." } };
   }
 
+  const focus = cleanText(args.focus, KNOWLEDGE_FOCUS_MAX_CHARS);
   const wantsPapers = args.scholarly === true;
   const lang = pickWikiLang(args.wiki_lang, ctx.lang);
 
+  const papersPromise = wantsPapers
+    ? fetchScholarlyPapers(query, signal)
+    : Promise.resolve<KnowledgePaper[]>([]);
+
   // Articles in the asked language first; English is the world's widest
   // encyclopedia, so it is the fallback when nothing is found.
-  const [first, papers] = await Promise.all([
-    fetchWikipediaArticles(query, lang, signal),
-    wantsPapers ? fetchScholarlyPapers(query, signal) : Promise.resolve([]),
-  ]);
+  let articles = await fetchWikipediaArticles(query, lang, signal);
 
-  const articles =
-    first.length > 0 || lang === "en"
-      ? first
-      : await fetchWikipediaArticles(query, "en", signal);
+  if (articles.length === 0 && lang !== "en") {
+    articles = await fetchWikipediaArticles(query, "en", signal);
+  }
 
-  if (articles.length === 0 && papers.length === 0) {
+  const top = articles[0];
+  let passages: string[] = [];
+
+  if (top) {
+    const fullText = await fetchWikipediaFullText(top.title, top.lang, signal);
+
+    passages = selectPassages(fullText, `${focus} ${query}`);
+
+    if (passages.length === 0) {
+      passages = [top.summary];
+    }
+  }
+
+  const papers = await papersPromise;
+
+  if (!top && papers.length === 0) {
     return {
       data: {
-        articles: [],
-        papers: [],
+        results: [],
         note: "Nothing was found for this query. Answer from general knowledge, say you could not verify it, and never invent details.",
       },
     };
   }
 
+  const results = articles.map((article, index) =>
+    index === 0
+      ? { title: article.title, language: article.lang, passages }
+      : {
+          title: article.title,
+          language: article.lang,
+          summary: clip(article.summary, SECOND_ARTICLE_CHARS),
+        },
+  );
+
   return {
     data: {
-      articles: articles.map((article) => ({
-        title: article.title,
-        language: article.lang,
-        summary: article.summary,
-      })),
+      results,
       ...(wantsPapers ? { papers } : {}),
+      note: RESULT_NOTE,
     },
   };
 }
