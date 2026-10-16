@@ -3,6 +3,8 @@
 //  - Wikipedia in any language: the best article is read in full and only the
 //    passages that answer the user's question are returned (not just the
 //    introduction), so details such as "how does X form" are really grounded.
+//  - The same article in the user's language (when it exists) is added as a
+//    terminology source, so technical terms are copied, not guessed.
 //  - OpenAlex: scholarly papers from universities and journals worldwide.
 // No API key is needed.
 
@@ -20,11 +22,12 @@ const PASSAGE_BUDGET_CHARS = 3_000;
 const PASSAGE_MIN_CHARS = 60;
 const PASSAGE_MAX_CHARS = 800;
 const PASSAGE_INTRO_CHARS = 500;
+const TERMINOLOGY_BUDGET_CHARS = 1_100;
 const PAPERS_MAX = 4;
 const WIKI_LANG_PATTERN = /^[a-z]{2,3}(?:-[a-z]{2,8})?$/;
 
 const RESULT_NOTE =
-  "Prefer these passages over your own memory when they differ. If they do not cover the question, answer from careful reasoning and say in one short sentence what you could not verify.";
+  "Prefer these passages over your own memory when they differ. If they do not cover the question, answer from careful reasoning and say in one short sentence what you could not verify. When a terminology block is present, take the technical terms in the user's language from it exactly as written there instead of translating them yourself.";
 
 export type KnowledgeArticle = {
   readonly title: string;
@@ -359,6 +362,50 @@ export async function fetchWikipediaFullText(
   return isRecord(first) ? pickString(first, "extract") : "";
 }
 
+// Title of the same article in another language, from a langlinks response.
+export function parseLanglinkTitle(json: unknown): string {
+  const pages =
+    isRecord(json) && isRecord(json.query) && Array.isArray(json.query.pages)
+      ? json.query.pages
+      : [];
+  const first: unknown = pages[0];
+
+  if (!isRecord(first) || !Array.isArray(first.langlinks)) {
+    return "";
+  }
+
+  const link: unknown = first.langlinks[0];
+
+  return isRecord(link) ? pickString(link, "title").trim() : "";
+}
+
+// The same article in the user's language, when Wikipedia has one. It is the
+// source of the standard technical terms of that language.
+export async function fetchLanglinkTitle(
+  title: string,
+  fromLang: string,
+  toLang: string,
+  master: AbortSignal,
+): Promise<string> {
+  const params = new URLSearchParams({
+    action: "query",
+    format: "json",
+    formatversion: "2",
+    prop: "langlinks",
+    lllang: toLang,
+    lllimit: "1",
+    titles: title,
+    redirects: "1",
+  });
+
+  return parseLanglinkTitle(
+    await fetchJson(
+      `https://${fromLang}.wikipedia.org/w/api.php?${params.toString()}`,
+      master,
+    ),
+  );
+}
+
 function authorNames(raw: unknown): string {
   if (!Array.isArray(raw)) {
     return "";
@@ -473,6 +520,43 @@ export async function runKnowledgeLookup(
     }
   }
 
+  // The article's terms in the user's own language (when it exists there).
+  let terminology: { title: string; language: string; passages: string[] } | null =
+    null;
+
+  if (top && top.lang !== ctx.lang) {
+    const localTitle = await fetchLanglinkTitle(
+      top.title,
+      top.lang,
+      ctx.lang,
+      signal,
+    );
+
+    if (localTitle) {
+      const localText = await fetchWikipediaFullText(
+        localTitle,
+        ctx.lang,
+        signal,
+      );
+
+      // The original term is usually written in brackets in the local
+      // article, so the question's own words still find the right passages.
+      const localPassages = selectPassages(
+        localText,
+        `${focus} ${query}`,
+        TERMINOLOGY_BUDGET_CHARS,
+      );
+
+      if (localPassages.length > 0) {
+        terminology = {
+          title: localTitle,
+          language: ctx.lang,
+          passages: localPassages,
+        };
+      }
+    }
+  }
+
   const papers = await papersPromise;
 
   if (!top && papers.length === 0) {
@@ -497,6 +581,7 @@ export async function runKnowledgeLookup(
   return {
     data: {
       results,
+      ...(terminology ? { terminology } : {}),
       ...(wantsPapers ? { papers } : {}),
       note: RESULT_NOTE,
     },
