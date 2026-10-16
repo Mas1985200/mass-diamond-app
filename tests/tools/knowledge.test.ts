@@ -2,6 +2,7 @@ import assert from "node:assert/strict";
 import test from "node:test";
 
 import {
+  parseLanglinkTitle,
   selectPassages,
   splitIntoChunks,
   tokenize,
@@ -59,4 +60,34 @@ test("selectPassages falls back to the opening when nothing matches", () => {
 
 test("selectPassages handles empty text", () => {
   assert.deepEqual(selectPassages("", "anything"), []);
+});
+
+test("parseLanglinkTitle reads the title in the other language", () => {
+  const json = {
+    query: { pages: [{ title: "Black hole", langlinks: [{ lang: "fa", title: "سیاه‌چاله" }] }] },
+  };
+
+  assert.equal(parseLanglinkTitle(json), "سیاه‌چاله");
+});
+
+test("parseLanglinkTitle returns an empty text when there is no link", () => {
+  assert.equal(parseLanglinkTitle({ query: { pages: [{ title: "X" }] } }), "");
+  assert.equal(parseLanglinkTitle(null), "");
+  assert.equal(parseLanglinkTitle({ query: { pages: [] } }), "");
+});
+
+test("selectPassages finds a local passage through the bracketed original term", () => {
+  const local = [
+    "سیاه‌چاله ناحیه‌ای از فضازمان است که گرانش در آن بسیار قوی است و هیچ چیز نمی‌تواند از آن بگریزد.",
+    "",
+    "== ستاره نوترونی ==",
+    "فشار تبهگنی (degeneracy pressure) نوترون‌ها از فروپاشی ستاره نوترونی جلوگیری می‌کند تا جرم از حد معینی بالاتر نرود.",
+    "",
+    "== تاریخچه ==",
+    "ایده‌ی جسمی که نور هم نتواند از آن بگریزد در سدهٔ هجدهم مطرح شد و بعدها گسترش یافت.",
+  ].join("\n");
+
+  const passages = selectPassages(local, "neutron degeneracy pressure limit", 300);
+
+  assert.ok(passages.some((passage) => passage.includes("تبهگنی")));
 });
