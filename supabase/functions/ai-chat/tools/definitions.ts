@@ -215,6 +215,11 @@ export const KNOWLEDGE_TOOL: ToolDefinition = {
           description:
             "Wikipedia language code to search first: the user's language (fa, en, ar, tr, fr, de, es, ru, zh, ja, ko, hi ...) or the language where the topic has the richest article. Falls back to English automatically.",
         },
+        focus: {
+          type: "string",
+          description:
+            "The user's actual question in a few words (for example 'how does it form', 'what limits its mass'). The most relevant passages of the article are returned for it, so always fill it in.",
+        },
         scholarly: {
           type: "boolean",
           description:
