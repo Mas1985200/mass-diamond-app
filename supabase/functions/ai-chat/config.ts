@@ -3,8 +3,8 @@
 
 export const MAX_MESSAGE_LENGTH = 32_000;
 export const MAX_HISTORY_MESSAGES = 40;
-export const HISTORY_CHAR_BUDGET = 3_000;
-export const HISTORY_MESSAGE_CAP = 500;
+export const HISTORY_CHAR_BUDGET = 6_000;
+export const HISTORY_MESSAGE_CAP = 1_200;
 export const TOOL_RESULT_CHAR_CAP = 6_000;
 
 export const CONNECT_TIMEOUT_MS = 12_000;
@@ -15,7 +15,7 @@ export const TOTAL_TIMEOUT_MS = 50_000;
 export const MAX_TOOL_ROUNDS = 2;
 export const MAX_CARDS = 10;
 export const MAX_TOOL_CALLS_PER_ROUND = 8;
-export const MAX_OUTPUT_TOKENS = 2_000;
+export const MAX_OUTPUT_TOKENS = 3_000;
 export const TEMPERATURE = 0.4;
 
 // The public Nominatim service allows about one request per second.
