@@ -33,6 +33,7 @@ import { buildSystemPrompt, type MemoryContext } from "./prompt/system.ts";
 import { addFact, loadFacts, loadRecentSummaries } from "./memory/store.ts";
 import { summarizePreviousConversation } from "./memory/summary.ts";
 import { startAgent } from "./agent.ts";
+import { routeCapability } from "./routing/capability.ts";
 import { createSseResponse } from "./sse.ts";
 
 const RECALL_PATTERN =
@@ -210,19 +211,26 @@ Deno.serve(async (request: Request): Promise<Response> => {
       );
     }
 
-    const aiMessages: AIMessage[] = [
-      { role: "system", content: buildSystemPrompt(ctx, memory) },
-      ...history,
-      { role: "user", content: message },
-    ];
-
     const master = new AbortController();
     const totalTimer = setTimeout(() => master.abort(), TOTAL_TIMEOUT_MS);
 
     let started: Awaited<ReturnType<typeof startAgent>>;
 
     try {
-      started = await startAgent(aiMessages, ctx, master.signal);
+      // What kind of question is this? The answer decides which prompt rules
+      // and tools the model receives (null = unknown: everything).
+      const conversation: AIMessage[] = [
+        ...history,
+        { role: "user", content: message },
+      ];
+      const capability = await routeCapability(conversation, master.signal);
+
+      const aiMessages: AIMessage[] = [
+        { role: "system", content: buildSystemPrompt(ctx, memory, capability) },
+        ...conversation,
+      ];
+
+      started = await startAgent(aiMessages, ctx, master.signal, capability);
     } catch (error) {
       clearTimeout(totalTimer);
       throw error;
