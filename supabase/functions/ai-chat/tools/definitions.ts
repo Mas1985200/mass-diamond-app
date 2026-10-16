@@ -196,6 +196,36 @@ export const WEB_SEARCH_TOOL: ToolDefinition = {
   },
 };
 
+export const KNOWLEDGE_TOOL: ToolDefinition = {
+  type: "function",
+  function: {
+    name: "lookup_knowledge",
+    description:
+      "Look up verified background knowledge from Wikipedia (any language) and, when asked, scholarly papers from universities and journals worldwide (OpenAlex). Use it for factual, educational and scientific questions where accuracy matters: science (physics, chemistry, biology, medicine, space and astronauts), history, geography, technology, cooking and food science, health facts, culture, people, concepts and definitions. Not for news, prices, weather or other live data (use web_search or get_market_prices), not for dates or times, not for where a place is, and not for chit-chat, jokes, writing, translation or math.",
+    parameters: {
+      type: "object",
+      properties: {
+        query: {
+          type: "string",
+          description:
+            "Short, specific topic to look up, with the user's spelling mistakes silently corrected. Prefer the topic's well-known name (English works best for most science topics).",
+        },
+        wiki_lang: {
+          type: "string",
+          description:
+            "Wikipedia language code to search first: the user's language (fa, en, ar, tr, fr, de, es, ru, zh, ja, ko, hi ...) or the language where the topic has the richest article. Falls back to English automatically.",
+        },
+        scholarly: {
+          type: "boolean",
+          description:
+            "Set true only for research-level questions: studies, papers, evidence, 'what does science say', or when the user asks for sources. Adds peer-reviewed papers (title, authors, year, venue, citations, DOI).",
+        },
+      },
+      required: ["query"],
+    },
+  },
+};
+
 export const REMEMBER_TOOL: ToolDefinition = {
   type: "function",
   function: {
@@ -221,6 +251,7 @@ export function buildToolDefinitions(ctx: ToolContext): ToolDefinition[] {
     GET_DATETIME_TOOL,
     FIND_PLACE_TOOL,
     MARKET_PRICES_TOOL,
+    KNOWLEDGE_TOOL,
   ];
 
   if (ctx.tavilyKey) {
