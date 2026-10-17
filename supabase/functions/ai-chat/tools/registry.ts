@@ -9,6 +9,7 @@ import { runWebSearch } from "./web.ts";
 import { runRemember } from "./remember.ts";
 import { runMarketPrices } from "./prices.ts";
 import { runKnowledgeLookup } from "./knowledge.ts";
+import { runMedicalLookup } from "./medical.ts";
 
 function parseToolArguments(raw: string): Record<string, unknown> {
   if (!raw.trim()) {
@@ -44,6 +45,8 @@ async function runTool(
         return await runMarketPrices(args, ctx, signal);
       case "lookup_knowledge":
         return await runKnowledgeLookup(args, ctx, signal);
+      case "lookup_medical":
+        return await runMedicalLookup(args, ctx, signal);
       case "remember":
         return await runRemember(args, ctx);
       default:
@@ -65,7 +68,13 @@ function summarize(outcome: ToolOutcome): { ok: boolean; results: number } {
     return { ok: true, results: 0 };
   }
 
-  const results = Array.isArray(data.results) ? data.results.length : 0;
+  const count = (key: string): number => {
+    const value = data[key];
+
+    return Array.isArray(value) ? value.length : 0;
+  };
+
+  const results = count("results") + count("topics") + count("studies");
 
   return { ok: typeof data.error !== "string", results };
 }
