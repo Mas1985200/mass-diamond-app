@@ -23,7 +23,7 @@ const CONTEXT_CHARS = 400;
 // both the tool list and the prompt rules, so they can never disagree.
 export const TOOLS_BY_CAPABILITY: Record<Capability, readonly string[]> = {
   chat: ["remember"],
-  know: ["lookup_knowledge"],
+  know: ["lookup_knowledge", "lookup_medical"],
   fresh: ["web_search", "get_market_prices"],
   place: ["find_place"],
   time: ["get_datetime"],
