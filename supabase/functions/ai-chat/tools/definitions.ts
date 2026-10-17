@@ -201,7 +201,7 @@ export const KNOWLEDGE_TOOL: ToolDefinition = {
   function: {
     name: "lookup_knowledge",
     description:
-      "Look up verified background knowledge from Wikipedia (any language) and, when asked, scholarly papers from universities and journals worldwide (OpenAlex). Use it for factual, educational and scientific questions where accuracy matters: science (physics, chemistry, biology, medicine, space and astronauts), history, geography, technology, cooking and food science, health facts, culture, people, concepts and definitions. Not for news, prices, weather or other live data (use web_search or get_market_prices), not for dates or times, not for where a place is, and not for chit-chat, jokes, writing, translation or math.",
+      "Look up verified background knowledge from Wikipedia (any language) and, when asked, scholarly papers from universities and journals worldwide (OpenAlex). Use it for factual, educational and scientific questions where accuracy matters: science (physics, chemistry, biology, space and astronauts), history, geography, technology, cooking and food science, culture, people, concepts and definitions. Not for health, disease or medicine questions (use lookup_medical), not for news, prices, weather or other live data (use web_search or get_market_prices), not for dates or times, not for where a place is, and not for chit-chat, jokes, writing, translation or math.",
     parameters: {
       type: "object",
       properties: {
@@ -224,6 +224,36 @@ export const KNOWLEDGE_TOOL: ToolDefinition = {
           type: "boolean",
           description:
             "Set true only for research-level questions: studies, papers, evidence, 'what does science say', or when the user asks for sources. Adds peer-reviewed papers (title, authors, year, venue, citations, DOI).",
+        },
+      },
+      required: ["query"],
+    },
+  },
+};
+
+export const MEDICAL_TOOL: ToolDefinition = {
+  type: "function",
+  function: {
+    name: "lookup_medical",
+    description:
+      "Authoritative health information: MedlinePlus (US National Library of Medicine patient information on diseases, conditions, symptoms, tests, treatments and prevention) and, for research questions, PubMed studies labelled with their kind of evidence. Use it for every question about a disease, condition, symptom, medical test, treatment, prevention or other health topic. It gives general information only: never a diagnosis, never a dose for a person, and not for emergencies (those are answered at once with the emergency instruction). Not for news, prices or places.",
+    parameters: {
+      type: "object",
+      properties: {
+        query: {
+          type: "string",
+          description:
+            "ONE health topic as its standard English medical name, spelling mistakes corrected (for example 'type 2 diabetes', 'migraine', 'iron deficiency anemia', 'hypertension'). Always English, whatever language the user writes in.",
+        },
+        focus: {
+          type: "string",
+          description:
+            "What the user actually wants to know, in a few English words (for example 'symptoms', 'treatment options', 'warning signs', 'prevention', 'causes'). The most relevant sections of the page are returned for it, so always fill it in.",
+        },
+        research: {
+          type: "boolean",
+          description:
+            "Set true only for questions about evidence, studies, how well a treatment works, comparisons, or when the user asks for sources. Adds PubMed articles ranked guideline, meta-analysis, systematic review, randomized trial, review, with year and abstract.",
         },
       },
       required: ["query"],
@@ -257,6 +287,7 @@ export function buildToolDefinitions(ctx: ToolContext): ToolDefinition[] {
     FIND_PLACE_TOOL,
     MARKET_PRICES_TOOL,
     KNOWLEDGE_TOOL,
+    MEDICAL_TOOL,
   ];
 
   if (ctx.tavilyKey) {
