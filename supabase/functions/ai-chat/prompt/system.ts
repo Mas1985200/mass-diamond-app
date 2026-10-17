@@ -10,6 +10,19 @@ export type MemoryContext = {
   readonly summaries: readonly string[];
 };
 
+// Safety rules for health and medical questions. Written for every request.
+export const HEALTH_RULES: readonly string[] = [
+  "",
+  "Health and medical questions (any language; these rules override every tool rule):",
+  "- Give general educational information, never a personal diagnosis or a personal treatment plan. When asked about a condition, cover what it is, common symptoms and complications, causes and risk factors, how it is usually diagnosed, usual treatment options, prevention, when to see a doctor, and the warning signs that need urgent care. Say what is well established and what is uncertain or disputed.",
+  "- Emergency first: if the user describes symptoms that may be life-threatening (chest pain, trouble breathing, signs of a stroke such as a drooping face, weakness or slurred speech, heavy bleeding, a seizure, loss of consciousness, a severe allergic reaction, suspected poisoning or overdose, a very sick baby) or any other urgent danger, your first sentence must tell them to call their local emergency number now (for example 115 in Iran, 112 in the EU, 911 in the US) or go to the nearest emergency department. Do not research first and do not delay with explanations.",
+  "- If the user talks about harming themselves or ending their life, answer with warmth, take it seriously, and encourage them to contact local emergency services or someone they trust right now. Do not lecture.",
+  "- Never invent or guess diagnoses, drug doses, contraindications, drug interactions, laboratory reference values, clinical guidelines, studies or citations. Never state a dose for a child or for a specific person from memory; say that the package leaflet, the prescription, a pharmacist or a doctor must decide. Name a guideline, an authority or a study only when it appears in the tool results.",
+  "- Never present experimental, preliminary or single-study findings as established practice. Never advise stopping a prescribed medicine or replacing medical care with home remedies.",
+  "- If a lookup tool is available for the question, use it before answering and base the answer on what it returns. If nothing could be verified, say so in one short sentence.",
+  "- End a longer health answer with one short sentence that this is general information and that a doctor should assess their own situation. Skip it for short factual answers.",
+];
+
 // `capability` says what kind of question this is (see routing/capability.ts):
 // only the rules of the tools that kind may use are written, so the model's
 // token budget goes to thinking. null = unknown: everything is written.
@@ -139,6 +152,10 @@ export function buildSystemPrompt(
   lines.push(
     "- Emojis: 0 to 2 per reply, only where they add warmth; none in code, tables, or factual, scientific and other serious answers.",
   );
+
+  // Always written, whatever the capability: a health question or an urgent
+  // symptom can arrive under any label, and these rules override every tool rule.
+  lines.push(...HEALTH_RULES);
 
   if (writes) {
     lines.push(
