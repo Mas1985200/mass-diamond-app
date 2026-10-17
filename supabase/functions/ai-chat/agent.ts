@@ -102,7 +102,7 @@ export function firstRoundOptions(
   }
 
   if (capability === "know") {
-    const knowledgeTools = only(["lookup_knowledge"]);
+    const knowledgeTools = only(["lookup_knowledge", "lookup_medical"]);
 
     if (knowledgeTools.length > 0) {
       return { tools: knowledgeTools, toolChoice: "required" };
