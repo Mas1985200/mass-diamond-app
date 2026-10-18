@@ -44,7 +44,7 @@ async function photosOfArticle(
     ? [lead, ...others.filter((file) => normalizeFileTitle(file) !== leadKey)]
     : others;
 
-  const photos = await fetchCommonsImages(files, master);
+  const photos = await fetchCommonsImages(files, master, { allowMedical: diagrams });
 
   return photos.slice(0, Math.max(0, options.max));
 }
