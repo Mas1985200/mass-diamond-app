@@ -45,7 +45,7 @@ test("the tool list always offers lookup_medical, with no key needed", () => {
 
   const properties = medical.function.parameters.properties as Record<string, unknown>;
 
-  assert.deepEqual(Object.keys(properties).sort(), ["focus", "query", "research"]);
+  assert.deepEqual(Object.keys(properties).sort(), ["focus", "images", "query", "research"]);
 });
 
 test("health topics are pointed at lookup_medical, not lookup_knowledge", () => {
