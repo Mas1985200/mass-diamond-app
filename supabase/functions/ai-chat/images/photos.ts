@@ -8,9 +8,14 @@ import { createAttempt } from "../lib/http.ts";
 import {
   fetchArticleFileTitles,
   fetchEnglishTitle,
+  fetchLeadFile,
   findArticleTitle,
 } from "./article.ts";
-import { fetchCommonsImages } from "./commons.ts";
+import {
+  fetchCommonsImages,
+  normalizeFileTitle,
+  searchCommonsImages,
+} from "./commons.ts";
 
 export const PHOTO_DEADLINE_MS = 8_000;
 
@@ -19,18 +24,26 @@ export type PhotoOptions = {
   readonly diagramsOnly?: boolean;
 };
 
+// The article's lead image (the one Wikipedia chose to represent the topic)
+// comes first, then the other pictures of the article in their order.
 async function photosOfArticle(
   lang: string,
   title: string,
   master: AbortSignal,
   options: PhotoOptions,
 ): Promise<PhotoItem[]> {
-  const files = await fetchArticleFileTitles(
-    lang,
-    title,
-    { diagramsOnly: options.diagramsOnly === true },
-    master,
-  );
+  const diagrams = options.diagramsOnly === true;
+
+  const [lead, others] = await Promise.all([
+    diagrams ? Promise.resolve("") : fetchLeadFile(lang, title, master),
+    fetchArticleFileTitles(lang, title, { diagramsOnly: diagrams }, master),
+  ]);
+
+  const leadKey = lead ? normalizeFileTitle(lead) : "";
+  const files = lead
+    ? [lead, ...others.filter((file) => normalizeFileTitle(file) !== leadKey)]
+    : others;
+
   const photos = await fetchCommonsImages(files, master);
 
   return photos.slice(0, Math.max(0, options.max));
@@ -50,14 +63,24 @@ export async function fetchLicensedPhotos(
   try {
     let photos = await photosOfArticle(lang, title, deadline.signal, options);
     let tried = 1;
+    let english = "";
 
     if (photos.length === 0 && lang.toLowerCase() !== "en") {
-      const english = await fetchEnglishTitle(lang, title, deadline.signal);
+      english = await fetchEnglishTitle(lang, title, deadline.signal);
 
       if (english) {
         tried = 2;
         photos = await photosOfArticle("en", english, deadline.signal, options);
       }
+    }
+
+    // Still nothing: search all of Commons for the topic itself, so that any
+    // topic can get a picture when a free one exists anywhere.
+    if (photos.length === 0) {
+      tried += 1;
+      photos = (
+        await searchCommonsImages(english || title, options.diagramsOnly === true, deadline.signal)
+      ).slice(0, Math.max(0, options.max));
     }
 
     // Counts only, never the topic text.
@@ -91,7 +114,9 @@ export async function fetchLicensedPhotosForTopic(
     const title = await findArticleTitle(topic, lang, deadline.signal);
 
     if (!title) {
-      return [];
+      return (
+        await searchCommonsImages(topic, options.diagramsOnly === true, deadline.signal)
+      ).slice(0, Math.max(0, options.max));
     }
 
     return await fetchLicensedPhotos(lang, title, deadline.signal, options);
