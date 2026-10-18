@@ -14,6 +14,12 @@ const REQUEST_TIMEOUT_MS = 4_000;
 const TITLE_MAX_CHARS = 100;
 
 const IMAGE_MIME = /^image\/(?:jpeg|png|webp|svg\+xml)$/i;
+// A picture filed under a disease, a patient or a clinical finding is a medical
+// photograph. Those are never shown outside diagram mode, whatever the topic
+// or the tool that asked (the file's own Commons categories decide).
+const MEDICAL_CATEGORY =
+  /(disease|disorder|syndrome|patient|clinical|medical condition|pathology|symptom|lesion|injur|wound|cancer|tumou?r|carcinoma|infection|dermatolog|surg(?:ery|ical)|deformit|abnormalit|rash|histolog|radiograph|x-ray)/i;
+
 const FILE_PAGE_PREFIX = "https://commons.wikimedia.org/wiki/";
 const IMAGE_HOST = "https://upload.wikimedia.org/";
 
@@ -57,7 +63,9 @@ export function buildCommonsUrl(fileTitles: readonly string[]): string {
     format: "json",
     formatversion: "2",
     redirects: "1",
-    prop: "imageinfo",
+    prop: "imageinfo|categories",
+    clshow: "!hidden",
+    cllimit: "max",
     iiprop: "url|mime|extmetadata",
     iiurlwidth: String(THUMB_WIDTH),
     iiextmetadatafilter: "Artist|LicenseShortName|LicenseUrl|Restrictions|NonFree",
@@ -75,9 +83,23 @@ function readableTitle(fileTitle: string): string {
     .slice(0, TITLE_MAX_CHARS);
 }
 
+function isMedicalPhoto(page: Record<string, unknown>): boolean {
+  const categories = Array.isArray(page.categories) ? page.categories : [];
+
+  return categories.some(
+    (category) => isRecord(category) && MEDICAL_CATEGORY.test(pickString(category, "title")),
+  );
+}
+
+export type ParseOptions = {
+  // Diagram mode keeps files that are filed under medical categories.
+  readonly allowMedical?: boolean;
+};
+
 export function parseCommonsImages(
   json: unknown,
   requested: readonly string[],
+  options: ParseOptions = {},
 ): PhotoItem[] {
   const pages =
     isRecord(json) && isRecord(json.query) && Array.isArray(json.query.pages)
@@ -100,6 +122,10 @@ export function parseCommonsImages(
     }
 
     if (!IMAGE_MIME.test(pickString(info, "mime"))) {
+      continue;
+    }
+
+    if (options.allowMedical !== true && isMedicalPhoto(page)) {
       continue;
     }
 
@@ -135,6 +161,7 @@ export function parseCommonsImages(
 export async function fetchCommonsImages(
   fileTitles: readonly string[],
   master: AbortSignal,
+  options: ParseOptions = {},
 ): Promise<PhotoItem[]> {
   if (fileTitles.length === 0) {
     return [];
@@ -142,7 +169,7 @@ export async function fetchCommonsImages(
 
   const json = await getJson(buildCommonsUrl(fileTitles), master, "commons imageinfo");
 
-  return parseCommonsImages(json, fileTitles);
+  return parseCommonsImages(json, fileTitles, options);
 }
 
 // Last resort for any topic: a direct search over all files of Commons.
@@ -156,7 +183,9 @@ export function buildCommonsSearchUrl(query: string, diagrams: boolean): string 
     gsrnamespace: "6",
     gsrlimit: "15",
     gsrsearch: diagrams ? `${words} diagram` : `${words} filetype:bitmap`,
-    prop: "imageinfo",
+    prop: "imageinfo|categories",
+    clshow: "!hidden",
+    cllimit: "max",
     iiprop: "url|mime|extmetadata",
     iiurlwidth: String(THUMB_WIDTH),
     iiextmetadatafilter: "Artist|LicenseShortName|LicenseUrl|Restrictions|NonFree",
@@ -180,5 +209,5 @@ export async function searchCommonsImages(
     "commons search",
   );
 
-  return parseCommonsImages(json, []);
+  return parseCommonsImages(json, [], { allowMedical: diagrams });
 }
