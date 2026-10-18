@@ -255,6 +255,11 @@ export const MEDICAL_TOOL: ToolDefinition = {
           description:
             "Set true only for questions about evidence, studies, how well a treatment works, comparisons, or when the user asks for sources. Adds PubMed articles ranked guideline, meta-analysis, systematic review, randomized trial, review, with year and abstract.",
         },
+        images: {
+          type: "boolean",
+          description:
+            "Set true ONLY when the user asks to see a picture, photo, image or diagram. The app then shows freely licensed medical drawings and diagrams with their author and license (never clinical photos). The app writes the credits itself.",
+        },
       },
       required: ["query"],
     },
