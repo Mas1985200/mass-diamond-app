@@ -88,7 +88,7 @@ const INSTRUCTION = [
   "FRESH: needs up-to-date internet information or live data: news and current events, who currently holds an office or role, prices, exchange rates, gold, crypto, stocks, weather, sports results or schedules, product or software releases, laws or rules now in force, rankings, anything that may have changed after 2025.",
   "PLACE: asks where a specific place, business or address is, or for places near the user.",
   "TIME: asks for today's date, the weekday, the current time, or the time in another place.",
-  "KNOW: a factual, educational or scientific question whose answer does not change over time and where accuracy matters: science, medicine and health facts, space, history, geography, how a technology or concept works, cooking and food science, culture, people, definitions; also requests for research, studies or sources.",
+  "KNOW: a factual, educational or scientific question whose answer does not change over time and where accuracy matters: science, medicine and health facts, space, history, geography, how a technology or concept works, cooking and food science, culture, people, definitions; also requests for research, studies or sources, and requests to see a picture, photo or diagram of a thing, animal, plant, place, person or body part (also as a follow-up such as 'عکسی داری ازش').",
   "CHAT: everything else: chit-chat, greetings, advice, opinions, jokes, stories, writing, editing, translation, math, programming, planning, brainstorming, business or real estate help, asking to remember something.",
   "A short follow-up ('more', 'and what else', 'دیگه', 'و چی؟') keeps the label of the topic it continues.",
   "Reply with exactly one word: FRESH, PLACE, TIME, KNOW or CHAT.",
