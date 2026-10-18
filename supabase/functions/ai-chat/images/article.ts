@@ -178,3 +178,48 @@ export async function fetchEnglishTitle(
     ),
   );
 }
+
+// The picture Wikipedia itself chose to represent the article (its lead image),
+// from a pageimages response. Empty when the article has none.
+export function parseLeadFile(json: unknown): string {
+  const pages =
+    isRecord(json) && isRecord(json.query) && Array.isArray(json.query.pages)
+      ? json.query.pages
+      : [];
+  const first: unknown = pages[0];
+  const name = isRecord(first) ? pickString(first, "pageimage").trim() : "";
+
+  return name ? `File:${name.replace(/_/g, " ")}` : "";
+}
+
+export async function fetchLeadFile(
+  lang: string,
+  title: string,
+  master: AbortSignal,
+): Promise<string> {
+  const language = lang.toLowerCase();
+
+  if (!WIKI_LANG_PATTERN.test(language) || !title.trim()) {
+    return "";
+  }
+
+  const params = new URLSearchParams({
+    action: "query",
+    format: "json",
+    formatversion: "2",
+    prop: "pageimages",
+    piprop: "name",
+    titles: title.trim(),
+    redirects: "1",
+  });
+
+  const lead = parseLeadFile(
+    await getJson(
+      `https://${language}.wikipedia.org/w/api.php?${params.toString()}`,
+      master,
+      "wikipedia lead image",
+    ),
+  );
+
+  return isUsableFile(lead, { diagramsOnly: false }) ? lead : "";
+}
