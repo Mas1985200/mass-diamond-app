@@ -25,6 +25,21 @@ function parseToolArguments(raw: string): Record<string, unknown> {
   }
 }
 
+const PICTURES_NOTE =
+  "Freely licensed pictures with credits are already shown to the user right under your answer. Never say that no picture was found, never describe or promise pictures, and never mention this note.";
+
+// Whatever tool found the pictures, the model is told, so it cannot claim that
+// none exist (or invent what they show) while the app displays them.
+function withPicturesNote(outcome: ToolOutcome): ToolOutcome {
+  const shown = (outcome.cards ?? []).some((card) => card.t === "photos");
+
+  if (!shown || !isRecord(outcome.data)) {
+    return outcome;
+  }
+
+  return { ...outcome, data: { ...outcome.data, pictures: PICTURES_NOTE } };
+}
+
 async function runTool(
   name: string,
   rawArguments: string,
@@ -86,7 +101,7 @@ export async function executeTool(
   signal: AbortSignal,
 ): Promise<ToolOutcome> {
   const started = Date.now();
-  const outcome = await runTool(name, rawArguments, ctx, signal);
+  const outcome = withPicturesNote(await runTool(name, rawArguments, ctx, signal));
   const { ok, results } = summarize(outcome);
 
   console.log(
