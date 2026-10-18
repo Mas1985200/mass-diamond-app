@@ -17,6 +17,7 @@ import type { ChatErrorCode } from "../../lib/chatClient";
 import DiamondMark from "../DiamondMark";
 import MarkdownText from "./MarkdownText";
 import DirectionsButton from "./DirectionsButton";
+import PhotosCard, { parsePhotosCard, type PhotosCardData } from "./PhotosCard";
 
 const ERROR_MESSAGES: Record<ChatErrorCode, string> = {
   AUTH_REQUIRED: "نشست شما منقضی شده است. لطفاً دوباره وارد شوید.",
@@ -40,7 +41,6 @@ const NO_PAGE_ZOOM = "pan-x pan-y";
 const TILE_SIZE = 256;
 const PREVIEW_ZOOM = 16;
 const PREVIEW_HEIGHT = 168;
-const PHOTO_HOST_PATTERN = /^https:\/\/upload\.wikimedia\.org\//;
 
 interface QuickAction {
   readonly id: string;
@@ -176,17 +176,6 @@ interface PlacesCardData {
   readonly items: readonly PlaceItem[];
 }
 
-interface PhotoItem {
-  readonly src: string;
-  readonly title: string;
-}
-
-interface PhotosCardData {
-  readonly t: "photos";
-  readonly lang: Lang;
-  readonly items: readonly PhotoItem[];
-}
-
 type CardData = ClockCardData | PlacesCardData | PhotosCardData;
 
 const MARKER_RE =
@@ -264,26 +253,8 @@ function parseCard(value: unknown): CardData | null {
       : null;
   }
 
-  if (value.t === "photos" && Array.isArray(value.items)) {
-    const items: PhotoItem[] = [];
-
-    for (const raw of value.items.slice(0, 5)) {
-      if (!isRecord(raw)) {
-        continue;
-      }
-
-      const src = asText(raw.src, 600);
-
-      if (!src || !PHOTO_HOST_PATTERN.test(src)) {
-        continue;
-      }
-
-      items.push({ src, title: asText(raw.title, 100) ?? "" });
-    }
-
-    return items.length > 0
-      ? { t: "photos", lang: asLang(value.lang), items }
-      : null;
+  if (value.t === "photos") {
+    return parsePhotosCard(value);
   }
 
   return null;
@@ -1058,36 +1029,6 @@ function PlacesCard({ card }: { readonly card: PlacesCardData }) {
       {viewer && (
         <MapViewer item={viewer} lang={card.lang} onClose={closeViewer} />
       )}
-    </div>
-  );
-}
-
-function PhotosCard({ card }: { readonly card: PhotosCardData }) {
-  return (
-    <div
-      dir={card.lang === "fa" ? "rtl" : "ltr"}
-      className="my-3 w-full max-w-sm"
-    >
-      <div className="md-gallery -mx-1 flex snap-x snap-mandatory gap-2.5 overflow-x-auto px-1 pb-1">
-        {card.items.map((item, index) => (
-          <a
-            key={`${item.src}-${index}`}
-            href={item.src}
-            target="_blank"
-            rel="noopener noreferrer"
-            className="block h-36 w-52 shrink-0 snap-start overflow-hidden rounded-2xl border border-white/10 bg-black/30"
-          >
-            <img
-              src={item.src}
-              alt={item.title}
-              loading="lazy"
-              draggable={false}
-              referrerPolicy="no-referrer"
-              className="h-full w-full select-none object-cover"
-            />
-          </a>
-        ))}
-      </div>
     </div>
   );
 }
