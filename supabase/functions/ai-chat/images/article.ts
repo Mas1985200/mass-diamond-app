@@ -129,3 +129,52 @@ export async function findArticleTitle(
 
   return title && isRelatedTitle(query, title) ? title : "";
 }
+
+// Title of the same article on English Wikipedia (the widest picture library),
+// from a langlinks response.
+export function parseEnglishTitle(json: unknown): string {
+  const pages =
+    isRecord(json) && isRecord(json.query) && Array.isArray(json.query.pages)
+      ? json.query.pages
+      : [];
+  const first: unknown = pages[0];
+
+  if (!isRecord(first) || !Array.isArray(first.langlinks)) {
+    return "";
+  }
+
+  const link: unknown = first.langlinks[0];
+
+  return isRecord(link) ? pickString(link, "title").trim() : "";
+}
+
+export async function fetchEnglishTitle(
+  lang: string,
+  title: string,
+  master: AbortSignal,
+): Promise<string> {
+  const language = lang.toLowerCase();
+
+  if (!WIKI_LANG_PATTERN.test(language) || language === "en" || !title.trim()) {
+    return "";
+  }
+
+  const params = new URLSearchParams({
+    action: "query",
+    format: "json",
+    formatversion: "2",
+    prop: "langlinks",
+    lllang: "en",
+    lllimit: "1",
+    titles: title.trim(),
+    redirects: "1",
+  });
+
+  return parseEnglishTitle(
+    await getJson(
+      `https://${language}.wikipedia.org/w/api.php?${params.toString()}`,
+      master,
+      "wikipedia english title",
+    ),
+  );
+}
