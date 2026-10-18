@@ -10,9 +10,7 @@ import {
   pickString,
 } from "../lib/util.ts";
 import { createAttempt } from "../lib/http.ts";
-
-const PHOTO_SKIP_PATTERN =
-  /(flag|logo|icon|locator|map|coat[_ ]of[_ ]arms|symbol|seal|emblem|edit-clear|question[_ ]book|wiktionary|disambig)/i;
+import { fetchLicensedPhotos } from "../images/photos.ts";
 
 const WIKI_PLACE_MAX_RESULTS = 3;
 const WIKI_SEARCH_MAX_CHARS = 200;
@@ -87,6 +85,8 @@ export async function fetchWikipediaSummary(
   }
 }
 
+// Pictures of a Wikipedia article, each with its author and free license from
+// Wikimedia Commons. A picture whose license cannot be read is left out.
 export async function fetchWikipediaPhotos(
   tag: string,
   master: AbortSignal,
@@ -97,78 +97,9 @@ export async function fetchWikipediaPhotos(
     return [];
   }
 
-  const timed = createAttempt(master, WIKI_TIMEOUT_MS);
-
-  try {
-    const response = await fetch(
-      `https://${parsed.lang}.wikipedia.org/api/rest_v1/page/media-list/${encodeURIComponent(parsed.title)}`,
-      {
-        headers: {
-          "User-Agent": NOMINATIM_USER_AGENT,
-          Accept: "application/json",
-        },
-        signal: timed.signal,
-      },
-    );
-
-    if (!response.ok) {
-      return [];
-    }
-
-    const json: unknown = await response.json();
-    const items = isRecord(json) && Array.isArray(json.items) ? json.items : [];
-    const photos: PhotoItem[] = [];
-
-    for (const raw of items) {
-      if (!isRecord(raw) || raw.type !== "image") {
-        continue;
-      }
-
-      const title = pickString(raw, "title");
-
-      if (!title || /\.svg$/i.test(title) || PHOTO_SKIP_PATTERN.test(title)) {
-        continue;
-      }
-
-      const srcset = Array.isArray(raw.srcset) ? raw.srcset : [];
-      const last: unknown = srcset[srcset.length - 1];
-
-      if (!isRecord(last)) {
-        continue;
-      }
-
-      let src = pickString(last, "src");
-
-      if (src.startsWith("//")) {
-        src = `https:${src}`;
-      }
-
-      if (!src.startsWith("https://upload.wikimedia.org/")) {
-        continue;
-      }
-
-      if (photos.some((photo) => photo.src === src)) {
-        continue;
-      }
-
-      photos.push({
-        src,
-        title: title.replace(/^[^:]+:/, "").replace(/_/g, " ").slice(0, 100),
-      });
-
-      if (photos.length >= 5) {
-        break;
-      }
-    }
-
-    return photos;
-  } catch (error) {
-    console.error(`wikipedia photos failed: ${describeError(error)}`);
-
-    return [];
-  } finally {
-    timed.clearConnectTimer();
-  }
+  return await fetchLicensedPhotos(parsed.lang, parsed.title, master, {
+    max: 5,
+  });
 }
 
 // Searches Wikipedia (in the given language) and returns only pages that have
