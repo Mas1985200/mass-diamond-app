@@ -5,16 +5,40 @@
 
 import type { PhotoItem } from "../types.ts";
 import { createAttempt } from "../lib/http.ts";
-import { fetchArticleFileTitles, findArticleTitle } from "./article.ts";
+import {
+  fetchArticleFileTitles,
+  fetchEnglishTitle,
+  findArticleTitle,
+} from "./article.ts";
 import { fetchCommonsImages } from "./commons.ts";
 
-export const PHOTO_DEADLINE_MS = 6_000;
+export const PHOTO_DEADLINE_MS = 8_000;
 
 export type PhotoOptions = {
   readonly max: number;
   readonly diagramsOnly?: boolean;
 };
 
+async function photosOfArticle(
+  lang: string,
+  title: string,
+  master: AbortSignal,
+  options: PhotoOptions,
+): Promise<PhotoItem[]> {
+  const files = await fetchArticleFileTitles(
+    lang,
+    title,
+    { diagramsOnly: options.diagramsOnly === true },
+    master,
+  );
+  const photos = await fetchCommonsImages(files, master);
+
+  return photos.slice(0, Math.max(0, options.max));
+}
+
+// The article in the asked language first. Many articles there have few or no
+// freely licensed pictures (some wikis keep their own non-free files), so when
+// nothing usable is found the same article on English Wikipedia is tried.
 export async function fetchLicensedPhotos(
   lang: string,
   title: string,
@@ -24,15 +48,30 @@ export async function fetchLicensedPhotos(
   const deadline = createAttempt(master, PHOTO_DEADLINE_MS);
 
   try {
-    const files = await fetchArticleFileTitles(
-      lang,
-      title,
-      { diagramsOnly: options.diagramsOnly === true },
-      deadline.signal,
-    );
-    const photos = await fetchCommonsImages(files, deadline.signal);
+    let photos = await photosOfArticle(lang, title, deadline.signal, options);
+    let tried = 1;
 
-    return photos.slice(0, Math.max(0, options.max));
+    if (photos.length === 0 && lang.toLowerCase() !== "en") {
+      const english = await fetchEnglishTitle(lang, title, deadline.signal);
+
+      if (english) {
+        tried = 2;
+        photos = await photosOfArticle("en", english, deadline.signal, options);
+      }
+    }
+
+    // Counts only, never the topic text.
+    console.log(
+      JSON.stringify({
+        event: "photos",
+        lang,
+        tried,
+        shown: photos.length,
+        diagrams: options.diagramsOnly === true,
+      }),
+    );
+
+    return photos;
   } finally {
     deadline.clearConnectTimer();
   }
