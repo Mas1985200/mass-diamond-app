@@ -113,9 +113,11 @@ export function parseCommonsImages(
     const descriptionUrl = pickString(info, "descriptionurl");
     const filePage = descriptionUrl.startsWith(FILE_PAGE_PREFIX) ? descriptionUrl : "";
     const index = order.indexOf(fileTitle);
+    // Search results carry their own rank in "index".
+    const rank = typeof page.index === "number" ? 1_000 + page.index : Number.MAX_SAFE_INTEGER;
 
     found.push({
-      position: index < 0 ? Number.MAX_SAFE_INTEGER : index,
+      position: index < 0 ? rank : index,
       item: {
         src,
         title: readableTitle(fileTitle),
@@ -141,4 +143,42 @@ export async function fetchCommonsImages(
   const json = await getJson(buildCommonsUrl(fileTitles), master, "commons imageinfo");
 
   return parseCommonsImages(json, fileTitles);
+}
+
+// Last resort for any topic: a direct search over all files of Commons.
+export function buildCommonsSearchUrl(query: string, diagrams: boolean): string {
+  const words = query.replace(/\s+/g, " ").trim().slice(0, 120);
+  const params = new URLSearchParams({
+    action: "query",
+    format: "json",
+    formatversion: "2",
+    generator: "search",
+    gsrnamespace: "6",
+    gsrlimit: "15",
+    gsrsearch: diagrams ? `${words} diagram` : `${words} filetype:bitmap`,
+    prop: "imageinfo",
+    iiprop: "url|mime|extmetadata",
+    iiurlwidth: String(THUMB_WIDTH),
+    iiextmetadatafilter: "Artist|LicenseShortName|LicenseUrl|Restrictions|NonFree",
+  });
+
+  return `${COMMONS_API}?${params.toString()}`;
+}
+
+export async function searchCommonsImages(
+  query: string,
+  diagrams: boolean,
+  master: AbortSignal,
+): Promise<PhotoItem[]> {
+  if (!query.trim()) {
+    return [];
+  }
+
+  const json = await getJson(
+    buildCommonsSearchUrl(query, diagrams),
+    master,
+    "commons search",
+  );
+
+  return parseCommonsImages(json, []);
 }
