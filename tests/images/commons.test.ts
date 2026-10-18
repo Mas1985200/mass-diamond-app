@@ -222,8 +222,8 @@ test("fetchLicensedPhotos: article files become credited pictures", async () => 
       photos.map((photo) => photo.title),
       ["Machu Picchu 2", "Llama"],
     );
-    assert.equal(fake.calls.length, 2);
-    assert.ok(fake.calls[0]?.url.includes("en.wikipedia.org/api/rest_v1/page/media-list/Machu_Picchu"));
+    assert.ok(fake.calls.some((call) => call.url.includes("en.wikipedia.org/api/rest_v1/page/media-list/Machu_Picchu")));
+    assert.equal(fake.calls.filter((call) => call.url.includes("commons.wikimedia.org")).length, 1);
     assert.ok(photos.every((photo) => photo.license));
   } finally {
     fake.restore();
@@ -250,12 +250,54 @@ test("fetchLicensedPhotos: if Commons cannot be read, no picture (never an uncre
   }
 });
 
-test("fetchLicensedPhotos: an article without pictures makes no Commons request", async () => {
-  const fake = fakeFetch(routed({ mediaList: { items: [] } }));
+test("fetchLicensedPhotos: an article without pictures falls back to a Commons search", async () => {
+  const fake = fakeFetch((call) => {
+    if (call.url.includes("generator=search")) {
+      return json({
+        query: {
+          pages: [
+            { ...info({ title: "File:Second.jpg", license: "CC0" }), index: 2 },
+            { ...info({ title: "File:First.jpg", license: "CC BY 4.0", artist: "Zoe" }), index: 1 },
+          ],
+        },
+      });
+    }
+
+    return routed({ mediaList: { items: [] } })(call);
+  });
 
   try {
-    assert.deepEqual(await fetchLicensedPhotos("en", "X", signal, { max: 5 }), []);
-    assert.equal(fake.calls.length, 1);
+    const photos = await fetchLicensedPhotos("en", "Some Rare Thing", signal, { max: 5 });
+
+    assert.deepEqual(
+      photos.map((photo) => photo.title),
+      ["First", "Second"],
+    );
+
+    const search = fake.calls.find((call) => call.url.includes("generator=search"));
+
+    assert.ok(search?.url.includes("Some+Rare+Thing"));
+    assert.ok(search?.url.includes("filetype%3Abitmap"));
+    assert.ok(fake.calls.every((call) => !call.url.includes("titles=File")));
+  } finally {
+    fake.restore();
+  }
+});
+
+test("fetchLicensedPhotosForTopic: no article at all, the topic is searched on Commons", async () => {
+  const fake = fakeFetch((call) => {
+    if (call.url.includes("generator=search")) {
+      return json({ query: { pages: [{ ...info({ title: "File:Dog.jpg", license: "CC0" }), index: 1 }] } });
+    }
+
+    return routed({})(call);
+  });
+
+  try {
+    const photos = await fetchLicensedPhotosForTopic("black dog", "en", signal, { max: 3 });
+
+    assert.equal(photos.length, 1);
+    assert.equal(photos[0]?.title, "Dog");
   } finally {
     fake.restore();
   }
@@ -307,6 +349,32 @@ test("findArticleTitle: an unrelated first hit is not used", async () => {
 
   try {
     assert.equal(await findArticleTitle("migraine", "en", signal), "");
+  } finally {
+    fake.restore();
+  }
+});
+
+test("fetchLicensedPhotos: Wikipedia's own lead image comes first, then the rest, any format", async () => {
+  const fake = fakeFetch((call) => {
+    if (call.url.includes("prop=pageimages")) {
+      return json({ query: { pages: [{ title: "Llama", pageimage: "Llama.jpg" }] } });
+    }
+
+    return routed({ mediaList: MEDIA_LIST, commons: COMMONS_OK })(call);
+  });
+
+  try {
+    const photos = await fetchLicensedPhotos("en", "Llama", signal, { max: 5 });
+
+    assert.deepEqual(
+      photos.map((photo) => photo.title),
+      ["Llama", "Machu Picchu 2"],
+    );
+
+    const commonsCall = fake.calls.find((call) => call.url.includes("commons.wikimedia.org"));
+
+    assert.ok(commonsCall?.url.indexOf("Llama.jpg") !== -1);
+    assert.equal(commonsCall?.url.split("Llama.jpg").length, 2);
   } finally {
     fake.restore();
   }
