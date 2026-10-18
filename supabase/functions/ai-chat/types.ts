@@ -71,6 +71,11 @@ export type PlaceCandidate = {
 export type PhotoItem = {
   readonly src: string;
   readonly title: string;
+  // Credit shown under the picture (Wikimedia Commons metadata).
+  readonly author?: string;
+  readonly license?: string;
+  readonly licenseUrl?: string;
+  readonly page?: string;
 };
 
 export type WebResult = {
