@@ -9,9 +9,10 @@
 // No API key is needed.
 
 import { NOMINATIM_USER_AGENT, WIKI_TIMEOUT_MS } from "../config.ts";
-import type { ToolContext, ToolOutcome } from "../types.ts";
+import type { PhotoItem, ToolContext, ToolOutcome } from "../types.ts";
 import { describeError, isRecord, pickString } from "../lib/util.ts";
 import { createAttempt } from "../lib/http.ts";
+import { fetchLicensedPhotos } from "../images/photos.ts";
 
 const KNOWLEDGE_QUERY_MAX_CHARS = 200;
 const KNOWLEDGE_FOCUS_MAX_CHARS = 300;
@@ -24,6 +25,7 @@ const PASSAGE_MAX_CHARS = 800;
 const PASSAGE_INTRO_CHARS = 500;
 const TERMINOLOGY_BUDGET_CHARS = 1_100;
 const PAPERS_MAX = 4;
+const PHOTOS_MAX = 3;
 const WIKI_LANG_PATTERN = /^[a-z]{2,3}(?:-[a-z]{2,8})?$/;
 
 const RESULT_NOTE =
@@ -510,6 +512,11 @@ export async function runKnowledgeLookup(
   const top = articles[0];
   let passages: string[] = [];
 
+  // Credited pictures of the article load while its text is read.
+  const photosPromise: Promise<PhotoItem[]> = top
+    ? fetchLicensedPhotos(top.lang, top.title, signal, { max: PHOTOS_MAX })
+    : Promise.resolve([]);
+
   if (top) {
     const fullText = await fetchWikipediaFullText(top.title, top.lang, signal);
 
@@ -578,6 +585,8 @@ export async function runKnowledgeLookup(
         },
   );
 
+  const photos = await photosPromise;
+
   return {
     data: {
       results,
@@ -585,5 +594,8 @@ export async function runKnowledgeLookup(
       ...(wantsPapers ? { papers } : {}),
       note: RESULT_NOTE,
     },
+    ...(photos.length > 0
+      ? { cards: [{ t: "photos" as const, lang: ctx.lang, items: photos }] }
+      : {}),
   };
 }
