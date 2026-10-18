@@ -11,10 +11,11 @@
 // is data only; the system prompt tells the model never to follow it.
 
 import { NOMINATIM_USER_AGENT } from "../config.ts";
-import type { ToolContext, ToolOutcome } from "../types.ts";
+import type { PhotoItem, ToolContext, ToolOutcome } from "../types.ts";
 import { isRecord, sleep } from "../lib/util.ts";
 import { createAttempt } from "../lib/http.ts";
 import { tokenize } from "./knowledge.ts";
+import { fetchLicensedPhotosForTopic } from "../images/photos.ts";
 
 const QUERY_MAX_CHARS = 200;
 const FOCUS_MAX_CHARS = 300;
@@ -33,6 +34,7 @@ const MEDLINE_TOPICS_FETCHED = 3;
 const MEDLINE_TOPICS_SHOWN = 2;
 const PUBMED_CANDIDATES = 15;
 const PUBMED_KEPT = 8;
+const PHOTOS_MAX = 3;
 
 // NCBI allows 3 requests per second without a key and 10 with one.
 const NCBI_GAP_MS = 400;
@@ -1061,7 +1063,7 @@ function buildData(
 
 export async function runMedicalLookup(
   args: Record<string, unknown>,
-  _ctx: ToolContext,
+  ctx: ToolContext,
   signal: AbortSignal,
 ): Promise<ToolOutcome> {
   const query = cleanText(args.query, QUERY_MAX_CHARS);
@@ -1108,15 +1110,48 @@ export async function runMedicalLookup(
 
   const question = `${focus} ${query}`;
 
+  // Pictures only when the user asked for them, and only credited drawings and
+  // diagrams under a free license (never clinical photos).
+  let photos: PhotoItem[] = [];
+
+  if (args.images === true) {
+    const topic = medline.items[0]?.title ?? query;
+
+    photos = await fetchLicensedPhotosForTopic(topic, "en", signal, {
+      max: PHOTOS_MAX,
+      diagramsOnly: true,
+    });
+  }
+
+  const withPhotos = (data: Record<string, unknown>): ToolOutcome => {
+    if (args.images !== true) {
+      return { data };
+    }
+
+    if (photos.length === 0) {
+      return {
+        data: {
+          ...data,
+          note: `${String(data.note)} No freely licensed diagram was found; say so in one short sentence.`,
+        },
+      };
+    }
+
+    return {
+      data,
+      cards: [{ t: "photos", lang: ctx.lang, items: photos }],
+    };
+  };
+
   for (const level of LEVELS) {
     const data = buildData(medline, pubmed, question, level);
 
     if (JSON.stringify(data).length <= RESULT_LIMIT_CHARS) {
-      return { data };
+      return withPhotos(data);
     }
   }
 
   const last = LEVELS[LEVELS.length - 1] as Level;
 
-  return { data: buildData(medline, pubmed, question, last) };
+  return withPhotos(buildData(medline, pubmed, question, last));
 }
