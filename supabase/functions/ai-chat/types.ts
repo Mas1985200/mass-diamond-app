@@ -14,6 +14,8 @@ export type ChatRequestBody = {
   readonly stream: boolean;
   readonly timeZone?: string;
   readonly location: GeoPoint | null;
+  // Photos the user attached to this message, as validated data URLs.
+  readonly images: readonly string[];
 };
 
 export type ChatMessageRow = {
@@ -27,6 +29,9 @@ export type ChatMessageRow = {
 export type AIMessage = {
   readonly role: "user" | "assistant" | "system";
   readonly content: string;
+  // Only the newest user message can carry photos (data URLs). They are sent
+  // to the model once and never stored.
+  readonly images?: readonly string[];
 };
 
 export type RememberResult =
@@ -138,8 +143,16 @@ export type OAIToolCall = {
   };
 };
 
+export type OAIContentPart =
+  | { readonly type: "text"; readonly text: string }
+  | { readonly type: "image_url"; readonly image_url: { readonly url: string } };
+
 export type OAIMessage =
-  | { readonly role: "system" | "user"; readonly content: string }
+  | { readonly role: "system"; readonly content: string }
+  | {
+      readonly role: "user";
+      readonly content: string | readonly OAIContentPart[];
+    }
   | {
       readonly role: "assistant";
       readonly content: string | null;
