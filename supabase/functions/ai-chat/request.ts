@@ -9,6 +9,7 @@ import { MAX_MESSAGE_LENGTH } from "./config.ts";
 import type { ChatRequestBody, GeoPoint } from "./types.ts";
 import { isRecord, isValidGeo, round4 } from "./lib/util.ts";
 import { getBearerToken } from "./lib/http.ts";
+import { parseImages } from "./attachments/images.ts";
 
 export const UUID_PATTERN =
   /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
@@ -75,11 +76,20 @@ export function parseRequestBody(value: unknown): ChatRequestBody {
     stream: value.stream === true,
     timeZone,
     location: parseGeoPoint(value.location),
+    images: parseImages(value.images),
   };
 }
 
-export function validateMessage(message: string | undefined): string {
+// A message may be only photos, without any words.
+export function validateMessage(
+  message: string | undefined,
+  hasImages = false,
+): string {
   if (!message) {
+    if (hasImages) {
+      return "";
+    }
+
     throw new Error("Message is required.");
   }
 
