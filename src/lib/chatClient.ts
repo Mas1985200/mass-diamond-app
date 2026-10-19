@@ -61,6 +61,8 @@ export interface StreamMeta {
 export interface StreamChatMessageInput {
   readonly message: string;
   readonly conversationId: string | null;
+  // Photos attached to this message (JPEG data URLs, at most three).
+  readonly images?: readonly string[];
   readonly signal?: AbortSignal;
   readonly onMeta?: (meta: StreamMeta) => void;
   readonly onDelta: (text: string) => void;
@@ -492,10 +494,14 @@ export async function streamChatMessage(
     });
   }
 
-  const body: Record<string, string | boolean> = {
+  const body: Record<string, unknown> = {
     message: input.message,
     stream: true,
   };
+
+  if (input.images && input.images.length > 0) {
+    body.images = [...input.images];
+  }
 
   if (input.conversationId) {
     body.conversationId = input.conversationId;
