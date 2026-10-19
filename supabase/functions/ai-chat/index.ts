@@ -32,6 +32,7 @@ import { trimHistory } from "./history/trim.ts";
 import { buildSystemPrompt, type MemoryContext } from "./prompt/system.ts";
 import { addFact, loadFacts, loadRecentSummaries } from "./memory/store.ts";
 import { summarizePreviousConversation } from "./memory/summary.ts";
+import { describePhotos, withPhotoDescription } from "./attachments/describe.ts";
 import { startAgent } from "./agent.ts";
 import { routeCapability } from "./routing/capability.ts";
 import { createSseResponse } from "./sse.ts";
@@ -110,13 +111,6 @@ Deno.serve(async (request: Request): Promise<Response> => {
     const photos = body.images;
     const message = validateMessage(extracted.text, photos.length > 0);
     const location = body.location ?? extracted.location;
-
-    // Photos are sent to the model once and never stored; the stored history
-    // only notes that photos were attached.
-    const storedMessage =
-      photos.length === 0
-        ? message
-        : `${message}\n\n(${photos.length} photo${photos.length === 1 ? "" : "s"} attached)`.trim();
 
     let conversationId = body.conversationId;
     const isNewConversation = !conversationId;
@@ -222,25 +216,54 @@ Deno.serve(async (request: Request): Promise<Response> => {
     const master = new AbortController();
     const totalTimer = setTimeout(() => master.abort(), TOTAL_TIMEOUT_MS);
 
+    // What the stored history keeps as the user's message. Photos are never
+    // stored; when there are some, it holds what they showed instead.
+    let storedMessage = message;
+
     let started: Awaited<ReturnType<typeof startAgent>>;
 
     try {
+      // Photos are looked at once, by a vision model in a small request of
+      // its own. Everything after that works on its text description, so the
+      // normal models, tools and rules are used.
+      let userText = message;
+
+      if (photos.length > 0) {
+        const seen = await describePhotos(photos, message, master.signal);
+
+        if (!seen.ok) {
+          clearTimeout(totalTimer);
+
+          console.error(
+            `request ${requestId}: photo analysis failed: ${seen.error}`,
+          );
+
+          return jsonResponse(
+            {
+              success: false,
+              error: {
+                code: "AI_PROVIDER_ERROR",
+                message: seen.error,
+                retryable: seen.retryable,
+              },
+              requestId,
+              conversationId,
+            },
+            502,
+          );
+        }
+
+        userText = withPhotoDescription(message, photos.length, seen.text);
+        storedMessage = userText;
+      }
+
       // What kind of question is this? The answer decides which prompt rules
       // and tools the model receives (null = unknown: everything).
       const conversation: AIMessage[] = [
         ...history,
-        {
-          role: "user",
-          content: message,
-          ...(photos.length > 0 ? { images: photos } : {}),
-        },
+        { role: "user", content: userText },
       ];
-      // With photos the model sees everything and picks its own tools, so the
-      // router (which reads text only) is skipped.
-      const capability =
-        photos.length > 0
-          ? null
-          : await routeCapability(conversation, master.signal);
+      const capability = await routeCapability(conversation, master.signal);
 
       const aiMessages: AIMessage[] = [
         {
