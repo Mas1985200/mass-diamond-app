@@ -6,7 +6,7 @@ import { MAX_QUEUE_WAIT_MS } from "../config.ts";
 import type { OAIMessage } from "../types.ts";
 import { sleep } from "../lib/util.ts";
 import { cooldownLeftMs, markCooldown, soonestReadyMs } from "./cooldown.ts";
-import { groqApiKey, groqModels } from "./models.ts";
+import { groqApiKey, groqModels, groqVisionModels } from "./models.ts";
 import { requestRound } from "./groq.ts";
 import type { ToolOptions } from "./types.ts";
 
@@ -102,6 +102,16 @@ async function tryModels(
   };
 }
 
+// True when any message carries a photo: only vision models can read those.
+export function hasPhotos(messages: readonly OAIMessage[]): boolean {
+  return messages.some(
+    (message) =>
+      message.role === "user" &&
+      typeof message.content !== "string" &&
+      message.content.some((part) => part.type === "image_url"),
+  );
+}
+
 export async function openRound(
   messages: readonly OAIMessage[],
   toolOptions: ToolOptions,
@@ -118,7 +128,10 @@ export async function openRound(
     };
   }
 
-  const models = groqModels().filter((model) => !exclude.has(model));
+  // Every round of a conversation that holds a photo goes to a vision model;
+  // all other requests use the normal models.
+  const candidates = hasPhotos(messages) ? groqVisionModels() : groqModels();
+  const models = candidates.filter((model) => !exclude.has(model));
 
   if (models.length === 0) {
     return {
