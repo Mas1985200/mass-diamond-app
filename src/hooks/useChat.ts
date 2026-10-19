@@ -6,6 +6,7 @@ import {
   streamChatMessage,
   type ChatErrorCode,
 } from "../lib/chatClient";
+import type { AttachedPhoto } from "../lib/imageAttach";
 
 export type ChatRole = "user" | "assistant";
 
@@ -13,6 +14,8 @@ export interface ChatMessage {
   readonly id: string;
   readonly role: ChatRole;
   readonly content: string;
+  // Tiny previews of the photos the user attached to this message.
+  readonly thumbs?: readonly string[];
 }
 
 export interface ChatFailure {
@@ -27,6 +30,7 @@ export interface ChatLocation {
 
 export interface SendOptions {
   readonly location?: ChatLocation;
+  readonly photos?: readonly AttachedPhoto[];
 }
 
 export interface UseChatResult {
@@ -47,6 +51,12 @@ const FRAME_MS = 15;
 const MAX_CHARS_PER_TICK = 4;
 const BACKLOG_DIVISOR = 120;
 const MARKER_SOURCE = ":::md-(?:clock|card)~[^\\s]*?:::";
+
+// Sent when the user attaches a photo without writing anything.
+const DEFAULT_PHOTO_PROMPT = "این عکس را توضیح بده.";
+const THUMB_PREFIX = "data:image/jpeg;base64,";
+const THUMB_MAX_CHARS = 60_000;
+const THUMBS_MAX = 3;
 
 // The conversation is kept in this tab's session storage, so a page reload
 // (for example the browser's pull-to-refresh) brings it back instead of
@@ -80,6 +90,22 @@ function clearSavedSession(): void {
   }
 }
 
+// Only small JPEG data URLs are accepted from the saved conversation.
+function parseThumbs(value: unknown): string[] {
+  if (!Array.isArray(value)) {
+    return [];
+  }
+
+  return value
+    .filter(
+      (item): item is string =>
+        typeof item === "string" &&
+        item.startsWith(THUMB_PREFIX) &&
+        item.length <= THUMB_MAX_CHARS,
+    )
+    .slice(0, THUMBS_MAX);
+}
+
 function parseMessages(value: unknown): ChatMessage[] {
   if (!Array.isArray(value)) {
     return [];
@@ -102,7 +128,11 @@ function parseMessages(value: unknown): ChatMessage[] {
       (role === "user" || role === "assistant") &&
       typeof content === "string"
     ) {
-      result.push({ id, role, content });
+      const thumbs = parseThumbs(raw.thumbs);
+
+      result.push(
+        thumbs.length > 0 ? { id, role, content, thumbs } : { id, role, content },
+      );
     }
   }
 
@@ -244,6 +274,9 @@ export function useChat(): UseChatResult {
     ? restored.messages[restored.messages.length - 1]
     : undefined;
   const unanswered = lastRestored !== undefined && lastRestored.role === "user";
+  // The photos themselves are never saved, so such a message cannot be resent.
+  const unansweredWithPhotos =
+    unanswered && (lastRestored?.thumbs?.length ?? 0) > 0;
 
   const [messages, setMessages] = useState<ChatMessage[]>(() =>
     restored ? [...restored.messages] : [],
@@ -251,7 +284,9 @@ export function useChat(): UseChatResult {
   const [isSending, setIsSending] = useState(false);
   const [isStreaming, setIsStreaming] = useState(false);
   const [error, setError] = useState<ChatFailure | null>(() =>
-    unanswered ? { code: "NETWORK_ERROR", retryable: true } : null,
+    unanswered
+      ? { code: "NETWORK_ERROR", retryable: !unansweredWithPhotos }
+      : null,
   );
 
   const conversationIdRef = useRef<string | null>(
@@ -260,9 +295,12 @@ export function useChat(): UseChatResult {
   const userIdRef = useRef<string | null>(restored?.userId ?? null);
   const sendingRef = useRef(false);
   const failedTextRef = useRef<string | null>(
-    unanswered && lastRestored ? lastRestored.content : null,
+    unanswered && !unansweredWithPhotos && lastRestored
+      ? lastRestored.content
+      : null,
   );
   const failedLocationRef = useRef<ChatLocation | null>(null);
+  const failedPhotosRef = useRef<readonly AttachedPhoto[]>([]);
   const generationRef = useRef(0);
 
   const abortRef = useRef<AbortController | null>(null);
@@ -382,6 +420,8 @@ export function useChat(): UseChatResult {
       text: string,
       appendUserMessage: boolean,
       location: ChatLocation | null,
+      photos: readonly AttachedPhoto[],
+      shownText: string,
     ): Promise<boolean> => {
       if (sendingRef.current) {
         return false;
@@ -394,6 +434,7 @@ export function useChat(): UseChatResult {
       abortRef.current = controller;
       failedTextRef.current = null;
       failedLocationRef.current = null;
+      failedPhotosRef.current = [];
       resetStreamState();
       setIsSending(true);
       setIsStreaming(false);
@@ -402,7 +443,14 @@ export function useChat(): UseChatResult {
       if (appendUserMessage) {
         setMessages((previous) => [
           ...previous,
-          { id: createId(), role: "user", content: text },
+          {
+            id: createId(),
+            role: "user",
+            content: shownText,
+            ...(photos.length > 0
+              ? { thumbs: photos.map((photo) => photo.thumb) }
+              : {}),
+          },
         ]);
       }
 
@@ -410,6 +458,7 @@ export function useChat(): UseChatResult {
         const result = await streamChatMessage({
           message: withLocationTag(text, location),
           conversationId: conversationIdRef.current,
+          images: photos.map((photo) => photo.dataUrl),
           signal: controller.signal,
           onMeta: (meta) => {
             if (generation !== generationRef.current) {
@@ -497,6 +546,7 @@ export function useChat(): UseChatResult {
 
         failedTextRef.current = text;
         failedLocationRef.current = location;
+        failedPhotosRef.current = photos;
         setError(toFailure(caught));
 
         return false;
@@ -516,12 +566,21 @@ export function useChat(): UseChatResult {
   const sendMessage = useCallback(
     async (raw: string, options?: SendOptions): Promise<boolean> => {
       const text = raw.trim();
+      const photos = options?.photos ?? [];
 
-      if (!text) {
+      if (!text && photos.length === 0) {
         return false;
       }
 
-      return dispatchMessage(text, true, options?.location ?? null);
+      // A photo without words is sent with a default request, and the screen
+      // shows only the photo.
+      return dispatchMessage(
+        text || DEFAULT_PHOTO_PROMPT,
+        true,
+        options?.location ?? null,
+        photos,
+        text,
+      );
     },
     [dispatchMessage],
   );
@@ -533,7 +592,13 @@ export function useChat(): UseChatResult {
       return;
     }
 
-    await dispatchMessage(text, false, failedLocationRef.current);
+    await dispatchMessage(
+      text,
+      false,
+      failedLocationRef.current,
+      failedPhotosRef.current,
+      "",
+    );
   }, [dispatchMessage]);
 
   const reset = useCallback((): void => {
@@ -546,6 +611,7 @@ export function useChat(): UseChatResult {
     conversationIdRef.current = null;
     failedTextRef.current = null;
     failedLocationRef.current = null;
+    failedPhotosRef.current = [];
     sendingRef.current = false;
     setMessages([]);
     setError(null);
