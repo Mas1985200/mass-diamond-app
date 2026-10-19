@@ -21,6 +21,9 @@ export interface ChatMessage {
 export interface ChatFailure {
   readonly code: ChatErrorCode;
   readonly retryable: boolean;
+  // The server's own short explanation (for provider errors it is shown in
+  // small print so a failure can be diagnosed without opening the logs).
+  readonly detail?: string;
 }
 
 export interface ChatLocation {
@@ -214,7 +217,11 @@ function saveSession(
 
 function toFailure(caught: unknown): ChatFailure {
   if (caught instanceof ChatClientError) {
-    return { code: caught.code, retryable: caught.retryable };
+    return {
+      code: caught.code,
+      retryable: caught.retryable,
+      detail: caught.message,
+    };
   }
 
   return { code: "UNKNOWN_ERROR", retryable: true };
