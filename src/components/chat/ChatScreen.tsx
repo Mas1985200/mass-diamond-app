@@ -46,6 +46,8 @@ const PHOTO_ERROR_MESSAGES: Record<AttachErrorCode, string> = {
 };
 
 const DEFAULT_PLACEHOLDER = "چطور می‌تونم کمکت کنم؟";
+const ROUND_BUTTON_CLASS =
+  "flex h-10 w-10 shrink-0 items-center justify-center rounded-full border border-white/10 bg-white/5 transition-colors disabled:cursor-not-allowed disabled:opacity-40";
 const STICK_THRESHOLD_PX = 80;
 const RESIZE_GRACE_MS = 400;
 const LOCATION_REFRESH_MS = 120_000;
@@ -1743,7 +1745,17 @@ export default function ChatScreen() {
             dir="rtl"
             className="mx-auto mb-2 flex w-full max-w-xl items-center justify-between gap-3 rounded-xl border border-red-400/20 bg-red-400/10 px-4 py-3 text-sm leading-6 text-red-300"
           >
-            <span>{ERROR_MESSAGES[error.code]}</span>
+            <span>
+              {ERROR_MESSAGES[error.code]}
+              {error.code === "AI_PROVIDER_ERROR" && error.detail && (
+                <span
+                  dir="ltr"
+                  className="mt-1 block break-words text-[11px] leading-4 text-red-300/70"
+                >
+                  {error.detail.slice(0, 220)}
+                </span>
+              )}
+            </span>
 
             {canRetry && (
               <button
@@ -1795,7 +1807,21 @@ export default function ChatScreen() {
             </p>
           )}
 
-          <div className="flex items-end gap-2">
+          <textarea
+            ref={inputRef}
+            value={draft}
+            onChange={handleChange}
+            onKeyDown={handleKeyDown}
+            onKeyUp={handleKeyUp}
+            rows={1}
+            dir="auto"
+            enterKeyHint="send"
+            placeholder={activeAction?.hint ?? DEFAULT_PLACEHOLDER}
+            style={{ outline: "none", boxShadow: "none" }}
+            className="block max-h-40 w-full resize-none bg-transparent px-1 py-2 text-sm leading-6 text-text placeholder:text-text-subtle"
+          />
+
+          <div className="flex items-center justify-between pt-1" dir="ltr">
             <input
               ref={fileInputRef}
               type="file"
@@ -1812,48 +1838,46 @@ export default function ChatScreen() {
               onClick={handleChoosePhotos}
               disabled={isSending || isPreparing || photos.length >= MAX_PHOTOS}
               aria-label="پیوست عکس"
-              className="flex h-9 w-9 shrink-0 items-center justify-center text-text-subtle transition-colors hover:text-primary disabled:cursor-not-allowed disabled:opacity-40"
+              className={`${ROUND_BUTTON_CLASS} text-primary hover:border-[rgba(57,255,136,0.4)]`}
             >
-              <AttachIcon />
+              <PlusIcon />
             </button>
 
-            <textarea
-              ref={inputRef}
-              value={draft}
-              onChange={handleChange}
-              onKeyDown={handleKeyDown}
-              onKeyUp={handleKeyUp}
-              rows={1}
-              dir="auto"
-              enterKeyHint="send"
-              placeholder={activeAction?.hint ?? DEFAULT_PLACEHOLDER}
-              style={{ outline: "none", boxShadow: "none" }}
-              className="max-h-40 min-w-0 flex-1 resize-none bg-transparent py-2 text-sm leading-6 text-text placeholder:text-text-subtle"
-            />
+            <div className="flex items-center gap-2">
+              <button
+                type="button"
+                disabled
+                aria-label="ورودی صوتی"
+                className={`${ROUND_BUTTON_CLASS} text-text-subtle`}
+              >
+                <MicIcon />
+              </button>
 
-            <button
-              type="button"
-              disabled
-              aria-label="ورودی صوتی"
-              className="flex h-9 w-9 shrink-0 items-center justify-center text-text-subtle opacity-40"
-            >
-              <MicIcon />
-            </button>
-
-            <button
-              type="button"
-              onClick={() => void handleSend()}
-              disabled={!canSend}
-              aria-label="ارسال"
-              className="flex h-10 w-[70px] shrink-0 items-center justify-center transition disabled:cursor-not-allowed disabled:opacity-40"
-            >
-              <img
-                src={SEND_IMAGE_SRC}
-                alt=""
-                draggable={false}
-                className="h-full w-full select-none object-contain"
-              />
-            </button>
+              {canSend ? (
+                <button
+                  type="button"
+                  onClick={() => void handleSend()}
+                  aria-label="ارسال"
+                  className="flex h-10 w-[70px] shrink-0 items-center justify-center transition"
+                >
+                  <img
+                    src={SEND_IMAGE_SRC}
+                    alt=""
+                    draggable={false}
+                    className="h-full w-full select-none object-contain"
+                  />
+                </button>
+              ) : (
+                <button
+                  type="button"
+                  disabled
+                  aria-label="گفتگوی صوتی"
+                  className={`${ROUND_BUTTON_CLASS} bg-primary text-black`}
+                >
+                  <WaveIcon />
+                </button>
+              )}
+            </div>
           </div>
         </div>
       </footer>
@@ -1873,10 +1897,23 @@ function iconProps() {
   };
 }
 
-function AttachIcon() {
+function PlusIcon() {
   return (
     <svg {...iconProps()}>
-      <path d="M17.5 8.5 9.6 16.4a3.2 3.2 0 0 1-4.5-4.5l8-8a2.2 2.2 0 0 1 3.1 3.1l-7.6 7.6a1.2 1.2 0 0 1-1.7-1.7l6.9-6.9" />
+      <path d="M12 5v14" />
+      <path d="M5 12h14" />
+    </svg>
+  );
+}
+
+function WaveIcon() {
+  return (
+    <svg {...iconProps()}>
+      <path d="M4 10v4" />
+      <path d="M8 6v12" />
+      <path d="M12 3v18" />
+      <path d="M16 7v10" />
+      <path d="M20 10v4" />
     </svg>
   );
 }
