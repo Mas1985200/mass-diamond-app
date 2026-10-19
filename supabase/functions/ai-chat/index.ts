@@ -107,8 +107,16 @@ Deno.serve(async (request: Request): Promise<Response> => {
     const rawBody: unknown = await request.json();
     const body = parseRequestBody(rawBody);
     const extracted = extractLocationTag(body.message ?? "");
-    const message = validateMessage(extracted.text);
+    const photos = body.images;
+    const message = validateMessage(extracted.text, photos.length > 0);
     const location = body.location ?? extracted.location;
+
+    // Photos are sent to the model once and never stored; the stored history
+    // only notes that photos were attached.
+    const storedMessage =
+      photos.length === 0
+        ? message
+        : `${message}\n\n(${photos.length} photo${photos.length === 1 ? "" : "s"} attached)`.trim();
 
     let conversationId = body.conversationId;
     const isNewConversation = !conversationId;
@@ -182,7 +190,7 @@ Deno.serve(async (request: Request): Promise<Response> => {
     };
 
     console.log(
-      `request ${requestId}: web_search=${ctx.tavilyKey ? "on" : "off"}, location=${ctx.location ? "yes" : "no"}, history=${history.length}, facts=${facts.length}, summaries=${summaries.length}`,
+      `request ${requestId}: web_search=${ctx.tavilyKey ? "on" : "off"}, location=${ctx.location ? "yes" : "no"}, history=${history.length}, facts=${facts.length}, summaries=${summaries.length}, photos=${photos.length}`,
     );
 
     // In a new chat the previous chat is summarized shortly after the answer
@@ -221,12 +229,24 @@ Deno.serve(async (request: Request): Promise<Response> => {
       // and tools the model receives (null = unknown: everything).
       const conversation: AIMessage[] = [
         ...history,
-        { role: "user", content: message },
+        {
+          role: "user",
+          content: message,
+          ...(photos.length > 0 ? { images: photos } : {}),
+        },
       ];
-      const capability = await routeCapability(conversation, master.signal);
+      // With photos the model sees everything and picks its own tools, so the
+      // router (which reads text only) is skipped.
+      const capability =
+        photos.length > 0
+          ? null
+          : await routeCapability(conversation, master.signal);
 
       const aiMessages: AIMessage[] = [
-        { role: "system", content: buildSystemPrompt(ctx, memory, capability) },
+        {
+          role: "system",
+          content: buildSystemPrompt(ctx, memory, capability, photos.length),
+        },
         ...conversation,
       ];
 
@@ -266,7 +286,7 @@ Deno.serve(async (request: Request): Promise<Response> => {
         requestId,
         conversationId,
         userId: user.id,
-        userMessage: message,
+        userMessage: storedMessage,
         adminClient,
         master,
         totalTimer,
@@ -316,7 +336,13 @@ Deno.serve(async (request: Request): Promise<Response> => {
     }
 
     try {
-      await saveExchange(adminClient, user.id, conversationId, message, content);
+      await saveExchange(
+        adminClient,
+        user.id,
+        conversationId,
+        storedMessage,
+        content,
+      );
       await touchConversation(adminClient, user.id, conversationId);
     } catch (saveError) {
       console.error(
