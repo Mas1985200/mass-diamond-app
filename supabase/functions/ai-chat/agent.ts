@@ -17,6 +17,7 @@ import type {
   ToolOutcome,
 } from "./types.ts";
 import { encodeCard } from "./cards/codec.ts";
+import { buildUserContent } from "./attachments/images.ts";
 import { buildToolDefinitions } from "./tools/definitions.ts";
 import { executeTool } from "./tools/registry.ts";
 import { readTurn } from "./providers/groq.ts";
@@ -51,9 +52,19 @@ type AgentParams = {
 };
 
 function toOAIMessage(message: AIMessage): OAIMessage {
-  return message.role === "assistant"
-    ? { role: "assistant", content: message.content }
-    : { role: message.role, content: message.content };
+  if (message.role === "assistant") {
+    return { role: "assistant", content: message.content };
+  }
+
+  if (message.role === "user") {
+    // The newest user message may carry the photos the user attached.
+    return {
+      role: "user",
+      content: buildUserContent(message.content, message.images),
+    };
+  }
+
+  return { role: "system", content: message.content };
 }
 
 // Only the first round may call tools; the next round must write the answer.
