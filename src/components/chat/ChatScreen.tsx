@@ -18,6 +18,13 @@ import DiamondMark from "../DiamondMark";
 import MarkdownText from "./MarkdownText";
 import DirectionsButton from "./DirectionsButton";
 import PhotosCard, { parsePhotosCard, type PhotosCardData } from "./PhotosCard";
+import PhotoStrip, { MessageThumbs } from "./PhotoStrip";
+import {
+  MAX_PHOTOS,
+  addImages,
+  type AttachErrorCode,
+  type AttachedPhoto,
+} from "../../lib/imageAttach";
 
 const ERROR_MESSAGES: Record<ChatErrorCode, string> = {
   AUTH_REQUIRED: "نشست شما منقضی شده است. لطفاً دوباره وارد شوید.",
@@ -30,6 +37,12 @@ const ERROR_MESSAGES: Record<ChatErrorCode, string> = {
   NETWORK_ERROR:
     "اتصال به سرور برقرار نشد. لطفاً اینترنت خود را بررسی کنید.",
   UNKNOWN_ERROR: "خطای ناشناخته‌ای رخ داد. لطفاً دوباره تلاش کنید.",
+};
+
+const PHOTO_ERROR_MESSAGES: Record<AttachErrorCode, string> = {
+  unsupported: "فقط فایل عکس قابل پیوست است.",
+  unreadable: "این عکس خوانده نشد. لطفاً عکس دیگری انتخاب کنید.",
+  limit: `حداکثر ${MAX_PHOTOS.toLocaleString("fa-IR")} عکس را می‌شود پیوست کرد.`,
 };
 
 const DEFAULT_PLACEHOLDER = "چطور می‌تونم کمکت کنم؟";
@@ -1097,7 +1110,11 @@ export default function ChatScreen() {
   const [activeId, setActiveId] = useState<string | null>(null);
   const [viewportHeight, setViewportHeight] = useState<number | null>(null);
   const [showJump, setShowJump] = useState(false);
+  const [photos, setPhotos] = useState<readonly AttachedPhoto[]>([]);
+  const [photoError, setPhotoError] = useState<AttachErrorCode | null>(null);
+  const [isPreparing, setIsPreparing] = useState(false);
   const inputRef = useRef<HTMLTextAreaElement | null>(null);
+  const fileInputRef = useRef<HTMLInputElement | null>(null);
   const mainRef = useRef<HTMLElement | null>(null);
   const listRef = useRef<HTMLUListElement | null>(null);
   const chatHistoryPushedRef = useRef(false);
@@ -1109,7 +1126,10 @@ export default function ChatScreen() {
   const locationRef = useRef<LocationFix | null>(null);
 
   const hasMessages = messages.length > 0;
-  const canSend = draft.trim().length > 0 && !isSending;
+  const canSend =
+    (draft.trim().length > 0 || photos.length > 0) &&
+    !isSending &&
+    !isPreparing;
   const showThinking = isSending && !isStreaming;
 
   const activeAction =
@@ -1260,6 +1280,8 @@ export default function ChatScreen() {
       chatHistoryPushedRef.current = false;
       reset();
       setDraft("");
+      setPhotos([]);
+      setPhotoError(null);
       setActiveId(null);
     };
 
@@ -1426,7 +1448,7 @@ export default function ChatScreen() {
   const submit = async (raw: string) => {
     const text = raw.trim();
 
-    if (!text || isSending) {
+    if ((!text && photos.length === 0) || isSending || isPreparing) {
       return;
     }
 
@@ -1436,15 +1458,51 @@ export default function ChatScreen() {
       void refreshLocation();
     }
 
+    const attached = photos;
+
     stickToBottomRef.current = true;
     setShowJump(false);
     setDraft("");
+    setPhotos([]);
+    setPhotoError(null);
     setActiveId(null);
 
-    await sendMessage(
-      text,
-      fix ? { location: { lat: fix.lat, lon: fix.lon } } : undefined,
-    );
+    await sendMessage(text, {
+      photos: attached,
+      ...(fix ? { location: { lat: fix.lat, lon: fix.lon } } : {}),
+    });
+  };
+
+  const handleChoosePhotos = () => {
+    fileInputRef.current?.click();
+  };
+
+  const handleFilesChosen = async (event: ChangeEvent<HTMLInputElement>) => {
+    const files = Array.from(event.target.files ?? []);
+
+    // Lets the same photo be chosen again later.
+    event.target.value = "";
+
+    if (files.length === 0) {
+      return;
+    }
+
+    setIsPreparing(true);
+    setPhotoError(null);
+
+    try {
+      const result = await addImages(photos, files);
+
+      setPhotos(result.photos);
+      setPhotoError(result.error);
+    } finally {
+      setIsPreparing(false);
+    }
+  };
+
+  const handleRemovePhoto = (id: string) => {
+    setPhotos((previous) => previous.filter((photo) => photo.id !== id));
+    setPhotoError(null);
   };
 
   const handleSend = async () => {
@@ -1501,6 +1559,8 @@ export default function ChatScreen() {
 
     reset();
     setDraft("");
+    setPhotos([]);
+    setPhotoError(null);
     setActiveId(null);
   };
 
@@ -1571,6 +1631,11 @@ export default function ChatScreen() {
                     dir="auto"
                     className="max-w-[85%] whitespace-pre-wrap break-words rounded-2xl border border-[rgba(57,255,136,0.35)] bg-[rgba(57,255,136,0.08)] px-4 py-2.5 text-[15px] leading-7 text-text"
                   >
+                    {message.thumbs && message.thumbs.length > 0 && (
+                      <div className={message.content ? "mb-2" : ""}>
+                        <MessageThumbs thumbs={message.thumbs} />
+                      </div>
+                    )}
                     {message.content}
                   </div>
                 </li>
@@ -1714,12 +1779,40 @@ export default function ChatScreen() {
             </div>
           )}
 
+          <PhotoStrip
+            photos={photos}
+            onRemove={handleRemovePhoto}
+            disabled={isPreparing}
+          />
+
+          {(isPreparing || photoError) && (
+            <p role="status" className="pb-1 text-xs text-text-subtle">
+              {isPreparing
+                ? "در حال آماده‌سازی عکس…"
+                : photoError
+                  ? PHOTO_ERROR_MESSAGES[photoError]
+                  : ""}
+            </p>
+          )}
+
           <div className="flex items-end gap-2">
+            <input
+              ref={fileInputRef}
+              type="file"
+              accept="image/*"
+              multiple
+              className="hidden"
+              onChange={(event: ChangeEvent<HTMLInputElement>) =>
+                void handleFilesChosen(event)
+              }
+            />
+
             <button
               type="button"
-              disabled
-              aria-label="پیوست فایل"
-              className="flex h-9 w-9 shrink-0 items-center justify-center text-text-subtle opacity-40"
+              onClick={handleChoosePhotos}
+              disabled={isSending || isPreparing || photos.length >= MAX_PHOTOS}
+              aria-label="پیوست عکس"
+              className="flex h-9 w-9 shrink-0 items-center justify-center text-text-subtle transition-colors hover:text-primary disabled:cursor-not-allowed disabled:opacity-40"
             >
               <AttachIcon />
             </button>
