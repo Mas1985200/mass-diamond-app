@@ -21,9 +21,9 @@ export default function PhotoStrip({
 
   return (
     <ul
-      dir="rtl"
+      dir="ltr"
       aria-label="عکس‌های پیوست‌شده"
-      className="flex flex-wrap items-center gap-2 pb-2"
+      className="flex flex-wrap items-center gap-2 pb-2.5 pt-1.5"
     >
       {photos.map((photo) => (
         <li key={photo.id} className="relative h-14 w-14">
