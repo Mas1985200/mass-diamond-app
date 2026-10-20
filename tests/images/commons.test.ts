@@ -134,7 +134,7 @@ test("normalizeFileTitle and buildCommonsUrl: one request for all files", () => 
   assert.ok(url.startsWith("https://commons.wikimedia.org/w/api.php?"));
   assert.ok(url.includes("prop=imageinfo"));
   assert.ok(url.includes("iiprop=url%7Cmime%7Cextmetadata"));
-  assert.ok(url.includes("iiurlwidth=640"));
+  assert.ok(url.includes("iiurlwidth=500"));
   assert.ok(url.includes("titles=File%3AA+b.jpg%7CFile%3AC.png"));
 });
 
