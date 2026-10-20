@@ -15,8 +15,9 @@ export const TOTAL_TIMEOUT_MS = 50_000;
 export const MAX_TOOL_ROUNDS = 2;
 export const MAX_CARDS = 10;
 export const MAX_TOOL_CALLS_PER_ROUND = 8;
-// Reasoning models spend part of this budget on thinking before they answer.
-export const MAX_OUTPUT_TOKENS = 3_000;
+// Reasoning models spend part of this budget on thinking before they answer;
+// at high effort the thinking can be long, so the room is generous.
+export const MAX_OUTPUT_TOKENS = 4_500;
 export const TEMPERATURE = 0.4;
 
 // The public Nominatim service allows about one request per second.
