@@ -3,7 +3,7 @@
 
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2";
 import { TOTAL_TIMEOUT_MS } from "./config.ts";
-import type { AIMessage, ToolContext } from "./types.ts";
+import type { AIMessage, PhotoItem, ToolContext } from "./types.ts";
 import {
   describeError,
   getRequiredEnv,
@@ -35,6 +35,7 @@ import { summarizePreviousConversation } from "./memory/summary.ts";
 import { describePhotos, withPhotoDescription } from "./attachments/describe.ts";
 import { startAgent } from "./agent.ts";
 import { routeCapability } from "./routing/capability.ts";
+import { prepareIllustration } from "./images/illustrate.ts";
 import { createSseResponse } from "./sse.ts";
 
 const RECALL_PATTERN =
@@ -257,12 +258,20 @@ Deno.serve(async (request: Request): Promise<Response> => {
         storedMessage = userText;
       }
 
-      // What kind of question is this? The answer decides which prompt rules
-      // and tools the model receives (null = unknown: everything).
       const conversation: AIMessage[] = [
         ...history,
         { role: "user", content: userText },
       ];
+
+      // Pictures of the subject are chosen beside the answer (never when the
+      // user sent photos of their own).
+      const illustration: Promise<readonly PhotoItem[]> | null =
+        photos.length === 0
+          ? prepareIllustration(conversation, master.signal)
+          : null;
+
+      // What kind of question is this? The answer decides which prompt rules
+      // and tools the model receives (null = unknown: everything).
       const capability = await routeCapability(conversation, master.signal);
 
       const aiMessages: AIMessage[] = [
@@ -273,7 +282,13 @@ Deno.serve(async (request: Request): Promise<Response> => {
         ...conversation,
       ];
 
-      started = await startAgent(aiMessages, ctx, master.signal, capability);
+      started = await startAgent(
+        aiMessages,
+        ctx,
+        master.signal,
+        capability,
+        illustration,
+      );
     } catch (error) {
       clearTimeout(totalTimer);
       throw error;
