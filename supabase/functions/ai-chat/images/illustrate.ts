@@ -1,9 +1,10 @@
 // supabase/functions/ai-chat/images/illustrate.ts
-// Pictures for any answer about a concrete thing, chosen WITHOUT relying on
-// the main model to call a tool. A small model reads the conversation, names
-// the main subject (or says there is nothing to picture), and credited free
-// pictures of that subject are fetched. The answer never waits for this: it
-// runs beside the answer and the pictures are added at the end.
+// Pictures for every answer, chosen WITHOUT relying on the main model to call
+// a tool. A small model reads the conversation and names the best thing to
+// picture (the subject itself, or for an abstract question the picturable
+// thing it concerns), and credited free pictures of it are fetched. The
+// answer never waits for this: it runs beside the answer and the pictures are
+// added at the end.
 
 import { stripThinking } from "../attachments/describe.ts";
 import { createAttempt } from "../lib/http.ts";
@@ -26,11 +27,12 @@ const TOPIC_MAX_CHARS = 80;
 const TOPIC_MIN_CHARS = 2;
 
 const INSTRUCTION = [
-  "You decide what to show as pictures under the answer to the LAST user message. Use the earlier messages only to understand short follow-ups ('a photo of it', 'and its picture').",
-  "Reply with exactly one line: either NONE, or TOPIC: <the main subject, written in English as the title of its Wikipedia article, 1 to 5 words>.",
-  "Give a TOPIC when the main subject is a concrete thing that can be pictured: a body part or organ, an animal or breed, a plant, a food or dish, a drug or substance, a tool, device or vehicle, a material, a place, building or landmark, an artwork, a famous historical or public figure, an event, a natural phenomenon, a space object, a sport, an instrument, a profession. Do it also when the user only names the thing, asks what it is, or asks to see it.",
-  "Give NONE for greetings, chit-chat, advice, opinions, feelings, writing, editing or translation help, math, programming, planning, brainstorming, memory statements, questions about the assistant itself, questions whose answer is a price, a news item, the weather or the time, and any question about private individuals.",
-  "If the user asks for a picture but names no kind (for example just 'a dog'), give the plain general subject; never ask anything back.",
+  "You choose what to show as pictures under EVERY answer, so the user always sees something that fits. Read the LAST user message (use the earlier messages only to understand short follow-ups such as 'a photo of it').",
+  "Reply with exactly one line: TOPIC: <the best thing to picture, written in English as the title of its Wikipedia article, 1 to 5 words>.",
+  "Always find a subject. If the message names or asks about a concrete thing (a body part or organ, an animal or breed, a plant, a food or dish, a drug or substance, a tool, device or vehicle, a material, a place, building or landmark, an artwork, a famous historical or public figure, an event, a natural phenomenon, a space object, a sport, an instrument, a profession), that thing is the topic, also when the user only names it or asks to see it.",
+  "If the subject is abstract (a feeling, a concept, advice, a how-to, a plan, a price, news, the weather, a business or real-estate question, a story, code), pick the most fitting picturable thing that the topic is about (for example the object, place, activity or field it concerns).",
+  "Answer NONE only when there is truly nothing to picture: a bare greeting, thanks, or a message about the assistant itself, and anything that would point at a private individual.",
+  "Never ask anything back, never explain; if the user asks for a picture without naming a kind (just 'a dog'), give the plain general subject.",
   "Never write anything except that one line.",
 ].join("\n");
 
