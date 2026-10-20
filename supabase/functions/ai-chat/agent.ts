@@ -12,6 +12,7 @@ import type {
   AIMessage,
   CardPayload,
   OAIMessage,
+  PhotoItem,
   ToolContext,
   ToolDefinition,
   ToolOutcome,
@@ -49,6 +50,9 @@ type AgentParams = {
   readonly ctx: ToolContext;
   readonly signal: AbortSignal;
   readonly first: OpenSuccess;
+  // Pictures chosen beside the answer (never rejects). Shown at the end when
+  // no tool has already shown pictures.
+  readonly illustration: Promise<readonly PhotoItem[]> | null;
 };
 
 function toOAIMessage(message: AIMessage): OAIMessage {
@@ -153,6 +157,7 @@ async function* agentChunks(
   const deferred: string[] = [];
   const failed = new Set<string>();
   let current: OpenSuccess = params.first;
+  let picturesFromTools = false;
 
   for (let round = 0; ; round += 1) {
     const turn = yield* readTurn(current.body, current.model);
@@ -228,6 +233,14 @@ async function* agentChunks(
         return pending;
       }),
     );
+
+    if (
+      outcomes.some((outcome) =>
+        (outcome.cards ?? []).some((card) => card.t === "photos"),
+      )
+    ) {
+      picturesFromTools = true;
+    }
 
     const allFinal = outcomes.every((outcome) => outcome.finalText !== undefined);
     const multiple = new Set(outcomes).size > 1;
@@ -344,6 +357,16 @@ async function* agentChunks(
       yield `\n\n${marker}`;
     }
   }
+
+  // Answers about a concrete thing end with its pictures, whether or not the
+  // model chose to call a tool.
+  if (!picturesFromTools && params.illustration && emitted.size < MAX_CARDS) {
+    const items = await params.illustration;
+
+    if (items.length > 0) {
+      yield `\n\n${encodeCard({ t: "photos", lang: params.ctx.lang, items })}`;
+    }
+  }
 }
 
 export async function startAgent(
@@ -351,6 +374,7 @@ export async function startAgent(
   ctx: ToolContext,
   signal: AbortSignal,
   capability: Capability | null = null,
+  illustration: Promise<readonly PhotoItem[]> | null = null,
 ): Promise<AgentStart> {
   const tools = selectTools(buildToolDefinitions(ctx), capability);
 
@@ -373,6 +397,13 @@ export async function startAgent(
     success: true,
     provider: "groq",
     model: opened.model,
-    chunks: agentChunks({ messages, tools, ctx, signal, first: opened }),
+    chunks: agentChunks({
+      messages,
+      tools,
+      ctx,
+      signal,
+      first: opened,
+      illustration,
+    }),
   };
 }
