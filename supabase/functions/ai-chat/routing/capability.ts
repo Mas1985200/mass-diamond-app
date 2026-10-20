@@ -142,7 +142,7 @@ export function parseCapability(text: string): Capability | null {
 }
 
 // The smallest configured model is tried first: this call must be fast.
-async function askGroq(
+export async function askGroq(
   messages: readonly OAIMessage[],
   signal: AbortSignal,
 ): Promise<string | null> {
