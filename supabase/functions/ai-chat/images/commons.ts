@@ -9,7 +9,9 @@ import { createAttempt } from "../lib/http.ts";
 import { readCredit } from "./license.ts";
 
 export const COMMONS_API = "https://commons.wikimedia.org/w/api.php";
-export const THUMB_WIDTH = 640;
+// A standard Wikimedia thumbnail width (500): other widths are made on demand,
+// arrive slowly or not at all, and left empty boxes in the picture strip.
+export const THUMB_WIDTH = 500;
 const REQUEST_TIMEOUT_MS = 4_000;
 const TITLE_MAX_CHARS = 100;
 
