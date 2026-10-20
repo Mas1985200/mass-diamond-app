@@ -19,6 +19,7 @@ import MarkdownText from "./MarkdownText";
 import DirectionsButton from "./DirectionsButton";
 import PhotosCard, { parsePhotosCard, type PhotosCardData } from "./PhotosCard";
 import PhotoStrip, { MessageThumbs } from "./PhotoStrip";
+import AttachSheet from "./AttachSheet";
 import {
   MAX_PHOTOS,
   addImages,
@@ -1115,8 +1116,14 @@ export default function ChatScreen() {
   const [photos, setPhotos] = useState<readonly AttachedPhoto[]>([]);
   const [photoError, setPhotoError] = useState<AttachErrorCode | null>(null);
   const [isPreparing, setIsPreparing] = useState(false);
+  const [sheetOpen, setSheetOpen] = useState(false);
   const inputRef = useRef<HTMLTextAreaElement | null>(null);
   const fileInputRef = useRef<HTMLInputElement | null>(null);
+  const cameraInputRef = useRef<HTMLInputElement | null>(null);
+  // The open sheet owns one browser-history entry, so the phone's back button
+  // closes the sheet instead of leaving the chat.
+  const sheetEntryRef = useRef(false);
+  const skipPopRef = useRef(false);
   const mainRef = useRef<HTMLElement | null>(null);
   const listRef = useRef<HTMLUListElement | null>(null);
   const chatHistoryPushedRef = useRef(false);
@@ -1275,6 +1282,19 @@ export default function ChatScreen() {
 
   useEffect(() => {
     const handlePopState = () => {
+      // The sheet closing itself moved the history back: nothing else to do.
+      if (skipPopRef.current) {
+        skipPopRef.current = false;
+        return;
+      }
+
+      // The back button while the sheet is open only closes the sheet.
+      if (sheetEntryRef.current) {
+        sheetEntryRef.current = false;
+        setSheetOpen(false);
+        return;
+      }
+
       if (!chatHistoryPushedRef.current) {
         return;
       }
@@ -1475,8 +1495,37 @@ export default function ChatScreen() {
     });
   };
 
+  const openSheet = () => {
+    if (isSending || isPreparing || photos.length >= MAX_PHOTOS) {
+      return;
+    }
+
+    if (!sheetEntryRef.current) {
+      window.history.pushState({ mdSheet: true }, "");
+      sheetEntryRef.current = true;
+    }
+
+    setSheetOpen(true);
+  };
+
+  const closeSheet = useCallback((): void => {
+    setSheetOpen(false);
+
+    if (sheetEntryRef.current) {
+      sheetEntryRef.current = false;
+      skipPopRef.current = true;
+      window.history.back();
+    }
+  }, []);
+
   const handleChoosePhotos = () => {
+    closeSheet();
     fileInputRef.current?.click();
+  };
+
+  const handleTakePhoto = () => {
+    closeSheet();
+    cameraInputRef.current?.click();
   };
 
   const handleFilesChosen = async (event: ChangeEvent<HTMLInputElement>) => {
@@ -1833,9 +1882,20 @@ export default function ChatScreen() {
               }
             />
 
+            <input
+              ref={cameraInputRef}
+              type="file"
+              accept="image/*"
+              capture="environment"
+              className="hidden"
+              onChange={(event: ChangeEvent<HTMLInputElement>) =>
+                void handleFilesChosen(event)
+              }
+            />
+
             <button
               type="button"
-              onClick={handleChoosePhotos}
+              onClick={openSheet}
               disabled={isSending || isPreparing || photos.length >= MAX_PHOTOS}
               aria-label="پیوست عکس"
               className={`${ROUND_BUTTON_CLASS} text-primary hover:border-[rgba(57,255,136,0.4)]`}
@@ -1881,6 +1941,14 @@ export default function ChatScreen() {
           </div>
         </div>
       </footer>
+
+      <AttachSheet
+        open={sheetOpen}
+        onClose={closeSheet}
+        onCamera={handleTakePhoto}
+        onPhotos={handleChoosePhotos}
+        remaining={MAX_PHOTOS - photos.length}
+      />
     </div>
   );
 }
