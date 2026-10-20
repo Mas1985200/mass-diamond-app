@@ -1,7 +1,7 @@
 // src/components/chat/PhotosCard.tsx
 // Picture strip of an answer. Every picture carries its author and license
-// (Wikimedia Commons), which is shown under it with links to the license text
-// and to the file page.
+// (Wikimedia Commons or Openverse), which is shown under it with links to the
+// license text and to the file page.
 
 type Lang = "fa" | "en";
 
@@ -20,9 +20,12 @@ export interface PhotosCardData {
   readonly items: readonly PhotoItem[];
 }
 
-const PHOTO_HOST_PATTERN = /^https:\/\/upload\.wikimedia\.org\//;
+const PHOTO_HOST_PATTERN =
+  /^https:\/\/(?:upload\.wikimedia\.org|api\.openverse\.org)\//;
 const LICENSE_HOST_PATTERN = /^https:\/\/creativecommons\.org\//;
-const FILE_PAGE_PATTERN = /^https:\/\/commons\.wikimedia\.org\/wiki\//;
+const FILE_PAGE_PATTERN =
+  /^https:\/\/(?:commons\.wikimedia\.org\/wiki|openverse\.org\/image)\//;
+const OPENVERSE_PAGE_PATTERN = /^https:\/\/openverse\.org\//;
 const MAX_PHOTOS = 5;
 
 function isRecord(value: unknown): value is Record<string, unknown> {
@@ -40,7 +43,8 @@ function asLink(value: unknown, pattern: RegExp): string | undefined {
 }
 
 // Cards come from the server as data; nothing is trusted. Only pictures from
-// Wikimedia are shown, and only links to the license text and the file page.
+// Wikimedia and Openverse are shown, and only links to the license text and
+// the file page.
 export function parsePhotosCard(value: Record<string, unknown>): PhotosCardData | null {
   if (!Array.isArray(value.items)) {
     return null;
@@ -118,7 +122,11 @@ function Credit({ item, rtl }: { readonly item: PhotoItem; readonly rtl: boolean
             rel="noopener noreferrer"
             className={LINK_CLASS}
           >
-            {rtl ? "ویکی‌مدیا کامنز" : "Wikimedia Commons"}
+            {OPENVERSE_PAGE_PATTERN.test(item.page)
+              ? "Openverse"
+              : rtl
+                ? "ویکی‌مدیا کامنز"
+                : "Wikimedia Commons"}
           </a>
         </>
       ) : null}
