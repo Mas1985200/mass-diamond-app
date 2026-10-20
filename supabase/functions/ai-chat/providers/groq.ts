@@ -17,12 +17,40 @@ import type {
   ToolOptions,
 } from "./types.ts";
 
+export type ReasoningEffort = "low" | "medium" | "high";
+
+// How hard the model that WRITES the answer thinks: "high" by default. The
+// router and the freshness check stay on "low" because the answer waits for
+// them and they have a short time limit. The secret GROQ_REASONING_EFFORT can
+// set this to low, medium or high.
+export function answerEffort(): ReasoningEffort {
+  const value = getOptionalEnv("GROQ_REASONING_EFFORT")?.trim().toLowerCase();
+
+  return value === "low" || value === "medium" || value === "high"
+    ? value
+    : "high";
+}
+
+// Choosing a tool and its arguments needs little thinking, and the user waits
+// for it, so a round that must call a tool thinks one step lower than the
+// round that writes the answer.
+export function effortFor(tools: ToolOptions): ReasoningEffort {
+  const effort = answerEffort();
+
+  if (tools !== null && tools.toolChoice === "required" && effort === "high") {
+    return "medium";
+  }
+
+  return effort;
+}
+
 export async function requestRound(
   apiKey: string,
   model: string,
   messages: readonly OAIMessage[],
   toolOptions: ToolOptions,
   master: AbortSignal,
+  effort: ReasoningEffort = "low",
 ): Promise<RoundResult> {
   const attempt = createAttempt(master);
 
@@ -36,8 +64,7 @@ export async function requestRound(
     };
 
     if (model.includes("gpt-oss")) {
-      payload.reasoning_effort =
-        getOptionalEnv("GROQ_REASONING_EFFORT") ?? "low";
+      payload.reasoning_effort = effort;
     }
 
     if (toolOptions) {
