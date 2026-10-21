@@ -3,6 +3,8 @@
 // (Wikimedia Commons or Openverse), which is shown under it with links to the
 // license text and to the file page.
 
+import { useState } from "react";
+
 type Lang = "fa" | "en";
 
 export interface PhotoItem {
@@ -136,11 +138,19 @@ function Credit({ item, rtl }: { readonly item: PhotoItem; readonly rtl: boolean
 
 export default function PhotosCard({ card }: { readonly card: PhotosCardData }) {
   const rtl = card.lang === "fa";
+  // A picture that cannot be loaded is dropped, so the strip never shows an
+  // empty box with only a file name.
+  const [broken, setBroken] = useState<readonly string[]>([]);
+  const shown = card.items.filter((item) => !broken.includes(item.src));
+
+  if (shown.length === 0) {
+    return null;
+  }
 
   return (
     <div dir={rtl ? "rtl" : "ltr"} className="my-3 w-full max-w-sm">
       <div className="md-gallery -mx-1 flex snap-x snap-mandatory gap-2.5 overflow-x-auto px-1 pb-1">
-        {card.items.map((item, index) => (
+        {shown.map((item, index) => (
           <figure key={`${item.src}-${index}`} className="m-0 w-52 shrink-0 snap-start">
             <a
               href={item.src}
@@ -150,10 +160,14 @@ export default function PhotosCard({ card }: { readonly card: PhotosCardData }) 
             >
               <img
                 src={item.src}
-                alt={item.title}
-                loading="lazy"
+                alt=""
                 draggable={false}
                 referrerPolicy="no-referrer"
+                onError={() =>
+                  setBroken((current) =>
+                    current.includes(item.src) ? current : [...current, item.src],
+                  )
+                }
                 className="h-full w-full select-none object-cover"
               />
             </a>
