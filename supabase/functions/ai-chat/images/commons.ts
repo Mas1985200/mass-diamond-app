@@ -174,9 +174,12 @@ export async function fetchCommonsImages(
   return parseCommonsImages(json, fileTitles, options);
 }
 
-// Last resort for any topic: a direct search over all files of Commons.
+// Last resort for any topic: a direct search over the photos of Commons. The
+// topic is searched as an exact phrase, so a word that only appears inside
+// another subject ("bear" in "bear market") does not match. A search for
+// diagrams is never made: its hits were charts about other subjects.
 export function buildCommonsSearchUrl(query: string, diagrams: boolean): string {
-  const words = query.replace(/\s+/g, " ").trim().slice(0, 120);
+  const words = query.replace(/["\\]/g, " ").replace(/\s+/g, " ").trim().slice(0, 120);
   const params = new URLSearchParams({
     action: "query",
     format: "json",
@@ -184,7 +187,7 @@ export function buildCommonsSearchUrl(query: string, diagrams: boolean): string 
     generator: "search",
     gsrnamespace: "6",
     gsrlimit: "15",
-    gsrsearch: diagrams ? `${words} diagram` : `${words} filetype:bitmap`,
+    gsrsearch: diagrams ? `"${words}" diagram` : `"${words}" filetype:bitmap`,
     prop: "imageinfo|categories",
     clshow: "!hidden",
     cllimit: "max",
@@ -201,7 +204,7 @@ export async function searchCommonsImages(
   diagrams: boolean,
   master: AbortSignal,
 ): Promise<PhotoItem[]> {
-  if (!query.trim()) {
+  if (!query.trim() || diagrams) {
     return [];
   }
 
