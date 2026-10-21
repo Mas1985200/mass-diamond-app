@@ -51,6 +51,7 @@ export async function requestRound(
   toolOptions: ToolOptions,
   master: AbortSignal,
   effort: ReasoningEffort = "low",
+  maxTokens: number = MAX_OUTPUT_TOKENS,
 ): Promise<RoundResult> {
   const attempt = createAttempt(master);
 
@@ -59,7 +60,7 @@ export async function requestRound(
       model,
       messages,
       temperature: TEMPERATURE,
-      max_completion_tokens: MAX_OUTPUT_TOKENS,
+      max_completion_tokens: maxTokens,
       stream: true,
     };
 
