@@ -8,6 +8,7 @@ import assert from "node:assert/strict";
 
 import {
   buildOpenverseUrl,
+  mentionsTopic,
   parseOpenverse,
 } from "../../supabase/functions/ai-chat/images/openverse.ts";
 
@@ -81,4 +82,15 @@ test("the search asks for reusable, non-mature photographs", () => {
   assert.equal(params.get("q"), "Saffron crocus");
   assert.equal(params.get("license_type"), "commercial,modification");
   assert.equal(params.get("mature"), "false");
+});
+
+test("a picture must name every word of the topic in its title or tags", () => {
+  const bear = result({ title: "Grizzly", tags: [{ name: "brown" }, { name: "bears" }] });
+  const teddy = result({ title: "Teddy bear toy", tags: [{ name: "toy" }] });
+
+  assert.equal(mentionsTopic(bear, "Brown bear"), true);
+  assert.equal(mentionsTopic(teddy, "Brown bear"), false);
+  assert.equal(mentionsTopic(teddy, ""), true);
+  assert.deepEqual(parseOpenverse({ results: [teddy] }, "Brown bear"), []);
+  assert.equal(parseOpenverse({ results: [bear] }, "Brown bear").length, 1);
 });
