@@ -63,14 +63,35 @@ export function buildOpenverseUrl(query: string): string {
   return `${OPENVERSE_API}?${params.toString()}`;
 }
 
-export function parseOpenverse(json: unknown): PhotoItem[] {
+// A picture is kept only when its title or tags name every word of the topic
+// ("brown bear" needs both words), so a teddy bear or a bear-shaped sign does
+// not pass for the animal. Plurals match ("bears" holds "bear").
+export function mentionsTopic(raw: Record<string, unknown>, topic: string): boolean {
+  const wanted = topic
+    .toLowerCase()
+    .split(/[^\p{L}\p{N}]+/u)
+    .filter((word) => word.length >= 3);
+
+  if (wanted.length === 0) {
+    return true;
+  }
+
+  const tags = Array.isArray(raw.tags)
+    ? raw.tags.map((tag) => (isRecord(tag) ? pickString(tag, "name") : "")).join(" ")
+    : "";
+  const text = `${pickString(raw, "title")} ${tags}`.toLowerCase();
+
+  return wanted.every((word) => text.includes(word));
+}
+
+export function parseOpenverse(json: unknown, topic = ""): PhotoItem[] {
   const results =
     isRecord(json) && Array.isArray(json.results) ? json.results : [];
   const items: PhotoItem[] = [];
   const seen = new Set<string>();
 
   for (const raw of results) {
-    if (!isRecord(raw) || raw.mature === true) {
+    if (!isRecord(raw) || raw.mature === true || !mentionsTopic(raw, topic)) {
       continue;
     }
 
@@ -130,7 +151,7 @@ export async function searchOpenverse(
       return [];
     }
 
-    return parseOpenverse(await response.json()).slice(0, max);
+    return parseOpenverse(await response.json(), query).slice(0, max);
   } catch (error) {
     console.error(`openverse search threw: ${describeError(error)}`);
 
