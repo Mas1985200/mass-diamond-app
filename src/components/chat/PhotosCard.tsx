@@ -1,7 +1,8 @@
 // src/components/chat/PhotosCard.tsx
 // Picture strip of an answer. Every picture carries its author and license
-// (Wikimedia Commons or Openverse), which is shown under it with links to the
-// license text and to the file page.
+// (Wikimedia Commons, Unsplash or Openverse), which is shown under it with
+// links to the license text and to the file page. A picture found on the open
+// web is marked "Web": it names the site it came from and links to that page.
 
 import { useState } from "react";
 
@@ -22,12 +23,17 @@ export interface PhotosCardData {
   readonly items: readonly PhotoItem[];
 }
 
+const WEB_LICENSE = "Web";
 const PHOTO_HOST_PATTERN =
-  /^https:\/\/(?:upload\.wikimedia\.org|api\.openverse\.org)\//;
-const LICENSE_HOST_PATTERN = /^https:\/\/creativecommons\.org\//;
+  /^https:\/\/(?:upload\.wikimedia\.org|api\.openverse\.org|images\.unsplash\.com)\//;
+// Any secure address without spaces or quote marks (a picture from the web).
+const WEB_ADDRESS_PATTERN = /^https:\/\/[^\s"'<>]+$/;
+const LICENSE_HOST_PATTERN =
+  /^https:\/\/(?:creativecommons\.org\/|unsplash\.com\/license$)/;
 const FILE_PAGE_PATTERN =
-  /^https:\/\/(?:commons\.wikimedia\.org\/wiki|openverse\.org\/image)\//;
+  /^https:\/\/(?:commons\.wikimedia\.org\/wiki|openverse\.org\/image|unsplash\.com\/photos)\//;
 const OPENVERSE_PAGE_PATTERN = /^https:\/\/openverse\.org\//;
+const UNSPLASH_PAGE_PATTERN = /^https:\/\/unsplash\.com\//;
 const MAX_PHOTOS = 5;
 
 function isRecord(value: unknown): value is Record<string, unknown> {
@@ -44,9 +50,9 @@ function asLink(value: unknown, pattern: RegExp): string | undefined {
   return text && pattern.test(text) ? text : undefined;
 }
 
-// Cards come from the server as data; nothing is trusted. Only pictures from
-// Wikimedia and Openverse are shown, and only links to the license text and
-// the file page.
+// Cards come from the server as data; nothing is trusted. Pictures from
+// Wikimedia, Unsplash and Openverse are shown, and web pictures only when they
+// are marked "Web"; links go only to the license text and the file page.
 export function parsePhotosCard(value: Record<string, unknown>): PhotosCardData | null {
   if (!Array.isArray(value.items)) {
     return null;
@@ -60,15 +66,16 @@ export function parsePhotosCard(value: Record<string, unknown>): PhotosCardData 
     }
 
     const src = asText(raw.src, 600);
+    const license = asText(raw.license, 50) ?? undefined;
+    const web = license === WEB_LICENSE;
 
-    if (!src || !PHOTO_HOST_PATTERN.test(src)) {
+    if (!src || !(PHOTO_HOST_PATTERN.test(src) || (web && WEB_ADDRESS_PATTERN.test(src)))) {
       continue;
     }
 
     const author = asText(raw.author, 90) ?? undefined;
-    const license = asText(raw.license, 50) ?? undefined;
     const licenseUrl = asLink(raw.licenseUrl, LICENSE_HOST_PATTERN);
-    const page = asLink(raw.page, FILE_PAGE_PATTERN);
+    const page = asLink(raw.page, web ? WEB_ADDRESS_PATTERN : FILE_PAGE_PATTERN);
 
     items.push({
       src,
@@ -90,6 +97,33 @@ const LINK_CLASS = "underline decoration-white/30 underline-offset-2";
 function Credit({ item, rtl }: { readonly item: PhotoItem; readonly rtl: boolean }) {
   if (!item.license) {
     return null;
+  }
+
+  if (item.license === WEB_LICENSE) {
+    const site = item.author ?? "";
+
+    return (
+      <figcaption className="mt-1.5 text-[11px] leading-4 text-white/60">
+        <span>{rtl ? "تصویر وب · حق نشر با صاحب منبع" : "Web image · rights belong to its owner"}</span>
+        {site ? (
+          <>
+            <span> · </span>
+            {item.page ? (
+              <a
+                href={item.page}
+                target="_blank"
+                rel="noopener noreferrer"
+                className={LINK_CLASS}
+              >
+                <bdi>{site}</bdi>
+              </a>
+            ) : (
+              <bdi>{site}</bdi>
+            )}
+          </>
+        ) : null}
+      </figcaption>
+    );
   }
 
   const license = item.licenseUrl ? (
@@ -126,9 +160,11 @@ function Credit({ item, rtl }: { readonly item: PhotoItem; readonly rtl: boolean
           >
             {OPENVERSE_PAGE_PATTERN.test(item.page)
               ? "Openverse"
-              : rtl
-                ? "ویکی‌مدیا کامنز"
-                : "Wikimedia Commons"}
+              : UNSPLASH_PAGE_PATTERN.test(item.page)
+                ? "Unsplash"
+                : rtl
+                  ? "ویکی‌مدیا کامنز"
+                  : "Wikimedia Commons"}
           </a>
         </>
       ) : null}
