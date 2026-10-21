@@ -17,6 +17,7 @@ import {
   buildCommonsUrl,
   normalizeFileTitle,
   parseCommonsImages,
+  searchCommonsImages,
 } from "../../supabase/functions/ai-chat/images/commons.ts";
 import {
   fetchLicensedPhotos,
@@ -339,6 +340,59 @@ test("fetchLicensedPhotosForTopic: topic -> article -> diagrams only", async () 
 
     assert.ok(commonsCall?.url.includes("Heart+anatomy.png"));
     assert.ok(!commonsCall?.url.includes("Surgery"));
+  } finally {
+    fake.restore();
+  }
+});
+
+test("isRelatedTitle: a more specific title is another subject", () => {
+  assert.equal(isRelatedTitle("bear", "Bear market"), false);
+  assert.equal(isRelatedTitle("bear", "Bear"), true);
+  assert.equal(isRelatedTitle("human liver", "Liver"), true);
+  assert.equal(isRelatedTitle("donkey", "Donkey Kong"), false);
+});
+
+test("findArticleTitle: the article named exactly like the topic wins over a search", async () => {
+  const fake = fakeFetch((call) => {
+    if (call.url.includes("list=search")) {
+      return json({ query: { search: [{ title: "Bear market" }] } });
+    }
+
+    return json({ query: { pages: [{ title: "Bear" }] } });
+  });
+
+  try {
+    assert.equal(await findArticleTitle("bear", "en", signal), "Bear");
+  } finally {
+    fake.restore();
+  }
+});
+
+test("findArticleTitle: a disambiguation page is skipped and a related hit is used", async () => {
+  const fake = fakeFetch((call) => {
+    if (call.url.includes("list=search")) {
+      return json({ query: { search: [{ title: "Mercury market" }, { title: "Mercury" }] } });
+    }
+
+    return json({ query: { pages: [{ title: "Mercury", pageprops: { disambiguation: "" } }] } });
+  });
+
+  try {
+    assert.equal(await findArticleTitle("mercury", "en", signal), "Mercury");
+  } finally {
+    fake.restore();
+  }
+});
+
+test("searchCommonsImages: diagrams are never searched globally, photos use an exact phrase", async () => {
+  const fake = fakeFetch(() => json({ query: { pages: [] } }));
+
+  try {
+    assert.deepEqual(await searchCommonsImages("bear", true, signal), []);
+    assert.equal(fake.calls.length, 0);
+
+    await searchCommonsImages("brown bear", false, signal);
+    assert.ok(decodeURIComponent((fake.calls[0]?.url ?? "").replace(/\+/g, " ")).includes('"brown bear"'));
   } finally {
     fake.restore();
   }
