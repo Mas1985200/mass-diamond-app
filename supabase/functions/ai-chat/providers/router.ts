@@ -7,7 +7,7 @@ import type { OAIMessage } from "../types.ts";
 import { sleep } from "../lib/util.ts";
 import { cooldownLeftMs, markCooldown, soonestReadyMs } from "./cooldown.ts";
 import { groqApiKey, groqModels, groqVisionModels } from "./models.ts";
-import { requestRound } from "./groq.ts";
+import { effortFor, requestRound } from "./groq.ts";
 import type { ToolOptions } from "./types.ts";
 
 export type OpenSuccess = {
@@ -73,7 +73,14 @@ async function tryModels(
       break;
     }
 
-    const round = await requestRound(apiKey, model, messages, tools, master);
+    const round = await requestRound(
+      apiKey,
+      model,
+      messages,
+      tools,
+      master,
+      effortFor(tools),
+    );
 
     if (round.ok) {
       return { kind: "ok", body: round.body, model };
