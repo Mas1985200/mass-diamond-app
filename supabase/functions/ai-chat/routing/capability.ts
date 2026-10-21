@@ -8,7 +8,11 @@
 // every topic. If anything goes wrong the result is null and the full prompt
 // and every tool are used (the old behaviour).
 
-import { readTurn, requestRound } from "../providers/groq.ts";
+import {
+  readTurn,
+  requestRound,
+  type ReasoningEffort,
+} from "../providers/groq.ts";
 import { cooldownLeftMs, markCooldown } from "../providers/cooldown.ts";
 import { groqApiKey, groqModels } from "../providers/models.ts";
 import type { AIMessage, OAIMessage, ToolDefinition } from "../types.ts";
@@ -145,6 +149,7 @@ export function parseCapability(text: string): Capability | null {
 export async function askGroq(
   messages: readonly OAIMessage[],
   signal: AbortSignal,
+  effort: ReasoningEffort = "low",
 ): Promise<string | null> {
   const apiKey = groqApiKey();
 
@@ -160,7 +165,14 @@ export async function askGroq(
     return null;
   }
 
-  const round = await requestRound(apiKey, model, messages, null, signal);
+  const round = await requestRound(
+    apiKey,
+    model,
+    messages,
+    null,
+    signal,
+    effort,
+  );
 
   if (!round.ok) {
     if (round.status === 429) {
