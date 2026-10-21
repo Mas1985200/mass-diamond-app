@@ -16,6 +16,8 @@ import {
 } from "../routing/capability.ts";
 import type { AIMessage, OAIMessage, PhotoItem } from "../types.ts";
 import { searchOpenverse } from "./openverse.ts";
+import { searchUnsplash } from "./unsplash.ts";
+import { searchWebImages } from "./webimages.ts";
 import { fetchLicensedPhotosForTopic } from "./photos.ts";
 
 // The planner runs beside the answer (nothing waits for it), so it can think
@@ -115,9 +117,11 @@ export async function planTopic(
 }
 
 // Every source is used, in this order, until there are enough pictures:
-// Wikimedia Commons photos, free diagrams of the topic, then Openverse (a free
-// search over openly licensed pictures from many collections). Whatever a
-// source cannot supply is filled from the next one.
+// the photos of the Wikipedia article (the surest match) mixed with Unsplash
+// (many good photographs, when its key is set), pictures found on the web
+// (only if the free ones are too few), free diagrams of the topic, then
+// Openverse (a free search over openly licensed pictures). The first two are
+// asked at the same time, so the extra source costs no extra waiting.
 export async function picturesOfTopic(
   plan: Plan,
   master: AbortSignal,
@@ -135,11 +139,23 @@ export async function picturesOfTopic(
     }
   };
 
-  add(
-    await fetchLicensedPhotosForTopic(plan.topic, "en", master, {
+  const [article, stock] = await Promise.all([
+    fetchLicensedPhotosForTopic(plan.topic, "en", master, {
       max: ILLUSTRATION_MAX,
     }),
-  );
+    searchUnsplash(plan.topic, ILLUSTRATION_MAX, master),
+  ]);
+
+  // A mix of both: the article's best two, then Unsplash's best two, then
+  // whatever is left of either, so the strip never depends on one source.
+  add(article.slice(0, 2));
+  add(stock.slice(0, 2));
+  add(article);
+  add(stock);
+
+  if (found.length < ILLUSTRATION_MAX) {
+    add(await searchWebImages(plan.topic, ILLUSTRATION_MAX - found.length, master));
+  }
 
   if (found.length < ILLUSTRATION_MAX) {
     add(
