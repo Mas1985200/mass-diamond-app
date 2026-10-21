@@ -2,11 +2,12 @@
 // Opens a streaming round on the first model that works. A rate-limited model
 // is put on cooldown and skipped immediately; there is no waiting on 429.
 
-import { MAX_QUEUE_WAIT_MS } from "../config.ts";
+import { MAX_OUTPUT_TOKENS, MAX_QUEUE_WAIT_MS } from "../config.ts";
 import type { OAIMessage } from "../types.ts";
 import { sleep } from "../lib/util.ts";
 import { cooldownLeftMs, markCooldown, soonestReadyMs } from "./cooldown.ts";
 import { groqApiKey, groqModels, groqVisionModels } from "./models.ts";
+import { shrinkForTokenLimit } from "./budget.ts";
 import { effortFor, requestRound } from "./groq.ts";
 import type { ToolOptions } from "./types.ts";
 
@@ -36,6 +37,7 @@ type PassResult =
       readonly error: string;
       readonly retryable: boolean;
       readonly sawBadRequest: boolean;
+      readonly rateLimited: boolean;
     };
 
 async function tryModels(
@@ -62,25 +64,39 @@ async function tryModels(
       error: "All AI models are rate limited right now.",
       retryable: true,
       sawBadRequest: false,
+      rateLimited: true,
     };
   }
 
   let lastError = "No AI model answered.";
   let sawBadRequest = false;
+  let rateLimited = false;
 
   for (const model of ready) {
     if (master.aborted) {
       break;
     }
 
-    const round = await requestRound(
-      apiKey,
-      model,
-      messages,
-      tools,
-      master,
-      effortFor(tools),
-    );
+    const effort = effortFor(tools);
+    let round = await requestRound(apiKey, model, messages, tools, master, effort);
+
+    // Refused only because this minute's token allowance is nearly used up:
+    // ask the same model again with less room for the answer, if that fits.
+    if (!round.ok && round.status === 429) {
+      const smaller = shrinkForTokenLimit(round.error, MAX_OUTPUT_TOKENS, effort);
+
+      if (smaller) {
+        round = await requestRound(
+          apiKey,
+          model,
+          messages,
+          tools,
+          master,
+          smaller.effort,
+          smaller.maxTokens,
+        );
+      }
+    }
 
     if (round.ok) {
       return { kind: "ok", body: round.body, model };
@@ -93,6 +109,7 @@ async function tryModels(
     lastError = round.error;
 
     if (round.status === 429) {
+      rateLimited = true;
       markCooldown(model, round.retryAfterMs);
     } else if (round.status === 400) {
       sawBadRequest = true;
@@ -106,6 +123,7 @@ async function tryModels(
     error: lastError,
     retryable: !sawBadRequest,
     sawBadRequest,
+    rateLimited,
   };
 }
 
@@ -171,7 +189,10 @@ export async function openRound(
 
     return {
       ok: false,
-      error: result.error.slice(0, 300),
+      // The raw refusal of the model service is for the logs, not for the user.
+      error: result.rateLimited
+        ? "The AI models are busy for a few seconds. Please try again."
+        : result.error.slice(0, 300),
       retryable: result.retryable,
     };
   }
