@@ -87,11 +87,35 @@ function words(text: string): string[] {
     .filter((word) => word.length >= 3);
 }
 
-// The first search hit is used only when it really is about the same topic.
+// A search hit is used only when it is the same topic or a broader one: every
+// word of the article title must also be in the topic ("Liver" for "human
+// liver", "Diabetes" for "type 2 diabetes"). A MORE specific title is a
+// different subject ("Bear market" for "bear"), so it is refused.
 export function isRelatedTitle(query: string, title: string): boolean {
   const queryWords = new Set(words(query));
+  const titleWords = words(title);
 
-  return words(title).some((word) => queryWords.has(word));
+  return titleWords.length > 0 && titleWords.every((word) => queryWords.has(word));
+}
+
+// The article whose title IS the topic (redirects followed). A disambiguation
+// page is not an article about one thing, so it is refused.
+export function parseExactTitle(json: unknown): string {
+  const pages =
+    isRecord(json) && isRecord(json.query) && Array.isArray(json.query.pages)
+      ? json.query.pages
+      : [];
+  const first: unknown = pages[0];
+
+  if (!isRecord(first) || first.missing === true || first.invalid === true) {
+    return "";
+  }
+
+  if (isRecord(first.pageprops) && "disambiguation" in first.pageprops) {
+    return "";
+  }
+
+  return pickString(first, "title").trim();
 }
 
 export async function findArticleTitle(
@@ -100,9 +124,30 @@ export async function findArticleTitle(
   master: AbortSignal,
 ): Promise<string> {
   const language = lang.toLowerCase();
+  const topic = query.replace(/\s+/g, " ").trim().slice(0, 200);
 
-  if (!WIKI_LANG_PATTERN.test(language) || !query.trim()) {
+  if (!WIKI_LANG_PATTERN.test(language) || !topic) {
     return "";
+  }
+
+  const exact = parseExactTitle(
+    await getJson(
+      `https://${language}.wikipedia.org/w/api.php?${new URLSearchParams({
+        action: "query",
+        format: "json",
+        formatversion: "2",
+        titles: topic,
+        redirects: "1",
+        prop: "pageprops",
+        ppprop: "disambiguation",
+      }).toString()}`,
+      master,
+      "wikipedia exact title",
+    ),
+  );
+
+  if (exact) {
+    return exact;
   }
 
   const params = new URLSearchParams({
@@ -110,8 +155,8 @@ export async function findArticleTitle(
     format: "json",
     formatversion: "2",
     list: "search",
-    srsearch: query.trim().slice(0, 200),
-    srlimit: "1",
+    srsearch: topic,
+    srlimit: "5",
   });
 
   const json = await getJson(
@@ -124,10 +169,16 @@ export async function findArticleTitle(
     isRecord(json) && isRecord(json.query) && Array.isArray(json.query.search)
       ? json.query.search
       : [];
-  const first: unknown = rows[0];
-  const title = isRecord(first) ? pickString(first, "title").trim() : "";
 
-  return title && isRelatedTitle(query, title) ? title : "";
+  for (const row of rows) {
+    const title = isRecord(row) ? pickString(row, "title").trim() : "";
+
+    if (title && isRelatedTitle(topic, title)) {
+      return title;
+    }
+  }
+
+  return "";
 }
 
 // Title of the same article on English Wikipedia (the widest picture library),
