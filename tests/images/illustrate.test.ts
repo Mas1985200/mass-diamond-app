@@ -151,6 +151,7 @@ const OPENVERSE = {
     {
       id: "4bbfe191-1cca-4a07-a76e-ce2c15ce0a2a",
       title: "A saffron field",
+      tags: [{ name: "diabetes" }, { name: "liver" }],
       creator: "A. Photographer",
       license: "by",
       license_version: "2.0",
