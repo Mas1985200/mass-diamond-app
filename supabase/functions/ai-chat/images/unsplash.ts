@@ -91,7 +91,14 @@ export async function searchUnsplash(
 ): Promise<PhotoItem[]> {
   const key = unsplashKey();
 
-  if (!key || !query.trim() || max <= 0) {
+  if (!key) {
+    // Counts only, never the key or the topic text.
+    console.log(JSON.stringify({ event: "unsplash", key: false }));
+
+    return [];
+  }
+
+  if (!query.trim() || max <= 0) {
     return [];
   }
 
@@ -114,7 +121,23 @@ export async function searchUnsplash(
       return [];
     }
 
-    return parseUnsplash(await response.json(), query).slice(0, max);
+    const json: unknown = await response.json();
+    const kept = parseUnsplash(json, query);
+    const received =
+      isRecord(json) && Array.isArray(json.results) ? json.results.length : -1;
+
+    // Counts only, never the key or the topic text.
+    console.log(
+      JSON.stringify({
+        event: "unsplash",
+        key: true,
+        status: response.status,
+        received,
+        kept: kept.length,
+      }),
+    );
+
+    return kept.slice(0, max);
   } catch (error) {
     console.error(`unsplash search threw: ${describeError(error)}`);
 
