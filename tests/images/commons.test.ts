@@ -17,6 +17,7 @@ import {
   buildCommonsUrl,
   normalizeFileTitle,
   parseCommonsImages,
+  namesTopic,
   searchCommonsImages,
 } from "../../supabase/functions/ai-chat/images/commons.ts";
 import {
@@ -257,8 +258,8 @@ test("fetchLicensedPhotos: an article without pictures falls back to a Commons s
       return json({
         query: {
           pages: [
-            { ...info({ title: "File:Second.jpg", license: "CC0" }), index: 2 },
-            { ...info({ title: "File:First.jpg", license: "CC BY 4.0", artist: "Zoe" }), index: 1 },
+            { ...info({ title: "File:Second thing.jpg", license: "CC0" }), index: 2 },
+            { ...info({ title: "File:First thing.jpg", license: "CC BY 4.0", artist: "Zoe" }), index: 1 },
           ],
         },
       });
@@ -272,7 +273,7 @@ test("fetchLicensedPhotos: an article without pictures falls back to a Commons s
 
     assert.deepEqual(
       photos.map((photo) => photo.title),
-      ["First", "Second"],
+      ["First thing", "Second thing"],
     );
 
     const search = fake.calls.find((call) => call.url.includes("generator=search"));
@@ -429,6 +430,50 @@ test("fetchLicensedPhotos: Wikipedia's own lead image comes first, then the rest
 
     assert.ok(commonsCall?.url.indexOf("Llama.jpg") !== -1);
     assert.equal(commonsCall?.url.split("Llama.jpg").length, 2);
+  } finally {
+    fake.restore();
+  }
+});
+
+test("namesTopic: the file's own title or category must name the thing the topic ends with", () => {
+  const brown = { title: "File:Brown Bear.jpg", categories: [] };
+  const plural = { title: "File:Ursus arctos.jpg", categories: [{ title: "Category:Brown bears" }] };
+  const actors = { title: "File:Dean and RJ Mitte.jpg", categories: [{ title: "Category:RJ Mitte" }] };
+  const bearing = { title: "File:Ball bearing.jpg", categories: [] };
+
+  assert.equal(namesTopic(brown, "bear"), true);
+  assert.equal(namesTopic(brown, "brown bear"), true);
+  assert.equal(namesTopic(plural, "brown bear"), true);
+  assert.equal(namesTopic(actors, "bear"), false);
+  assert.equal(namesTopic(bearing, "bear"), false);
+  assert.equal(namesTopic(brown, "grizzly bear"), true);
+  assert.equal(namesTopic(brown, "elephant"), false);
+});
+
+test("searchCommonsImages: a hit that only mentions the topic in its description is dropped", async () => {
+  const hit = (title: string, categories: readonly string[], index: number) => ({
+    ...info({ title, license: "CC BY 2.0", artist: "Someone" }),
+    index,
+    categories: categories.map((name) => ({ title: name })),
+  });
+  const fake = fakeFetch(() =>
+    json({
+      query: {
+        pages: [
+          hit("File:Dean and RJ Mitte.jpg", ["Category:RJ Mitte"], 1),
+          hit("File:Brown bear in river.jpg", ["Category:Brown bears"], 2),
+        ],
+      },
+    }),
+  );
+
+  try {
+    const items = await searchCommonsImages("bear", false, signal);
+
+    assert.deepEqual(
+      items.map((item) => item.title),
+      ["Brown bear in river"],
+    );
   } finally {
     fake.restore();
   }
