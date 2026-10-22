@@ -275,5 +275,6 @@ test("the prompt: photo rules point to the description; a missing photo is never
   assert.ok(withoutPhotos.includes("never guess what it is"));
   assert.ok(withoutPhotos.includes("attach it with the + button"));
   assert.ok(withoutPhotos.includes("A request to SEE a named thing"));
+  assert.ok(withoutPhotos.includes("a comment about the app's automatic pictures"));
   assert.ok(!withoutPhotos.includes("Photos from the user"));
 });
