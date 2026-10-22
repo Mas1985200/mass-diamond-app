@@ -1,4 +1,5 @@
 {
+  // Mass Diamond web app: static build served by Cloudflare.
   "name": "mass-diamond-app",
   "compatibility_date": "2026-10-01",
   "assets": {
