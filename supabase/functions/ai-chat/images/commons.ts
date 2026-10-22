@@ -7,6 +7,7 @@ import type { PhotoItem } from "../types.ts";
 import { describeError, isRecord, pickString } from "../lib/util.ts";
 import { createAttempt } from "../lib/http.ts";
 import { readCredit } from "./license.ts";
+import { headWord } from "./topic-match.ts";
 
 export const COMMONS_API = "https://commons.wikimedia.org/w/api.php";
 // A standard Wikimedia thumbnail width (500): other widths are made on demand,
@@ -96,7 +97,32 @@ function isMedicalPhoto(page: Record<string, unknown>): boolean {
 export type ParseOptions = {
   // Diagram mode keeps files that are filed under medical categories.
   readonly allowMedical?: boolean;
+  // A search over all of Commons also matches words in a file's description
+  // text, so a file about something else can come back (a photo of two actors
+  // for "bear"). With a topic, only a file whose own title or category names
+  // the topic is kept.
+  readonly topic?: string;
 };
+
+// The file's own title or one of its category names must name the thing the
+// topic ends with ("bear" for "brown bear"); a plural "s" or "es" is allowed.
+export function namesTopic(page: Record<string, unknown>, topic: string): boolean {
+  const head = headWord(topic);
+
+  if (!head) {
+    return true;
+  }
+
+  const categories = Array.isArray(page.categories) ? page.categories : [];
+  const text = [
+    readableTitle(pickString(page, "title")),
+    ...categories.map((category) => (isRecord(category) ? pickString(category, "title") : "")),
+  ]
+    .join(" ")
+    .toLowerCase();
+
+  return new RegExp(`(?<![\\p{L}\\p{N}])${head}(?:e?s)?(?![\\p{L}\\p{N}])`, "u").test(text);
+}
 
 export function parseCommonsImages(
   json: unknown,
@@ -128,6 +154,10 @@ export function parseCommonsImages(
     }
 
     if (options.allowMedical !== true && isMedicalPhoto(page)) {
+      continue;
+    }
+
+    if (options.topic !== undefined && !namesTopic(page, options.topic)) {
       continue;
     }
 
@@ -214,5 +244,5 @@ export async function searchCommonsImages(
     "commons search",
   );
 
-  return parseCommonsImages(json, [], { allowMedical: diagrams });
+  return parseCommonsImages(json, [], { allowMedical: diagrams, topic: query });
 }
