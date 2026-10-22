@@ -83,11 +83,13 @@ export async function fetchLicensedPhotos(
       ).slice(0, Math.max(0, options.max));
     }
 
-    // Counts only, never the topic text.
+    // Counts and the title of the public Wikipedia article that was used;
+    // never the user's own words.
     console.log(
       JSON.stringify({
         event: "photos",
         lang,
+        article: title.slice(0, 80),
         tried,
         shown: photos.length,
         diagrams: options.diagramsOnly === true,
