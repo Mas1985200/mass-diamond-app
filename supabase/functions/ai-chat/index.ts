@@ -33,6 +33,7 @@ import { buildSystemPrompt, type MemoryContext } from "./prompt/system.ts";
 import { addFact, loadFacts, loadRecentSummaries } from "./memory/store.ts";
 import { summarizePreviousConversation } from "./memory/summary.ts";
 import { describePhotos, withPhotoDescription } from "./attachments/describe.ts";
+import { lookupPhotoSubject } from "./attachments/visual-search.ts";
 import { startAgent } from "./agent.ts";
 import { routeCapability } from "./routing/capability.ts";
 import { prepareIllustration } from "./images/illustrate.ts";
@@ -255,7 +256,17 @@ Deno.serve(async (request: Request): Promise<Response> => {
         }
 
         userText = withPhotoDescription(message, photos.length, seen.text);
+        // The history keeps only what the photos show. The web lookup is for
+        // this answer; it is not stored.
         storedMessage = userText;
+
+        // Visual search: the main subject of the photo is searched on the web
+        // (never for a person's face), so the answer can name and explain it.
+        const lookup = await lookupPhotoSubject(seen.search, ctx, master.signal);
+
+        if (lookup) {
+          userText = `${userText}\n\n${lookup}`;
+        }
       }
 
       const conversation: AIMessage[] = [
