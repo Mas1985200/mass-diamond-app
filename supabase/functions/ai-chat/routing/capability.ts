@@ -17,7 +17,13 @@ import { cooldownLeftMs, markCooldown } from "../providers/cooldown.ts";
 import { groqApiKey, groqModels } from "../providers/models.ts";
 import type { AIMessage, OAIMessage, ToolDefinition } from "../types.ts";
 
-export type Capability = "chat" | "know" | "fresh" | "place" | "time";
+export type Capability =
+  | "chat"
+  | "know"
+  | "fresh"
+  | "place"
+  | "time"
+  | "attach";
 
 export const ROUTER_TIMEOUT_MS = 3_500;
 const CONTEXT_MESSAGES = 3;
@@ -31,6 +37,8 @@ export const TOOLS_BY_CAPABILITY: Record<Capability, readonly string[]> = {
   fresh: ["web_search", "get_market_prices"],
   place: ["find_place"],
   time: ["get_datetime"],
+  // The user points at something they sent that is not there: no tool can help.
+  attach: [],
 };
 
 // null = unknown: everything is offered.
@@ -70,6 +78,11 @@ export function lastUserText(messages: readonly AIMessage[]): string {
   return "";
 }
 
+// The photo description is written into the user's message by the app (see
+// attachments/describe.ts). A message that carries it is never a reference to
+// a missing attachment, whatever the small router model says.
+export const PHOTO_DESCRIPTION_MARKER = "[Photo description:";
+
 export function isPlaceQuestion(text: string): boolean {
   if (text.length > PLACE_QUESTION_MAX_TOTAL_LENGTH) {
     return false;
@@ -93,9 +106,10 @@ const INSTRUCTION = [
   "PLACE: asks where a specific place, business or address is, or for places near the user.",
   "TIME: asks for today's date, the weekday, the current time, or the time in another place.",
   "KNOW: a factual, educational or scientific question whose answer does not change over time and where accuracy matters: science, medicine and health facts, space, history, geography, how a technology or concept works, cooking and food science, culture, people, definitions; also requests for research, studies or sources, and requests to see a picture, photo or diagram of a thing, animal, plant, place, person or body part (also as a follow-up such as 'عکسی داری ازش').",
+  "ATTACH: the LAST message only points at something the user says they sent or showed (a photo, picture, screenshot, file or voice message) and names no subject of its own, for example 'what is this?', 'what is in it?', 'look at this', 'این چیه؟', 'این عکسو ببین', and nothing like it appears in the earlier messages. A message that names ANY subject (an animal, plant, object, body part, food, place, person, event, anything), even when it asks for a 'photo', 'picture' or 'image' of it, is never ATTACH: it is KNOW. A message that contains a 'Photo description' is never ATTACH.",
   "CHAT: everything else: chit-chat, greetings, advice, opinions, jokes, stories, writing, editing, translation, math, programming, planning, brainstorming, business or real estate help, asking to remember something.",
   "A short follow-up ('more', 'and what else', 'دیگه', 'و چی؟') keeps the label of the topic it continues.",
-  "Reply with exactly one word: FRESH, PLACE, TIME, KNOW or CHAT.",
+  "Reply with exactly one word: FRESH, PLACE, TIME, KNOW, ATTACH or CHAT.",
 ].join("\n");
 
 export type CapabilityAsk = (
@@ -121,13 +135,13 @@ export function buildRouterMessages(
     { role: "system", content: INSTRUCTION },
     {
       role: "user",
-      content: `${transcript}\n\nLabel (FRESH, PLACE, TIME, KNOW or CHAT):`,
+      content: `${transcript}\n\nLabel (FRESH, PLACE, TIME, KNOW, ATTACH or CHAT):`,
     },
   ];
 }
 
 export function parseCapability(text: string): Capability | null {
-  const match = /\b(FRESH|PLACE|TIME|KNOW|CHAT)\b/i.exec(text);
+  const match = /\b(FRESH|PLACE|TIME|KNOW|ATTACH|CHAT)\b/i.exec(text);
 
   switch (match?.[1]?.toUpperCase()) {
     case "FRESH":
@@ -138,6 +152,8 @@ export function parseCapability(text: string): Capability | null {
       return "time";
     case "KNOW":
       return "know";
+    case "ATTACH":
+      return "attach";
     case "CHAT":
       return "chat";
     default:
@@ -220,7 +236,14 @@ export async function routeCapability(
 
   try {
     const text = await ask(buildRouterMessages(messages), controller.signal);
-    const decision = text === null ? null : parseCapability(text);
+    let decision = text === null ? null : parseCapability(text);
+
+    if (
+      decision === "attach" &&
+      lastUserText(messages).includes(PHOTO_DESCRIPTION_MARKER)
+    ) {
+      decision = "chat";
+    }
 
     console.log(
       JSON.stringify({
