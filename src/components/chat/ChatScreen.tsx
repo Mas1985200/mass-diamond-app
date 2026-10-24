@@ -13,6 +13,7 @@ import { createPortal } from "react-dom";
 
 import { supabase } from "../../lib/supabase";
 import { useChat } from "../../hooks/useChat";
+import { useVoiceInput, type VoiceErrorCode } from "../../hooks/useVoiceInput";
 import type { ChatErrorCode } from "../../lib/chatClient";
 import DiamondMark from "../DiamondMark";
 import MarkdownText from "./MarkdownText";
@@ -46,6 +47,19 @@ const PHOTO_ERROR_MESSAGES: Record<AttachErrorCode, string> = {
   limit: `حداکثر ${MAX_PHOTOS.toLocaleString("fa-IR")} عکس را می‌شود پیوست کرد.`,
 };
 
+const VOICE_ERROR_MESSAGES: Record<VoiceErrorCode, string> = {
+  unsupported: "این مرورگر ضبط صدا را پشتیبانی نمی‌کند.",
+  permission:
+    "اجازه‌ی میکروفون داده نشده است. آن را در تنظیمات مرورگر برای این سایت فعال کنید.",
+  no_microphone: "میکروفونی پیدا نشد.",
+  auth: "نشست شما منقضی شده است. لطفاً دوباره وارد شوید.",
+  no_speech: "صدایی شنیده نشد. دوباره تلاش کنید.",
+  rate_limited:
+    "تعداد درخواست‌های صوتی زیاد است. چند ثانیه بعد دوباره تلاش کنید.",
+  network: "اتصال به سرور برقرار نشد. لطفاً اینترنت خود را بررسی کنید.",
+  failed: "تبدیل صدا به متن انجام نشد. دوباره تلاش کنید.",
+};
+
 const DEFAULT_PLACEHOLDER = "چطور می‌تونم کمکت کنم؟";
 const ROUND_BUTTON_CLASS =
   "flex h-10 w-10 shrink-0 items-center justify-center rounded-full border border-white/10 bg-white/5 transition-colors disabled:cursor-not-allowed disabled:opacity-40";
@@ -57,6 +71,11 @@ const NO_PAGE_ZOOM = "pan-x pan-y";
 const TILE_SIZE = 256;
 const PREVIEW_ZOOM = 16;
 const PREVIEW_HEIGHT = 168;
+// The spoken language of the voice input. This screen is Persian; a fixed
+// language is more accurate than automatic detection, which can mistake
+// Persian for Arabic or Urdu.
+const VOICE_LANGUAGE = "fa";
+const VOICE_ERROR_VISIBLE_MS = 6_000;
 
 interface QuickAction {
   readonly id: string;
@@ -133,6 +152,13 @@ const SEARCH_GLOW_CSS = `
 .md-thinking-dot {
   animation: md-thinking 1.2s ease-in-out infinite;
 }
+@keyframes md-rec {
+  0%, 100% { opacity: 1; transform: scale(1); }
+  50% { opacity: 0.35; transform: scale(0.8); }
+}
+.md-rec-dot {
+  animation: md-rec 1.1s ease-in-out infinite;
+}
 .md-second-hand {
   transition: transform 0.3s cubic-bezier(0.4, 2.2, 0.55, 1);
 }
@@ -163,6 +189,7 @@ const SEARCH_GLOW_CSS = `
 @media (prefers-reduced-motion: reduce) {
   .md-search-highlight { animation: none; }
   .md-thinking-dot { animation: none; opacity: 0.7; }
+  .md-rec-dot { animation: none; }
   .md-second-hand { transition: none; }
 }
 `;
@@ -1097,6 +1124,15 @@ function readPosition(
   });
 }
 
+// "۰:۰۵" style recording time.
+function formatRecordTime(totalSeconds: number): string {
+  const minutes = Math.floor(totalSeconds / 60);
+  const rest = totalSeconds % 60;
+  const restText = rest.toLocaleString("fa-IR");
+
+  return `${minutes.toLocaleString("fa-IR")}:${rest < 10 ? "۰" : ""}${restText}`;
+}
+
 export default function ChatScreen() {
   const {
     messages,
@@ -1117,6 +1153,21 @@ export default function ChatScreen() {
   const [photoError, setPhotoError] = useState<AttachErrorCode | null>(null);
   const [isPreparing, setIsPreparing] = useState(false);
   const [sheetOpen, setSheetOpen] = useState(false);
+
+  // The recognized words are added to the end of what is already typed; the
+  // user reads them and presses send.
+  const voice = useVoiceInput({
+    language: VOICE_LANGUAGE,
+    onText: (text: string): void => {
+      setDraft((previous) =>
+        previous.trim() ? `${previous.trimEnd()} ${text}` : text,
+      );
+    },
+  });
+  const cancelVoice = voice.cancel;
+  const clearVoiceError = voice.clearError;
+  const voiceBusy = voice.state !== "idle";
+
   const inputRef = useRef<HTMLTextAreaElement | null>(null);
   const fileInputRef = useRef<HTMLInputElement | null>(null);
   const cameraInputRef = useRef<HTMLInputElement | null>(null);
@@ -1138,7 +1189,8 @@ export default function ChatScreen() {
   const canSend =
     (draft.trim().length > 0 || photos.length > 0) &&
     !isSending &&
-    !isPreparing;
+    !isPreparing &&
+    !voiceBusy;
   const showThinking = isSending && !isStreaming;
 
   const activeAction =
@@ -1300,6 +1352,7 @@ export default function ChatScreen() {
       }
 
       chatHistoryPushedRef.current = false;
+      cancelVoice();
       reset();
       setDraft("");
       setPhotos([]);
@@ -1312,7 +1365,20 @@ export default function ChatScreen() {
     return () => {
       window.removeEventListener("popstate", handlePopState);
     };
-  }, [reset]);
+  }, [reset, cancelVoice]);
+
+  // A voice error disappears by itself after a few seconds.
+  useEffect(() => {
+    if (!voice.error) {
+      return;
+    }
+
+    const timer = window.setTimeout(clearVoiceError, VOICE_ERROR_VISIBLE_MS);
+
+    return () => {
+      window.clearTimeout(timer);
+    };
+  }, [voice.error, clearVoiceError]);
 
   useEffect(() => {
     const element = inputRef.current;
@@ -1470,7 +1536,12 @@ export default function ChatScreen() {
   const submit = async (raw: string) => {
     const text = raw.trim();
 
-    if ((!text && photos.length === 0) || isSending || isPreparing) {
+    if (
+      (!text && photos.length === 0) ||
+      isSending ||
+      isPreparing ||
+      voiceBusy
+    ) {
       return;
     }
 
@@ -1496,7 +1567,7 @@ export default function ChatScreen() {
   };
 
   const openSheet = () => {
-    if (isSending || isPreparing || photos.length >= MAX_PHOTOS) {
+    if (isSending || isPreparing || voiceBusy || photos.length >= MAX_PHOTOS) {
       return;
     }
 
@@ -1560,6 +1631,19 @@ export default function ChatScreen() {
     await submit(draft);
   };
 
+  // One tap starts the recording, the next tap stops it and sends the sound
+  // to be turned into text.
+  const handleMic = () => {
+    if (voice.state === "recording") {
+      voice.stop();
+      return;
+    }
+
+    if (voice.state === "idle") {
+      void voice.start();
+    }
+  };
+
   const handleChange = (event: ChangeEvent<HTMLTextAreaElement>) => {
     const native = event.nativeEvent as InputEvent;
 
@@ -1608,6 +1692,7 @@ export default function ChatScreen() {
       return;
     }
 
+    cancelVoice();
     reset();
     setDraft("");
     setPhotos([]);
@@ -1616,8 +1701,21 @@ export default function ChatScreen() {
   };
 
   const handleSignOut = () => {
+    cancelVoice();
     void supabase.auth.signOut();
   };
+
+  const micClass =
+    voice.state === "recording"
+      ? `${ROUND_BUTTON_CLASS} border-red-400/60 bg-red-400/15 text-red-300`
+      : `${ROUND_BUTTON_CLASS} text-primary hover:border-[rgba(57,255,136,0.4)]`;
+
+  const micLabel =
+    voice.state === "recording"
+      ? "توقف ضبط"
+      : voice.state === "transcribing"
+        ? "در حال تبدیل صدا به متن"
+        : "ورودی صوتی";
 
   return (
     <div
@@ -1856,6 +1954,41 @@ export default function ChatScreen() {
             </p>
           )}
 
+          {voice.state === "recording" && (
+            <div
+              role="status"
+              className="flex items-center justify-between gap-3 pb-1 text-xs text-red-300"
+            >
+              <span className="flex items-center gap-2">
+                <span className="md-rec-dot h-2 w-2 rounded-full bg-red-400" />
+                <span>در حال ضبط…</span>
+                <span dir="ltr" className="tabular-nums">
+                  {formatRecordTime(voice.seconds)}
+                </span>
+              </span>
+
+              <button
+                type="button"
+                onClick={cancelVoice}
+                className="rounded-full border border-red-300/30 px-3 py-0.5 text-xs text-red-200 transition-colors hover:bg-red-300/10"
+              >
+                لغو
+              </button>
+            </div>
+          )}
+
+          {voice.state === "transcribing" && (
+            <p role="status" className="pb-1 text-xs text-text-subtle">
+              در حال تبدیل صدا به متن…
+            </p>
+          )}
+
+          {voice.error && (
+            <p role="alert" className="pb-1 text-xs leading-5 text-red-300">
+              {VOICE_ERROR_MESSAGES[voice.error]}
+            </p>
+          )}
+
           <textarea
             ref={inputRef}
             value={draft}
@@ -1896,7 +2029,12 @@ export default function ChatScreen() {
             <button
               type="button"
               onClick={openSheet}
-              disabled={isSending || isPreparing || photos.length >= MAX_PHOTOS}
+              disabled={
+                isSending ||
+                isPreparing ||
+                voiceBusy ||
+                photos.length >= MAX_PHOTOS
+              }
               aria-label="پیوست عکس"
               className={`${ROUND_BUTTON_CLASS} text-primary hover:border-[rgba(57,255,136,0.4)]`}
             >
@@ -1906,11 +2044,18 @@ export default function ChatScreen() {
             <div className="flex items-center gap-2">
               <button
                 type="button"
-                disabled
-                aria-label="ورودی صوتی"
-                className={`${ROUND_BUTTON_CLASS} text-text-subtle`}
+                onClick={handleMic}
+                disabled={
+                  !voice.supported ||
+                  isSending ||
+                  isPreparing ||
+                  voice.state === "transcribing"
+                }
+                aria-label={micLabel}
+                aria-pressed={voice.state === "recording"}
+                className={micClass}
               >
-                <MicIcon />
+                {voice.state === "recording" ? <StopIcon /> : <MicIcon />}
               </button>
 
               {canSend ? (
@@ -1992,6 +2137,14 @@ function MicIcon() {
       <rect x="9" y="3" width="6" height="11" rx="3" />
       <path d="M5 11a7 7 0 0 0 14 0" />
       <path d="M12 18v3" />
+    </svg>
+  );
+}
+
+function StopIcon() {
+  return (
+    <svg {...iconProps()}>
+      <rect x="7" y="7" width="10" height="10" rx="2" />
     </svg>
   );
 }
