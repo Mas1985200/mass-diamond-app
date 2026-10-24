@@ -16,6 +16,7 @@ import {
 } from "../routing/capability.ts";
 import type { AIMessage, OAIMessage, PhotoItem } from "../types.ts";
 import { searchOpenverse } from "./openverse.ts";
+import { isExplicitTopic } from "./safety.ts";
 import { searchUnsplash } from "./unsplash.ts";
 import { searchWebImages } from "./webimages.ts";
 import { fetchLicensedPhotosForTopic } from "./photos.ts";
@@ -36,6 +37,7 @@ const INSTRUCTION = [
   "Reply with exactly one line: either TOPIC: <the thing, written in English as the title of its Wikipedia article, 1 to 5 words> or NONE.",
   "Give a TOPIC when the answer is literally about a concrete thing that can be photographed: a body part or organ, an animal or breed, a plant, a food or dish, a drug or substance, a tool, device or vehicle, a material, a place, building or landmark, an artwork, a famous historical or public figure, an event, a natural phenomenon, a space object, a sport, an instrument, a profession, a subject of science or technology. Do it also when the user only names the thing or asks to see it. Use the exact thing, not something it reminds you of.",
   "Give NONE when there is no such thing: greetings, thanks, feelings, advice about the user's own life, plans, writing, translation or editing help, math, code, prices, news, the weather, the time, questions about the assistant, any message about a photo the user attached (its description is in the chat) or about a person in it, and anything about a private individual.",
+  "Always give NONE for anything sexually explicit: sexual organs, sexual acts, nudity, erotic or pornographic art or sculpture, sexual slang or insults, whatever the language, even when the follow-up only points back at it ('its photo', 'عکسش') or the framing is medical or educational. The text answer covers those; pictures never do.",
   "Never use a metaphor or a loosely related object as the topic (for example never a watch for a question about age). If unsure, answer NONE.",
   "A word with several meanings means its most common everyday meaning, in the user's language and context, never a rare, technical, brand or fictional sense (for example 'mouse' is the animal unless the chat is about computers, and 'apple' is the fruit unless the chat is about the company). When the user's word could be a rare sense, use the plain everyday object it most often names.",
   "If the user asks for a picture without naming a kind (just 'a dog'), give the plain general subject. Never ask anything back and never write anything except that one line.",
@@ -179,6 +181,20 @@ export type IllustrationDeps = {
   readonly pictures?: (plan: Plan, master: AbortSignal) => Promise<PhotoItem[]>;
 };
 
+// The words of the newest user message, to refuse an explicit request before
+// anything else happens (the planner is only asked about the rest).
+function lastUserText(messages: readonly AIMessage[]): string {
+  for (let index = messages.length - 1; index >= 0; index -= 1) {
+    const message = messages[index];
+
+    if (message && message.role === "user") {
+      return message.content;
+    }
+  }
+
+  return "";
+}
+
 // Never throws and never takes longer than the deadline: [] when there is
 // nothing to show.
 export async function prepareIllustration(
@@ -192,9 +208,20 @@ export async function prepareIllustration(
   let shown = 0;
 
   try {
+    // An explicit request never reaches any picture source.
+    if (isExplicitTopic(lastUserText(messages))) {
+      return [];
+    }
+
     const plan = await planTopic(messages, deadline.signal, deps.ask);
 
     if (!plan) {
+      return [];
+    }
+
+    // A follow-up such as "its photo" is resolved by the planner into a
+    // topic; if that topic is explicit, no source is asked at all.
+    if (isExplicitTopic(plan.topic)) {
       return [];
     }
 
