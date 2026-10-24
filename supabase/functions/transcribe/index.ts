@@ -5,8 +5,13 @@
 // Request: POST multipart/form-data
 //   audio    the recording (webm, mp4/m4a, ogg, mp3, wav)
 //   language optional ISO code such as "fa" or "en"; empty = auto-detect
-// Answer: { success: true, text, requestId }
+// Answer: { success: true, text, requestId }   (text is "" when no speech)
 //      or { success: false, error: { code, message, retryable }, requestId }
+//
+// Whisper invents sentences when it is given silence or noise. The answer is
+// asked in the detailed format, and every segment that the model itself marks
+// as probably-not-speech (or that is a repetition loop) is dropped. This works
+// the same for every language.
 //
 // Uses the same secret as the chat (GROQ_API_KEY). The model can be changed
 // with the optional secret GROQ_STT_MODEL.
@@ -20,6 +25,11 @@ const AUTH_TIMEOUT_MS = 6_000;
 const TRANSCRIBE_TIMEOUT_MS = 25_000;
 const LANGUAGE_PATTERN = /^[a-z]{2,3}$/;
 const MAX_TEXT_CHARS = 4_000;
+
+// The usual Whisper rules for "this segment is not speech".
+const NO_SPEECH_PROBABILITY = 0.6;
+const LOW_AVERAGE_LOGPROB = -1;
+const MAX_COMPRESSION_RATIO = 2.4;
 
 const CORS_HEADERS: Record<string, string> = {
   "Access-Control-Allow-Origin": "*",
@@ -70,6 +80,10 @@ function describeError(error: unknown): string {
   return error instanceof Error ? error.message : String(error);
 }
 
+function clean(value: string): string {
+  return value.replace(/\s+/g, " ").trim();
+}
+
 // The user must be signed in: the token is checked by the auth service.
 async function isSignedIn(request: Request): Promise<boolean> {
   const header = request.headers.get("Authorization") ?? "";
@@ -110,6 +124,74 @@ function fileNameFor(mime: string): string | null {
   if (type === "audio/wav" || type === "audio/x-wav" || type === "audio/wave") return "audio.wav";
 
   return null;
+}
+
+interface Heard {
+  readonly text: string;
+  readonly total: number;
+  readonly kept: number;
+  readonly maxNoSpeech: number;
+}
+
+function numberOr(value: unknown, fallback: number): number {
+  return typeof value === "number" && Number.isFinite(value) ? value : fallback;
+}
+
+// Keeps only the segments that are real speech. Without segment details the
+// plain text is used as it is.
+function readTranscript(result: unknown): Heard {
+  if (typeof result !== "object" || result === null) {
+    return { text: "", total: 0, kept: 0, maxNoSpeech: 0 };
+  }
+
+  const record = result as { text?: unknown; segments?: unknown };
+  const whole =
+    typeof record.text === "string"
+      ? clean(record.text).slice(0, MAX_TEXT_CHARS)
+      : "";
+  const raw = Array.isArray(record.segments) ? record.segments : [];
+
+  if (raw.length === 0) {
+    return { text: whole, total: 0, kept: 0, maxNoSpeech: 0 };
+  }
+
+  const pieces: string[] = [];
+  let maxNoSpeech = 0;
+
+  for (const item of raw) {
+    if (typeof item !== "object" || item === null) {
+      continue;
+    }
+
+    const segment = item as Record<string, unknown>;
+    const noSpeech = numberOr(segment.no_speech_prob, 0);
+    const logprob = numberOr(segment.avg_logprob, 0);
+    const compression = numberOr(segment.compression_ratio, 0);
+
+    maxNoSpeech = Math.max(maxNoSpeech, noSpeech);
+
+    const silent =
+      noSpeech > NO_SPEECH_PROBABILITY && logprob < LOW_AVERAGE_LOGPROB;
+    const looping = compression > MAX_COMPRESSION_RATIO;
+
+    if (silent || looping) {
+      continue;
+    }
+
+    const text =
+      typeof segment.text === "string" ? clean(segment.text) : "";
+
+    if (text) {
+      pieces.push(text);
+    }
+  }
+
+  return {
+    text: clean(pieces.join(" ")).slice(0, MAX_TEXT_CHARS),
+    total: raw.length,
+    kept: pieces.length,
+    maxNoSpeech: Math.round(maxNoSpeech * 100) / 100,
+  };
 }
 
 Deno.serve(async (request: Request): Promise<Response> => {
@@ -182,7 +264,7 @@ Deno.serve(async (request: Request): Promise<Response> => {
     const upstream = new FormData();
     upstream.append("file", new File([audio], name, { type: audio.type }));
     upstream.append("model", model);
-    upstream.append("response_format", "json");
+    upstream.append("response_format", "verbose_json");
     upstream.append("temperature", "0");
 
     if (language) {
@@ -236,27 +318,25 @@ Deno.serve(async (request: Request): Promise<Response> => {
         : fail(requestId, 502, "PROVIDER_ERROR", "The speech service failed.", true);
     }
 
-    const result: unknown = await response.json().catch(() => null);
-    const text =
-      typeof result === "object" &&
-      result !== null &&
-      typeof (result as { text?: unknown }).text === "string"
-        ? (result as { text: string }).text.replace(/\s+/g, " ").trim().slice(0, MAX_TEXT_CHARS)
-        : "";
+    const heard = readTranscript(await response.json().catch(() => null));
 
-    // Sizes only, never the words that were said.
+    // Sizes and scores only, never the words that were said.
     console.log(
       JSON.stringify({
         event: "transcribe",
         requestId,
         model,
         bytes: audio.size,
+        mime: audio.type.slice(0, 40),
         language: language || "auto",
-        chars: text.length,
+        segments: heard.total,
+        kept: heard.kept,
+        maxNoSpeech: heard.maxNoSpeech,
+        chars: heard.text.length,
       }),
     );
 
-    return json({ success: true, text, requestId });
+    return json({ success: true, text: heard.text, requestId });
   } catch (error) {
     console.error(`transcribe ${requestId}: failed: ${describeError(error).slice(0, 300)}`);
 
