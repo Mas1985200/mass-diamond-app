@@ -40,8 +40,13 @@ export interface VoiceInput {
 
 const MAX_RECORD_SECONDS = 60;
 const MIN_AUDIO_BYTES = 800;
-const REQUEST_TIMEOUT_MS = 35_000;
 const AUDIO_BITS_PER_SECOND = 32_000;
+// A normal answer takes a few seconds. A request that is stuck (weak or
+// interrupted connection) is given up quickly and tried once more with the
+// same recording, so the user never waits half a minute for nothing.
+const ATTEMPT_TIMEOUT_MS = 12_000;
+const MAX_ATTEMPTS = 2;
+const RETRY_PAUSE_MS = 500;
 
 const MIME_CANDIDATES: readonly string[] = [
   "audio/webm;codecs=opus",
@@ -107,13 +112,19 @@ function transcribeUrl(): string | null {
   return base ? `${base.replace(/\/+$/, "")}/functions/v1/transcribe` : null;
 }
 
+// `retry` says whether asking again with the same recording can help.
 type Reply =
   | { readonly ok: true; readonly text: string }
-  | { readonly ok: false; readonly code: VoiceErrorCode };
+  | {
+      readonly ok: false;
+      readonly code: VoiceErrorCode;
+      readonly retry: boolean;
+    };
 
 function readReply(payload: unknown): Reply {
   if (typeof payload !== "object" || payload === null) {
-    return { ok: false, code: "failed" };
+    // Not an answer of our function (for example a gateway error page).
+    return { ok: false, code: "failed", retry: true };
   }
 
   const record = payload as {
@@ -126,26 +137,72 @@ function readReply(payload: unknown): Reply {
     return { ok: true, text: record.text.trim() };
   }
 
-  const serverCode =
-    typeof record.error === "object" &&
-    record.error !== null &&
-    typeof (record.error as { code?: unknown }).code === "string"
-      ? (record.error as { code: string }).code
-      : "";
+  const detail =
+    typeof record.error === "object" && record.error !== null
+      ? (record.error as { code?: unknown; retryable?: unknown })
+      : null;
+  const serverCode = typeof detail?.code === "string" ? detail.code : "";
 
   if (serverCode === "RATE_LIMITED") {
-    return { ok: false, code: "rate_limited" };
+    return { ok: false, code: "rate_limited", retry: false };
   }
 
   if (serverCode === "AUTH_REQUIRED") {
-    return { ok: false, code: "auth" };
+    return { ok: false, code: "auth", retry: false };
   }
 
   if (serverCode === "AUDIO_TOO_SHORT") {
-    return { ok: false, code: "no_speech" };
+    return { ok: false, code: "no_speech", retry: false };
   }
 
-  return { ok: false, code: "failed" };
+  return { ok: false, code: "failed", retry: detail?.retryable === true };
+}
+
+type Attempt =
+  | { readonly kind: "reply"; readonly reply: Reply }
+  | { readonly kind: "network" };
+
+// One request. A connection that fails, or does not answer within the time
+// limit, is reported as "network" so the caller can try once more.
+async function sendOnce(
+  url: string,
+  anonKey: string,
+  token: string,
+  blob: Blob,
+  language: string,
+  controllerRef: { current: AbortController | null },
+): Promise<Attempt> {
+  const form = new FormData();
+
+  form.append("audio", blob, "recording");
+
+  if (language) {
+    form.append("language", language);
+  }
+
+  const controller = new AbortController();
+
+  // Kept so that cancelling stops the request that is running right now.
+  controllerRef.current = controller;
+
+  const timer = window.setTimeout(() => controller.abort(), ATTEMPT_TIMEOUT_MS);
+
+  try {
+    const response = await fetch(url, {
+      method: "POST",
+      headers: { Authorization: `Bearer ${token}`, apikey: anonKey },
+      body: form,
+      signal: controller.signal,
+    });
+
+    const payload: unknown = await response.json().catch(() => null);
+
+    return { kind: "reply", reply: readReply(payload) };
+  } catch {
+    return { kind: "network" };
+  } finally {
+    window.clearTimeout(timer);
+  }
 }
 
 export function useVoiceInput(options: VoiceInputOptions): VoiceInput {
@@ -208,48 +265,52 @@ export function useVoiceInput(options: VoiceInputOptions): VoiceInput {
         } else if (!url || !anonKey) {
           code = "failed";
         } else {
-          const form = new FormData();
-
-          form.append("audio", blob, "recording");
-
-          if (languageRef.current) {
-            form.append("language", languageRef.current);
-          }
-
-          const controller = new AbortController();
-          const timer = window.setTimeout(
-            () => controller.abort(),
-            REQUEST_TIMEOUT_MS,
-          );
-
-          abortRef.current = controller;
-
-          try {
-            const response = await fetch(url, {
-              method: "POST",
-              headers: { Authorization: `Bearer ${token}`, apikey: anonKey },
-              body: form,
-              signal: controller.signal,
-            });
-
-            const reply = readReply(
-              await response.json().catch(() => null),
+          for (let attempt = 1; attempt <= MAX_ATTEMPTS; attempt += 1) {
+            const result = await sendOnce(
+              url,
+              anonKey,
+              token,
+              blob,
+              languageRef.current,
+              abortRef,
             );
 
-            if (reply.ok) {
-              text = reply.text;
-            } else {
-              code = reply.code;
+            // Cancelled or replaced while waiting: nothing to show.
+            if (session !== sessionRef.current) {
+              return;
             }
-          } finally {
-            window.clearTimeout(timer);
+
+            let retryable = false;
+
+            if (result.kind === "network") {
+              code = "network";
+              retryable = true;
+            } else if (result.reply.ok) {
+              code = null;
+              text = result.reply.text;
+              break;
+            } else {
+              code = result.reply.code;
+              retryable = result.reply.retry;
+            }
+
+            if (!retryable || attempt === MAX_ATTEMPTS) {
+              break;
+            }
+
+            await new Promise<void>((resolve) => {
+              window.setTimeout(resolve, RETRY_PAUSE_MS);
+            });
+
+            if (session !== sessionRef.current) {
+              return;
+            }
           }
         }
       } catch {
         code = "network";
       }
 
-      // Cancelled or replaced while waiting: nothing to show.
       if (session !== sessionRef.current) {
         return;
       }
