@@ -23,6 +23,18 @@ const IMAGE_MIME = /^image\/(?:jpeg|png|webp|svg\+xml)$/i;
 const MEDICAL_CATEGORY =
   /(disease|disorder|syndrome|patient|clinical|medical condition|pathology|symptom|lesion|injur|wound|cancer|tumou?r|carcinoma|infection|dermatolog|surg(?:ery|ical)|deformit|abnormalit|rash|histolog|radiograph|x-ray)/i;
 
+// Sexually explicit pictures (nudity, genitals, erotic art and sculpture) are
+// never shown, in any mode, whatever the topic, the tool or the wording of the
+// request. The file's own title and its Commons categories decide, so this
+// holds for every article, place and search in every language. Words that only
+// look similar (Essex, Janus, nudibranch, sexual dimorphism of animals) do not
+// match, because whole words are required.
+const EXPLICIT_WORD =
+  /(?<![\p{L}\p{N}])(?:sex|sexual(?!\s+(?:dimorphism|selection|reproduction))|sexuality|nude|nudes|nudity|topless|porn|porno|pornography|pornographic|erotic|erotica|genitals?|genitalia|penis|penises|vagina|vaginas|vulva|vulvae|clitoris|testicles?|scrotum|anus|masturbation|fellatio|cunnilingus|shunga|kamasutra|kama sutra|naked (?:man|men|woman|women|people|person|girls?|boys?|child|children))(?![\p{L}\p{N}])/iu;
+// Stems in other languages (matched at the start of a word).
+const EXPLICIT_STEM =
+  /(?<![\p{L}\p{N}])(?:erot|эрот|порн|desnud|nackt|pornogr|اروتیک|پورن|برهنه|عریان|عريان|جنسی|جنسية)/iu;
+
 const FILE_PAGE_PREFIX = "https://commons.wikimedia.org/wiki/";
 const IMAGE_HOST = "https://upload.wikimedia.org/";
 
@@ -94,6 +106,18 @@ function isMedicalPhoto(page: Record<string, unknown>): boolean {
   );
 }
 
+// True when the file's own title or one of its categories marks it as sexually
+// explicit. Applies in every mode, including diagram mode.
+export function isExplicitPhoto(page: Record<string, unknown>): boolean {
+  const categories = Array.isArray(page.categories) ? page.categories : [];
+  const text = [
+    readableTitle(pickString(page, "title")),
+    ...categories.map((category) => (isRecord(category) ? pickString(category, "title") : "")),
+  ].join(" | ");
+
+  return EXPLICIT_WORD.test(text) || EXPLICIT_STEM.test(text);
+}
+
 export type ParseOptions = {
   // Diagram mode keeps files that are filed under medical categories.
   readonly allowMedical?: boolean;
@@ -150,6 +174,10 @@ export function parseCommonsImages(
     }
 
     if (!IMAGE_MIME.test(pickString(info, "mime"))) {
+      continue;
+    }
+
+    if (isExplicitPhoto(page)) {
       continue;
     }
 
