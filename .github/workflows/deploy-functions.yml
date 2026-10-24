@@ -44,3 +44,8 @@ jobs:
         run: supabase functions deploy ai-chat --project-ref xcmvzyoadzhyyrsgywnv --use-api
         env:
           SUPABASE_ACCESS_TOKEN: ${{ secrets.SUPABASE_ACCESS_TOKEN }}
+
+      - name: Deploy transcribe
+        run: supabase functions deploy transcribe --project-ref xcmvzyoadzhyyrsgywnv --use-api
+        env:
+          SUPABASE_ACCESS_TOKEN: ${{ secrets.SUPABASE_ACCESS_TOKEN }}
