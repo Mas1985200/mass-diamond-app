@@ -13,6 +13,7 @@ import type { PhotoItem, ToolContext, ToolOutcome } from "../types.ts";
 import { describeError, isRecord, pickString } from "../lib/util.ts";
 import { createAttempt } from "../lib/http.ts";
 import { fetchLicensedPhotos } from "../images/photos.ts";
+import { isExplicitTopic } from "../images/safety.ts";
 
 const KNOWLEDGE_QUERY_MAX_CHARS = 200;
 const KNOWLEDGE_FOCUS_MAX_CHARS = 300;
@@ -512,10 +513,18 @@ export async function runKnowledgeLookup(
   const top = articles[0];
   let passages: string[] = [];
 
+  // A sexually explicit topic (by the query, the focus or the article itself)
+  // never gets pictures; the text answer is still given.
+  const explicitTopic =
+    isExplicitTopic(query) ||
+    isExplicitTopic(focus) ||
+    (top !== undefined && isExplicitTopic(top.title));
+
   // Credited pictures of the article load while its text is read.
-  const photosPromise: Promise<PhotoItem[]> = top
-    ? fetchLicensedPhotos(top.lang, top.title, signal, { max: PHOTOS_MAX })
-    : Promise.resolve([]);
+  const photosPromise: Promise<PhotoItem[]> =
+    top && !explicitTopic
+      ? fetchLicensedPhotos(top.lang, top.title, signal, { max: PHOTOS_MAX })
+      : Promise.resolve([]);
 
   if (top) {
     const fullText = await fetchWikipediaFullText(top.title, top.lang, signal);
