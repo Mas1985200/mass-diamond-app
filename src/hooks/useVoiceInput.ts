@@ -40,25 +40,13 @@ export interface VoiceInput {
 
 const MAX_RECORD_SECONDS = 60;
 const MIN_AUDIO_BYTES = 800;
-// Speech recognition downsamples to 16 kHz mono, so a clean mono recording at
-// a generous bitrate gives it the most to work with (60 s stays below 0.5 MB).
-const AUDIO_BITS_PER_SECOND = 64_000;
+const AUDIO_BITS_PER_SECOND = 32_000;
 // A normal answer takes a few seconds. A request that is stuck (weak or
 // interrupted connection) is given up quickly and tried once more with the
 // same recording, so the user never waits half a minute for nothing.
 const ATTEMPT_TIMEOUT_MS = 12_000;
 const MAX_ATTEMPTS = 2;
 const RETRY_PAUSE_MS = 500;
-
-// The phone's automatic gain and echo canceller are made for calls: they pump
-// the volume and distort loud speech, which makes recognition worse. They are
-// switched off; noise suppression stays on for noisy places.
-const MIC_CONSTRAINTS: MediaTrackConstraints = {
-  echoCancellation: false,
-  noiseSuppression: true,
-  autoGainControl: false,
-  channelCount: { ideal: 1 },
-};
 
 const MIME_CANDIDATES: readonly string[] = [
   "audio/webm;codecs=opus",
@@ -398,7 +386,11 @@ export function useVoiceInput(options: VoiceInputOptions): VoiceInput {
 
     try {
       stream = await navigator.mediaDevices.getUserMedia({
-        audio: MIC_CONSTRAINTS,
+        audio: {
+          echoCancellation: true,
+          noiseSuppression: true,
+          autoGainControl: true,
+        },
       });
     } catch (failure) {
       if (session === sessionRef.current) {
