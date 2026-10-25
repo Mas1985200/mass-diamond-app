@@ -76,6 +76,9 @@ const PREVIEW_HEIGHT = 168;
 // Persian for Arabic or Urdu.
 const VOICE_LANGUAGE = "fa";
 const VOICE_ERROR_VISIBLE_MS = 6_000;
+// What the voice input is told about the person's own earlier words.
+const VOICE_CONTEXT_MESSAGES = 3;
+const VOICE_CONTEXT_MESSAGE_CHARS = 200;
 
 interface QuickAction {
   readonly id: string;
@@ -1133,6 +1136,39 @@ function formatRecordTime(totalSeconds: number): string {
   return `${minutes.toLocaleString("fa-IR")}:${rest < 10 ? "۰" : ""}${restText}`;
 }
 
+// What the person wrote before: their last few messages (oldest first) and,
+// last, the draft that is not sent yet. The server keeps the newest words and
+// uses them to choose the right words, names and spelling. Only the person's
+// own words are used, never the assistant's answers.
+function buildVoiceContext(
+  messages: readonly { readonly role: string; readonly content: string }[],
+  draft: string,
+): string {
+  const recent: string[] = [];
+
+  for (let index = messages.length - 1; index >= 0; index -= 1) {
+    const message = messages[index];
+
+    if (!message || message.role !== "user") {
+      continue;
+    }
+
+    const text = message.content.replace(/\s+/g, " ").trim();
+
+    if (text) {
+      recent.unshift(text.slice(-VOICE_CONTEXT_MESSAGE_CHARS));
+    }
+
+    if (recent.length >= VOICE_CONTEXT_MESSAGES) {
+      break;
+    }
+  }
+
+  const current = draft.replace(/\s+/g, " ").trim();
+
+  return [...recent, ...(current ? [current] : [])].join(" ");
+}
+
 export default function ChatScreen() {
   const {
     messages,
@@ -1154,6 +1190,16 @@ export default function ChatScreen() {
   const [isPreparing, setIsPreparing] = useState(false);
   const [sheetOpen, setSheetOpen] = useState(false);
 
+  // The voice input asks for these when a recording is sent, so it always
+  // sees the newest draft and messages.
+  const draftRef = useRef(draft);
+  const messagesRef = useRef(messages);
+
+  useEffect(() => {
+    draftRef.current = draft;
+    messagesRef.current = messages;
+  });
+
   // The recognized words are added to the end of what is already typed; the
   // user reads them and presses send.
   const voice = useVoiceInput({
@@ -1163,6 +1209,8 @@ export default function ChatScreen() {
         previous.trim() ? `${previous.trimEnd()} ${text}` : text,
       );
     },
+    getContext: (): string =>
+      buildVoiceContext(messagesRef.current, draftRef.current),
   });
   const cancelVoice = voice.cancel;
   const clearVoiceError = voice.clearError;
