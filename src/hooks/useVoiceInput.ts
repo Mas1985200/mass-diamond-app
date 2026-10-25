@@ -25,6 +25,10 @@ export interface VoiceInputOptions {
   readonly language: string;
   // Called once with the recognized text.
   readonly onText: (text: string) => void;
+  // Optional: words the same person wrote earlier (the unsent draft, recent
+  // messages). It is asked for when the recording is sent and helps the server
+  // choose the right words, names and spelling.
+  readonly getContext?: () => string;
 }
 
 export interface VoiceInput {
@@ -41,10 +45,12 @@ export interface VoiceInput {
 const MAX_RECORD_SECONDS = 60;
 const MIN_AUDIO_BYTES = 800;
 const AUDIO_BITS_PER_SECOND = 32_000;
-// A normal answer takes a few seconds. A request that is stuck (weak or
-// interrupted connection) is given up quickly and tried once more with the
-// same recording, so the user never waits half a minute for nothing.
-const ATTEMPT_TIMEOUT_MS = 12_000;
+const MAX_CONTEXT_SEND_CHARS = 600;
+// The server does two steps (speech model, then a repair step), so a normal
+// answer can take several seconds. A request that is stuck (weak or
+// interrupted connection) is still given up and tried once more with the same
+// recording, so the user never waits for nothing.
+const ATTEMPT_TIMEOUT_MS = 20_000;
 const MAX_ATTEMPTS = 2;
 const RETRY_PAUSE_MS = 500;
 
@@ -170,6 +176,7 @@ async function sendOnce(
   token: string,
   blob: Blob,
   language: string,
+  context: string,
   controllerRef: { current: AbortController | null },
 ): Promise<Attempt> {
   const form = new FormData();
@@ -178,6 +185,10 @@ async function sendOnce(
 
   if (language) {
     form.append("language", language);
+  }
+
+  if (context) {
+    form.append("context", context);
   }
 
   const controller = new AbortController();
@@ -223,10 +234,12 @@ export function useVoiceInput(options: VoiceInputOptions): VoiceInput {
   const abortRef = useRef<AbortController | null>(null);
   const onTextRef = useRef(options.onText);
   const languageRef = useRef(options.language);
+  const getContextRef = useRef(options.getContext);
 
   useEffect(() => {
     onTextRef.current = options.onText;
     languageRef.current = options.language;
+    getContextRef.current = options.getContext;
   });
 
   const release = useCallback((): void => {
@@ -256,6 +269,20 @@ export function useVoiceInput(options: VoiceInputOptions): VoiceInput {
       let code: VoiceErrorCode | null = null;
       let text = "";
 
+      // What the person wrote before is read now, not when the recording
+      // started, so words typed while speaking are included too.
+      let context = "";
+
+      try {
+        const getContext = getContextRef.current;
+
+        context = getContext
+          ? getContext().trim().slice(-MAX_CONTEXT_SEND_CHARS)
+          : "";
+      } catch {
+        context = "";
+      }
+
       try {
         const { data } = await supabase.auth.getSession();
         const token = data.session?.access_token;
@@ -272,6 +299,7 @@ export function useVoiceInput(options: VoiceInputOptions): VoiceInput {
               token,
               blob,
               languageRef.current,
+              context,
               abortRef,
             );
 
