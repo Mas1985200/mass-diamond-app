@@ -4,18 +4,25 @@
 //
 // Request: POST multipart/form-data
 //   audio    the recording (webm, mp4/m4a, ogg, mp3, wav)
-//   language optional ISO code such as "fa" or "en"; empty = auto-detect
+//   language optional ISO code such as "fa" or "en": the language the person
+//            is EXPECTED to speak. It is a hint, never forced: the speech is
+//            recognized in whatever language it really is.
 //   context  optional: words the same person wrote earlier (draft, recent
 //            messages). It only helps to choose the right words and spelling.
 // Answer: { success: true, text, corrected, requestId }   (text is "" when no speech)
 //      or { success: false, error: { code, message, retryable }, requestId }
 //
-// Two steps, both the same for every language:
-//  1. Whisper turns the sound into text. The context is given to it as a hint
-//     for vocabulary and spelling. It invents sentences when it is given
-//     silence or noise, so every segment that the model itself marks as
-//     probably-not-speech (or that is a repetition loop) is dropped, and a
-//     result that only repeats the hint is dropped too.
+// Steps, all the same for every language:
+//  1. Whisper listens and detects the language itself. When the detected
+//     language is the expected one (the usual case) that is the result. When
+//     it is different, the recording is also tried in the expected language
+//     (the detection can be wrong, for example Persian taken for Arabic) and
+//     the result the model is more sure about is kept.
+//     The context is given to Whisper as a hint for vocabulary and spelling.
+//     It invents sentences when it is given silence or noise, so every segment
+//     that the model itself marks as probably-not-speech (or that is a
+//     repetition loop) is dropped, and a result that only repeats the hint is
+//     dropped too.
 //  2. A small text model repairs recognition mistakes only (misheard or extra
 //     words, spelling, spacing) and keeps the language, the informal register
 //     and the meaning. The context helps it pick names and terms. If its
@@ -47,6 +54,9 @@ const ECHO_MIN_CHARS = 12;
 const NO_SPEECH_PROBABILITY = 0.6;
 const LOW_AVERAGE_LOGPROB = -1;
 const MAX_COMPRESSION_RATIO = 2.4;
+
+// "No words at all" in the confidence score.
+const NO_QUALITY = -10;
 
 // The repair step.
 const FIX_TIMEOUT_MS = 5_000;
@@ -147,6 +157,26 @@ function echoesHint(text: string, hint: string): boolean {
   );
 }
 
+// The English name of a language code ("fa" -> "persian"), which is how the
+// speech model names the language it heard.
+function expectedLanguageName(code: string): string {
+  try {
+    return (
+      new Intl.DisplayNames(["en"], { type: "language" }).of(code) ?? ""
+    ).toLowerCase();
+  } catch {
+    return "";
+  }
+}
+
+function isExpectedLanguage(detected: string, code: string): boolean {
+  if (!detected) {
+    return false;
+  }
+
+  return detected === code || detected === expectedLanguageName(code);
+}
+
 // The user must be signed in: the token is checked by the auth service.
 async function isSignedIn(request: Request): Promise<boolean> {
   const header = request.headers.get("Authorization") ?? "";
@@ -194,13 +224,13 @@ type WhisperOutcome =
   | { readonly kind: "timeout" }
   | { readonly kind: "network"; readonly detail: string };
 
-// One request to the speech model. `hint` may be empty.
+// One request to the speech model. `forcedLanguage` and `hint` may be empty.
 async function callWhisper(
   apiKey: string,
   audio: File,
   fileName: string,
   model: string,
-  language: string,
+  forcedLanguage: string,
   hint: string,
 ): Promise<WhisperOutcome> {
   const upstream = new FormData();
@@ -210,8 +240,8 @@ async function callWhisper(
   upstream.append("response_format", "verbose_json");
   upstream.append("temperature", "0");
 
-  if (language) {
-    upstream.append("language", language);
+  if (forcedLanguage) {
+    upstream.append("language", forcedLanguage);
   }
 
   if (hint) {
@@ -244,6 +274,11 @@ interface Heard {
   readonly total: number;
   readonly kept: number;
   readonly maxNoSpeech: number;
+  // The language the model says it heard, lower case ("" when not given).
+  readonly language: string;
+  // How sure the model is about the kept words (average log-probability,
+  // higher is better). NO_QUALITY when there are no words.
+  readonly quality: number;
 }
 
 function numberOr(value: unknown, fallback: number): number {
@@ -254,10 +289,25 @@ function numberOr(value: unknown, fallback: number): number {
 // plain text is used as it is.
 function readTranscript(result: unknown): Heard {
   if (typeof result !== "object" || result === null) {
-    return { text: "", total: 0, kept: 0, maxNoSpeech: 0 };
+    return {
+      text: "",
+      total: 0,
+      kept: 0,
+      maxNoSpeech: 0,
+      language: "",
+      quality: NO_QUALITY,
+    };
   }
 
-  const record = result as { text?: unknown; segments?: unknown };
+  const record = result as {
+    text?: unknown;
+    segments?: unknown;
+    language?: unknown;
+  };
+  const language =
+    typeof record.language === "string"
+      ? record.language.trim().toLowerCase().slice(0, 40)
+      : "";
   const whole =
     typeof record.text === "string"
       ? clean(record.text).slice(0, MAX_TEXT_CHARS)
@@ -265,11 +315,20 @@ function readTranscript(result: unknown): Heard {
   const raw = Array.isArray(record.segments) ? record.segments : [];
 
   if (raw.length === 0) {
-    return { text: whole, total: 0, kept: 0, maxNoSpeech: 0 };
+    return {
+      text: whole,
+      total: 0,
+      kept: 0,
+      maxNoSpeech: 0,
+      language,
+      quality: whole ? 0 : NO_QUALITY,
+    };
   }
 
   const pieces: string[] = [];
   let maxNoSpeech = 0;
+  let weightedLogprob = 0;
+  let weight = 0;
 
   for (const item of raw) {
     if (typeof item !== "object" || item === null) {
@@ -295,7 +354,11 @@ function readTranscript(result: unknown): Heard {
       typeof segment.text === "string" ? clean(segment.text) : "";
 
     if (text) {
+      const size = Math.max(1, text.length);
+
       pieces.push(text);
+      weightedLogprob += logprob * size;
+      weight += size;
     }
   }
 
@@ -304,6 +367,112 @@ function readTranscript(result: unknown): Heard {
     total: raw.length,
     kept: pieces.length,
     maxNoSpeech: Math.round(maxNoSpeech * 100) / 100,
+    language,
+    quality:
+      weight > 0
+        ? Math.round((weightedLogprob / weight) * 100) / 100
+        : NO_QUALITY,
+  };
+}
+
+type Step =
+  | { readonly ok: true; readonly heard: Heard }
+  | { readonly ok: false; readonly response: Response };
+
+// One full listening: the request (asked again without the hint if the
+// provider refuses it), the provider's errors, and the reading of the answer.
+async function listen(
+  requestId: string,
+  apiKey: string,
+  audio: File,
+  fileName: string,
+  model: string,
+  forcedLanguage: string,
+  hint: string,
+): Promise<Step> {
+  let outcome = await callWhisper(
+    apiKey,
+    audio,
+    fileName,
+    model,
+    forcedLanguage,
+    hint,
+  );
+
+  // A provider that refuses the hint is asked again without it.
+  if (
+    hint &&
+    outcome.kind === "response" &&
+    outcome.response.status === 400
+  ) {
+    console.error(`transcribe ${requestId}: hint refused, asking again without it`);
+
+    await outcome.response.body?.cancel().catch(() => undefined);
+    outcome = await callWhisper(
+      apiKey,
+      audio,
+      fileName,
+      model,
+      forcedLanguage,
+      "",
+    );
+  }
+
+  if (outcome.kind === "timeout") {
+    console.error(`transcribe ${requestId}: speech service timed out`);
+
+    return {
+      ok: false,
+      response: fail(requestId, 504, "TIMEOUT", "The speech service took too long.", true),
+    };
+  }
+
+  if (outcome.kind === "network") {
+    console.error(`transcribe ${requestId}: request failed: ${outcome.detail}`);
+
+    return {
+      ok: false,
+      response: fail(requestId, 502, "PROVIDER_ERROR", "The speech service could not be reached.", true),
+    };
+  }
+
+  const response = outcome.response;
+
+  if (response.status === 429) {
+    const wait = Number(response.headers.get("retry-after") ?? "");
+    const seconds = Number.isFinite(wait) && wait > 0 ? Math.ceil(wait) : 10;
+
+    console.error(`transcribe ${requestId}: rate limited, retry in ${seconds}s`);
+
+    return {
+      ok: false,
+      response: fail(requestId, 429, "RATE_LIMITED", "Too many voice requests. Try again shortly.", true, {
+        "Retry-After": String(seconds),
+      }),
+    };
+  }
+
+  if (!response.ok) {
+    const detail = (await response.text().catch(() => "")).slice(0, 300);
+
+    console.error(`transcribe ${requestId}: provider status ${response.status}: ${detail}`);
+
+    const badInput =
+      response.status === 400 ||
+      response.status === 413 ||
+      response.status === 415;
+
+    return {
+      ok: false,
+      response: badInput
+        ? fail(requestId, 422, "UNSUPPORTED_AUDIO", "The recording could not be read.", false)
+        : fail(requestId, 502, "PROVIDER_ERROR", "The speech service failed.", true),
+    };
+  }
+
+  return {
+    ok: true,
+    heard: readTranscript(await response.json().catch(() => null)),
   };
 }
 
@@ -517,8 +686,9 @@ Deno.serve(async (request: Request): Promise<Response> => {
       return fail(requestId, 415, "UNSUPPORTED_AUDIO", "This audio format is not supported.", false);
     }
 
+    // The language the person is expected to speak. Only a hint.
     const rawLanguage = form.get("language");
-    const language =
+    const expected =
       typeof rawLanguage === "string" &&
       LANGUAGE_PATTERN.test(rawLanguage.trim().toLowerCase())
         ? rawLanguage.trim().toLowerCase()
@@ -528,58 +698,45 @@ Deno.serve(async (request: Request): Promise<Response> => {
     const hint = tail(context, WHISPER_HINT_CHARS);
     const model = Deno.env.get("GROQ_STT_MODEL")?.trim() || DEFAULT_MODEL;
 
-    let outcome = await callWhisper(apiKey, audio, name, model, language, hint);
+    // First the model detects the language itself.
+    const first = await listen(requestId, apiKey, audio, name, model, "", hint);
 
-    // A provider that refuses the hint is asked again without it.
+    if (!first.ok) {
+      return first.response;
+    }
+
+    let heard = first.heard;
+    let usedExpected = false;
+    let qualityExpected: number | null = null;
+
+    // Detected something other than the expected language: the detection may
+    // be wrong, so the expected language is tried too and the result the model
+    // is more sure about is kept. (Speech in another language than expected
+    // keeps its own language, because forcing the wrong one gives nonsense.)
     if (
-      hint &&
-      outcome.kind === "response" &&
-      outcome.response.status === 400
+      expected &&
+      first.heard.text &&
+      !isExpectedLanguage(first.heard.language, expected)
     ) {
-      console.error(`transcribe ${requestId}: hint refused, asking again without it`);
+      const second = await listen(
+        requestId,
+        apiKey,
+        audio,
+        name,
+        model,
+        expected,
+        hint,
+      );
 
-      await outcome.response.body?.cancel().catch(() => undefined);
-      outcome = await callWhisper(apiKey, audio, name, model, language, "");
+      if (second.ok) {
+        qualityExpected = second.heard.quality;
+
+        if (second.heard.quality > first.heard.quality) {
+          heard = second.heard;
+          usedExpected = true;
+        }
+      }
     }
-
-    if (outcome.kind === "timeout") {
-      console.error(`transcribe ${requestId}: speech service timed out`);
-
-      return fail(requestId, 504, "TIMEOUT", "The speech service took too long.", true);
-    }
-
-    if (outcome.kind === "network") {
-      console.error(`transcribe ${requestId}: request failed: ${outcome.detail}`);
-
-      return fail(requestId, 502, "PROVIDER_ERROR", "The speech service could not be reached.", true);
-    }
-
-    const response = outcome.response;
-
-    if (response.status === 429) {
-      const wait = Number(response.headers.get("retry-after") ?? "");
-      const seconds = Number.isFinite(wait) && wait > 0 ? Math.ceil(wait) : 10;
-
-      console.error(`transcribe ${requestId}: rate limited, retry in ${seconds}s`);
-
-      return fail(requestId, 429, "RATE_LIMITED", "Too many voice requests. Try again shortly.", true, {
-        "Retry-After": String(seconds),
-      });
-    }
-
-    if (!response.ok) {
-      const detail = (await response.text().catch(() => "")).slice(0, 300);
-
-      console.error(`transcribe ${requestId}: provider status ${response.status}: ${detail}`);
-
-      const badInput = response.status === 400 || response.status === 413 || response.status === 415;
-
-      return badInput
-        ? fail(requestId, 422, "UNSUPPORTED_AUDIO", "The recording could not be read.", false)
-        : fail(requestId, 502, "PROVIDER_ERROR", "The speech service failed.", true);
-    }
-
-    const heard = readTranscript(await response.json().catch(() => null));
 
     // The sound was only the hint repeated: there was no speech.
     const echo = echoesHint(heard.text, hint);
@@ -597,7 +754,11 @@ Deno.serve(async (request: Request): Promise<Response> => {
         model,
         bytes: audio.size,
         mime: audio.type.slice(0, 40),
-        language: language || "auto",
+        expected: expected || "none",
+        detected: first.heard.language || "unknown",
+        usedExpected,
+        qualityDetected: first.heard.quality,
+        qualityExpected,
         contextChars: context.length,
         echo,
         segments: heard.total,
