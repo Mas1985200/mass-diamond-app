@@ -6,6 +6,7 @@
 
 import { useCallback, useEffect, useRef, useState } from "react";
 
+import { normalizeTranscript } from "../features/voice/textNormalizer";
 import { supabase } from "../lib/supabase";
 
 export type VoiceState = "idle" | "recording" | "transcribing";
@@ -23,8 +24,10 @@ export type VoiceErrorCode =
 export interface VoiceInputOptions {
   // ISO code of the spoken language ("fa", "en"); empty = auto-detect.
   readonly language: string;
-  // Called once with the recognized text.
-  readonly onText: (text: string) => void;
+  // Called once with the recognized text, cleaned for reading (letter forms,
+  // spacing, half-spaces, punctuation). `raw` is the text exactly as the server
+  // returned it, for a caller that wants to keep it.
+  readonly onText: (text: string, raw: string) => void;
   // Optional: words the same person wrote earlier (the unsent draft, recent
   // messages). It is asked for when the recording is sent and helps the server
   // choose the right words, names and spelling.
@@ -353,12 +356,16 @@ export function useVoiceInput(options: VoiceInputOptions): VoiceInput {
         return;
       }
 
-      if (!text) {
+      // The cleaning only fixes the surface of the text (it never changes the
+      // words); the text exactly as received is handed over as well.
+      const cleaned = normalizeTranscript(text, languageRef.current);
+
+      if (!cleaned) {
         setError("no_speech");
         return;
       }
 
-      onTextRef.current(text);
+      onTextRef.current(cleaned, text);
     },
     [],
   );
