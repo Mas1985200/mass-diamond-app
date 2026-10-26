@@ -6,6 +6,11 @@
 
 import { useCallback, useEffect, useRef, useState } from "react";
 
+import {
+  MAX_ATTEMPTS,
+  mayTryAgain,
+  retryPauseMs,
+} from "../features/voice/retryPolicy";
 import { normalizeTranscript } from "../features/voice/textNormalizer";
 import { supabase } from "../lib/supabase";
 
@@ -39,9 +44,14 @@ export interface VoiceInput {
   readonly state: VoiceState;
   readonly error: VoiceErrorCode | null;
   readonly seconds: number;
+  // True when the last recording could not be turned into text because of a
+  // connection or service problem and is still kept (in memory only), so
+  // `retry` can send it again without speaking again.
+  readonly canRetry: boolean;
   readonly start: () => Promise<void>;
   readonly stop: () => void;
   readonly cancel: () => void;
+  readonly retry: () => void;
   readonly clearError: () => void;
 }
 
@@ -51,11 +61,17 @@ const AUDIO_BITS_PER_SECOND = 32_000;
 const MAX_CONTEXT_SEND_CHARS = 600;
 // The server does two steps (speech model, then a repair step), so a normal
 // answer can take several seconds. A request that is stuck (weak or
-// interrupted connection) is still given up and tried once more with the same
-// recording, so the user never waits for nothing.
+// interrupted connection) is still given up and tried again with the same
+// recording (see retryPolicy.ts for how often and how long), so the user never
+// waits for nothing.
 const ATTEMPT_TIMEOUT_MS = 20_000;
-const MAX_ATTEMPTS = 2;
-const RETRY_PAUSE_MS = 500;
+
+// Errors after which sending the same recording again can help.
+const RETRYABLE_CODES: ReadonlySet<VoiceErrorCode> = new Set<VoiceErrorCode>([
+  "network",
+  "failed",
+  "rate_limited",
+]);
 
 const MIME_CANDIDATES: readonly string[] = [
   "audio/webm;codecs=opus",
@@ -113,6 +129,26 @@ function micErrorCode(failure: unknown): VoiceErrorCode {
   }
 
   return "failed";
+}
+
+// One id per recording, the same for every try of that recording, so the server
+// can recognize a repeated request.
+function newRequestId(): string {
+  if (typeof crypto !== "undefined" && typeof crypto.randomUUID === "function") {
+    return crypto.randomUUID();
+  }
+
+  return `${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 10)}`;
+}
+
+function isOffline(): boolean {
+  return typeof navigator !== "undefined" && navigator.onLine === false;
+}
+
+// A recording kept in memory after a failure (never stored on the device).
+interface PendingRecording {
+  readonly blob: Blob;
+  readonly requestId: string;
 }
 
 function transcribeUrl(): string | null {
@@ -178,6 +214,7 @@ async function sendOnce(
   anonKey: string,
   token: string,
   blob: Blob,
+  requestId: string,
   language: string,
   context: string,
   controllerRef: { current: AbortController | null },
@@ -185,6 +222,7 @@ async function sendOnce(
   const form = new FormData();
 
   form.append("audio", blob, "recording");
+  form.append("request_id", requestId);
 
   if (language) {
     form.append("language", language);
@@ -223,6 +261,7 @@ export function useVoiceInput(options: VoiceInputOptions): VoiceInput {
   const [state, setState] = useState<VoiceState>("idle");
   const [error, setError] = useState<VoiceErrorCode | null>(null);
   const [seconds, setSeconds] = useState(0);
+  const [canRetry, setCanRetry] = useState(false);
 
   const recorderRef = useRef<MediaRecorder | null>(null);
   const streamRef = useRef<MediaStream | null>(null);
@@ -235,6 +274,10 @@ export function useVoiceInput(options: VoiceInputOptions): VoiceInput {
   const tickRef = useRef<number | null>(null);
   const limitRef = useRef<number | null>(null);
   const abortRef = useRef<AbortController | null>(null);
+  // The recording that failed for a connection or service reason, kept in
+  // memory so it can be sent again. Cleared by success, cancel, a new
+  // recording and leaving the screen.
+  const pendingRef = useRef<PendingRecording | null>(null);
   const onTextRef = useRef(options.onText);
   const languageRef = useRef(options.language);
   const getContextRef = useRef(options.getContext);
@@ -244,6 +287,11 @@ export function useVoiceInput(options: VoiceInputOptions): VoiceInput {
     languageRef.current = options.language;
     getContextRef.current = options.getContext;
   });
+
+  const keepPending = useCallback((pending: PendingRecording | null): void => {
+    pendingRef.current = pending;
+    setCanRetry(pending !== null);
+  }, []);
 
   const release = useCallback((): void => {
     if (tickRef.current !== null) {
@@ -263,7 +311,11 @@ export function useVoiceInput(options: VoiceInputOptions): VoiceInput {
   }, []);
 
   const transcribe = useCallback(
-    async (session: number, blob: Blob): Promise<void> => {
+    async (
+      session: number,
+      blob: Blob,
+      requestId: string,
+    ): Promise<void> => {
       const url = transcribeUrl();
       const anonKey = import.meta.env.VITE_SUPABASE_ANON_KEY as
         | string
@@ -295,12 +347,22 @@ export function useVoiceInput(options: VoiceInputOptions): VoiceInput {
         } else if (!url || !anonKey) {
           code = "failed";
         } else {
+          const startedAt = Date.now();
+
           for (let attempt = 1; attempt <= MAX_ATTEMPTS; attempt += 1) {
+            // No connection at all: no request is sent and nothing waits for a
+            // timeout. The recording is kept, so it can be sent again later.
+            if (isOffline()) {
+              code = "network";
+              break;
+            }
+
             const result = await sendOnce(
               url,
               anonKey,
               token,
               blob,
+              requestId,
               languageRef.current,
               context,
               abortRef,
@@ -325,12 +387,12 @@ export function useVoiceInput(options: VoiceInputOptions): VoiceInput {
               retryable = result.reply.retry;
             }
 
-            if (!retryable || attempt === MAX_ATTEMPTS) {
+            if (!retryable || !mayTryAgain(attempt, Date.now() - startedAt)) {
               break;
             }
 
             await new Promise<void>((resolve) => {
-              window.setTimeout(resolve, RETRY_PAUSE_MS);
+              window.setTimeout(resolve, retryPauseMs(attempt));
             });
 
             if (session !== sessionRef.current) {
@@ -351,6 +413,12 @@ export function useVoiceInput(options: VoiceInputOptions): VoiceInput {
       setState("idle");
       setSeconds(0);
 
+      // A connection or service problem: the recording is kept for a retry.
+      // Any other outcome (text, nothing heard, not signed in) frees it.
+      keepPending(
+        code !== null && RETRYABLE_CODES.has(code) ? { blob, requestId } : null,
+      );
+
       if (code) {
         setError(code);
         return;
@@ -367,7 +435,7 @@ export function useVoiceInput(options: VoiceInputOptions): VoiceInput {
 
       onTextRef.current(cleaned, text);
     },
-    [],
+    [keepPending],
   );
 
   const finish = useCallback(
@@ -395,7 +463,7 @@ export function useVoiceInput(options: VoiceInputOptions): VoiceInput {
       }
 
       setState("transcribing");
-      void transcribe(session, blob);
+      void transcribe(session, blob, newRequestId());
     },
     [release, transcribe],
   );
@@ -412,6 +480,8 @@ export function useVoiceInput(options: VoiceInputOptions): VoiceInput {
 
     busyRef.current = true;
     setError(null);
+    // A new recording replaces the one that was waiting for a retry.
+    keepPending(null);
 
     const session = sessionRef.current + 1;
 
@@ -510,7 +580,27 @@ export function useVoiceInput(options: VoiceInputOptions): VoiceInput {
         recorder.stop();
       }
     }, MAX_RECORD_SECONDS * 1000);
-  }, [finish, release]);
+  }, [finish, keepPending, release]);
+
+  // Sends the kept recording again (same request id). Does nothing while
+  // another recording or request is running, or when nothing is kept.
+  const retry = useCallback((): void => {
+    const pending = pendingRef.current;
+
+    if (!pending || busyRef.current) {
+      return;
+    }
+
+    busyRef.current = true;
+    setError(null);
+
+    const session = sessionRef.current + 1;
+
+    sessionRef.current = session;
+    setSeconds(0);
+    setState("transcribing");
+    void transcribe(session, pending.blob, pending.requestId);
+  }, [transcribe]);
 
   const stop = useCallback((): void => {
     const recorder = recorderRef.current;
@@ -538,10 +628,12 @@ export function useVoiceInput(options: VoiceInputOptions): VoiceInput {
 
     release();
     chunksRef.current = [];
+    // Cancelling also throws away a recording that was waiting for a retry.
+    keepPending(null);
     busyRef.current = false;
     setState("idle");
     setSeconds(0);
-  }, [release]);
+  }, [keepPending, release]);
 
   const clearError = useCallback((): void => {
     setError(null);
@@ -563,6 +655,7 @@ export function useVoiceInput(options: VoiceInputOptions): VoiceInput {
       }
 
       release();
+      pendingRef.current = null;
     };
   }, [release]);
 
@@ -571,9 +664,11 @@ export function useVoiceInput(options: VoiceInputOptions): VoiceInput {
     state,
     error,
     seconds,
+    canRetry,
     start,
     stop,
     cancel,
+    retry,
     clearError,
   };
 }
