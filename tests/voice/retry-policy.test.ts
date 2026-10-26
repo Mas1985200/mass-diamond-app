@@ -11,6 +11,7 @@ import {
   TOTAL_BUDGET_MS,
   mayTryAgain,
   retryPauseMs,
+  shouldKeepRecording,
 } from "../../src/features/voice/retryPolicy.ts";
 
 test("the pause grows with every failed try", () => {
@@ -43,4 +44,27 @@ test("no try is started when its pause would pass the total budget", () => {
   assert.equal(mayTryAgain(1, TOTAL_BUDGET_MS - pause - 1), true);
   assert.equal(mayTryAgain(1, TOTAL_BUDGET_MS - pause), false);
   assert.equal(mayTryAgain(1, TOTAL_BUDGET_MS), false);
+});
+
+test("a lost connection or a slow-down request keeps the recording", () => {
+  assert.equal(shouldKeepRecording("network", false), true);
+  assert.equal(shouldKeepRecording("rate_limited", false), true);
+});
+
+test("a failure keeps the recording only when the service called it temporary", () => {
+  assert.equal(shouldKeepRecording("failed", true), true);
+  assert.equal(shouldKeepRecording("failed", false), false);
+});
+
+test("outcomes that sending again cannot fix never keep the recording", () => {
+  for (const code of [
+    "no_speech",
+    "auth",
+    "permission",
+    "no_microphone",
+    "unsupported",
+    "unknown",
+  ]) {
+    assert.equal(shouldKeepRecording(code, true), false, code);
+  }
 });
