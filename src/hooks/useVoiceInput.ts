@@ -10,6 +10,7 @@ import {
   MAX_ATTEMPTS,
   mayTryAgain,
   retryPauseMs,
+  shouldKeepRecording,
 } from "../features/voice/retryPolicy";
 import { normalizeTranscript } from "../features/voice/textNormalizer";
 import { supabase } from "../lib/supabase";
@@ -65,13 +66,6 @@ const MAX_CONTEXT_SEND_CHARS = 600;
 // recording (see retryPolicy.ts for how often and how long), so the user never
 // waits for nothing.
 const ATTEMPT_TIMEOUT_MS = 20_000;
-
-// Errors after which sending the same recording again can help.
-const RETRYABLE_CODES: ReadonlySet<VoiceErrorCode> = new Set<VoiceErrorCode>([
-  "network",
-  "failed",
-  "rate_limited",
-]);
 
 const MIME_CANDIDATES: readonly string[] = [
   "audio/webm;codecs=opus",
@@ -323,6 +317,9 @@ export function useVoiceInput(options: VoiceInputOptions): VoiceInput {
 
       let code: VoiceErrorCode | null = null;
       let text = "";
+      // Whether sending this same recording again could still help (see
+      // shouldKeepRecording in retryPolicy.ts).
+      let serviceSaidRetry = false;
 
       // What the person wrote before is read now, not when the recording
       // started, so words typed while speaking are included too.
@@ -354,6 +351,7 @@ export function useVoiceInput(options: VoiceInputOptions): VoiceInput {
             // timeout. The recording is kept, so it can be sent again later.
             if (isOffline()) {
               code = "network";
+              serviceSaidRetry = true;
               break;
             }
 
@@ -387,6 +385,8 @@ export function useVoiceInput(options: VoiceInputOptions): VoiceInput {
               retryable = result.reply.retry;
             }
 
+            serviceSaidRetry = retryable;
+
             if (!retryable || !mayTryAgain(attempt, Date.now() - startedAt)) {
               break;
             }
@@ -402,6 +402,7 @@ export function useVoiceInput(options: VoiceInputOptions): VoiceInput {
         }
       } catch {
         code = "network";
+        serviceSaidRetry = true;
       }
 
       if (session !== sessionRef.current) {
@@ -416,7 +417,9 @@ export function useVoiceInput(options: VoiceInputOptions): VoiceInput {
       // A connection or service problem: the recording is kept for a retry.
       // Any other outcome (text, nothing heard, not signed in) frees it.
       keepPending(
-        code !== null && RETRYABLE_CODES.has(code) ? { blob, requestId } : null,
+        code !== null && shouldKeepRecording(code, serviceSaidRetry)
+          ? { blob, requestId }
+          : null,
       );
 
       if (code) {
