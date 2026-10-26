@@ -29,3 +29,23 @@ export function mayTryAgain(attempt: number, elapsedMs: number): boolean {
     elapsedMs + retryPauseMs(attempt) < TOTAL_BUDGET_MS
   );
 }
+
+// Whether a recording that could not be turned into text is kept so the person
+// can send it again without speaking again.
+//  - no connection, or the service asked to slow down: always worth sending
+//    again later;
+//  - a failure the service itself marked as temporary: worth sending again;
+//  - a failure it did not mark that way (an unreadable or unsupported
+//    recording, a missing setting): sending the same recording again cannot
+//    help, so it is not kept;
+//  - anything else (no speech, not signed in, no permission ...): not kept.
+export function shouldKeepRecording(
+  code: string,
+  serviceSaidRetry: boolean,
+): boolean {
+  if (code === "network" || code === "rate_limited") {
+    return true;
+  }
+
+  return code === "failed" && serviceSaidRetry;
+}
