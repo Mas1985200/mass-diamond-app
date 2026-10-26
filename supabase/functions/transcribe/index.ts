@@ -9,6 +9,10 @@
 //            recognized in whatever language it really is.
 //   context  optional: words the same person wrote earlier (draft, recent
 //            messages). It helps the repair step to choose the right words.
+//   request_id optional: one id per recording, the same for every try of that
+//            recording. A repeated id is worked on once (a retry after a slow
+//            or lost answer gets the same text and does not use the person's
+//            allowance twice).
 // Answer: { success: true, text, corrected, requestId }   (text is "" when no speech)
 //      or { success: false, error: { code, message, retryable }, requestId }
 //
@@ -32,11 +36,19 @@
 //     differs too much from the original, or both fail, the original text is
 //     used.
 //
+// Protection (see usage.ts): a recording over MAX_AUDIO_BYTES is refused and
+// every signed-in user may send a limited number of requests per minute. Both
+// protections live in the memory of the running instance, so they are not a
+// hard global quota.
+//
 // Uses the same secret as the chat (GROQ_API_KEY). Optional secrets:
 //   GROQ_STT_MODEL      speech model (default whisper-large-v3-turbo)
 //   GROQ_STT_FIX_MODEL  repair model (default openai/gpt-oss-120b, then
 //                       openai/gpt-oss-20b); "off" = no repair
 //   GROQ_STT_HINT       "on" = give the context to Whisper as a hint
+//   TRANSCRIBE_MAX_PER_MINUTE  requests per user per minute (default 15)
+
+import { createRateLimiter, createReplayGuard } from "./usage.ts";
 
 const GROQ_TRANSCRIBE_URL =
   "https://api.groq.com/openai/v1/audio/transcriptions";
@@ -44,11 +56,20 @@ const GROQ_CHAT_URL = "https://api.groq.com/openai/v1/chat/completions";
 const DEFAULT_MODEL = "whisper-large-v3-turbo";
 const DEFAULT_FIX_MODEL = "openai/gpt-oss-120b";
 const FALLBACK_FIX_MODEL = "openai/gpt-oss-20b";
-const MAX_AUDIO_BYTES = 8 * 1024 * 1024;
+// The app records at most 60 seconds, which is well under 1 MB in every browser
+// format it uses; this leaves a wide margin and refuses anything bigger.
+const MAX_AUDIO_BYTES = 2 * 1024 * 1024;
 const MIN_AUDIO_BYTES = 800;
 const AUTH_TIMEOUT_MS = 6_000;
 const TRANSCRIBE_TIMEOUT_MS = 25_000;
 const LANGUAGE_PATTERN = /^[a-z]{2,3}$/;
+
+// Use limits (per user, per running instance).
+const DEFAULT_MAX_PER_MINUTE = 15;
+const RATE_WINDOW_MS = 60_000;
+const REPLAY_TTL_MS = 120_000;
+const REPLAY_MAX_ENTRIES = 200;
+const REQUEST_ID_PATTERN = /^[A-Za-z0-9-]{8,64}$/;
 const MAX_TEXT_CHARS = 4_000;
 
 // The context: the newest words of what the person wrote before.
@@ -186,15 +207,16 @@ function isExpectedLanguage(detected: string, code: string): boolean {
   return detected === code || detected === expectedLanguageName(code);
 }
 
-// The user must be signed in: the token is checked by the auth service.
-async function isSignedIn(request: Request): Promise<boolean> {
+// The user must be signed in: the token is checked by the auth service. The
+// answer is the user's id (used for the use limits), or null.
+async function signedInUserId(request: Request): Promise<string | null> {
   const header = request.headers.get("Authorization") ?? "";
   const token = /^Bearer\s+(.+)$/i.exec(header)?.[1]?.trim();
   const url = Deno.env.get("SUPABASE_URL");
   const anonKey = Deno.env.get("SUPABASE_ANON_KEY");
 
   if (!token || !url || !anonKey) {
-    return false;
+    return null;
   }
 
   const controller = new AbortController();
@@ -206,9 +228,19 @@ async function isSignedIn(request: Request): Promise<boolean> {
       signal: controller.signal,
     });
 
-    return response.ok;
+    if (!response.ok) {
+      return null;
+    }
+
+    const user: unknown = await response.json().catch(() => null);
+    const id =
+      typeof user === "object" && user !== null
+        ? (user as { id?: unknown }).id
+        : null;
+
+    return typeof id === "string" && id.length > 0 ? id : null;
   } catch {
-    return false;
+    return null;
   } finally {
     clearTimeout(timer);
   }
@@ -713,6 +745,154 @@ async function repairTranscript(
   return unchanged(raw, lastModel);
 }
 
+// A finished answer as plain data, so that it can be kept and given again.
+interface Snapshot {
+  readonly status: number;
+  readonly body: string;
+  readonly retryAfter: string;
+}
+
+async function snapshotOf(response: Response): Promise<Snapshot> {
+  return {
+    status: response.status,
+    body: await response.text(),
+    retryAfter: response.headers.get("Retry-After") ?? "",
+  };
+}
+
+function respond(snapshot: Snapshot): Response {
+  return new Response(snapshot.body, {
+    status: snapshot.status,
+    headers: {
+      ...CORS_HEADERS,
+      "Content-Type": "application/json; charset=utf-8",
+      ...(snapshot.retryAfter ? { "Retry-After": snapshot.retryAfter } : {}),
+    },
+  });
+}
+
+function readLimit(): number {
+  const configured = Number(Deno.env.get("TRANSCRIBE_MAX_PER_MINUTE") ?? "");
+
+  return Number.isInteger(configured) && configured > 0
+    ? configured
+    : DEFAULT_MAX_PER_MINUTE;
+}
+
+// The id the app sends for one recording ("" when it is missing or odd).
+function readClientRequestId(value: FormDataEntryValue | null): string {
+  return typeof value === "string" && REQUEST_ID_PATTERN.test(value.trim())
+    ? value.trim()
+    : "";
+}
+
+const limiter = createRateLimiter(readLimit(), RATE_WINDOW_MS);
+const replay = createReplayGuard<Snapshot>(
+  REPLAY_TTL_MS,
+  REPLAY_MAX_ENTRIES,
+  (snapshot) => snapshot.status === 200,
+);
+
+async function transcribeRecording(
+  requestId: string,
+  apiKey: string,
+  audio: File,
+  name: string,
+  expected: string,
+  context: string,
+): Promise<Snapshot> {
+  const useHint =
+    Deno.env.get("GROQ_STT_HINT")?.trim().toLowerCase() === "on";
+  const hint = useHint ? tail(context, WHISPER_HINT_CHARS) : "";
+  const model = Deno.env.get("GROQ_STT_MODEL")?.trim() || DEFAULT_MODEL;
+
+  // First the model detects the language itself.
+  const first = await listen(requestId, apiKey, audio, name, model, "", hint);
+
+  if (!first.ok) {
+    return await snapshotOf(first.response);
+  }
+
+  let heard = first.heard;
+  let usedExpected = false;
+  let qualityExpected: number | null = null;
+
+  // Detected something other than the expected language: the detection may
+  // be wrong, so the expected language is tried too and the result the model
+  // is more sure about is kept. (Speech in another language than expected
+  // keeps its own language, because forcing the wrong one gives nonsense.)
+  if (
+    expected &&
+    first.heard.text &&
+    !isExpectedLanguage(first.heard.language, expected)
+  ) {
+    const second = await listen(
+      requestId,
+      apiKey,
+      audio,
+      name,
+      model,
+      expected,
+      hint,
+    );
+
+    if (second.ok) {
+      qualityExpected = second.heard.quality;
+
+      if (second.heard.quality > first.heard.quality) {
+        heard = second.heard;
+        usedExpected = true;
+      }
+    }
+  }
+
+  // The sound was only the hint repeated: there was no speech.
+  const echo = echoesHint(heard.text, hint);
+  const heardText = echo ? "" : heard.text;
+
+  const repaired = heardText
+    ? await repairTranscript(heardText, context, apiKey)
+    : unchanged("", "none");
+
+  // Sizes and scores only, never the words that were said or written.
+  console.log(
+    JSON.stringify({
+      event: "transcribe",
+      requestId,
+      model,
+      bytes: audio.size,
+      mime: audio.type.slice(0, 40),
+      expected: expected || "none",
+      detected: first.heard.language || "unknown",
+      usedExpected,
+      qualityDetected: first.heard.quality,
+      qualityExpected,
+      hintUsed: hint.length > 0,
+      contextChars: context.length,
+      echo,
+      segments: heard.total,
+      kept: heard.kept,
+      dropped: heard.dropped,
+      maxNoSpeech: heard.maxNoSpeech,
+      lastNoSpeech: heard.lastNoSpeech,
+      lastLogprob: heard.lastLogprob,
+      chars: repaired.text.length,
+      repairModel: repaired.model,
+      repaired: repaired.fixed,
+      change: repaired.change,
+    }),
+  );
+
+  return await snapshotOf(
+    json({
+      success: true,
+      text: repaired.text,
+      corrected: repaired.fixed,
+      requestId,
+    }),
+  );
+}
+
 Deno.serve(async (request: Request): Promise<Response> => {
   const requestId = crypto.randomUUID();
 
@@ -725,7 +905,9 @@ Deno.serve(async (request: Request): Promise<Response> => {
   }
 
   try {
-    if (!(await isSignedIn(request))) {
+    const userId = await signedInUserId(request);
+
+    if (!userId) {
       return fail(requestId, 401, "AUTH_REQUIRED", "Sign in is required.", false);
     }
 
@@ -780,94 +962,36 @@ Deno.serve(async (request: Request): Promise<Response> => {
         : "";
 
     const context = readContext(form.get("context"));
-    const useHint =
-      Deno.env.get("GROQ_STT_HINT")?.trim().toLowerCase() === "on";
-    const hint = useHint ? tail(context, WHISPER_HINT_CHARS) : "";
-    const model = Deno.env.get("GROQ_STT_MODEL")?.trim() || DEFAULT_MODEL;
+    const clientRequestId = readClientRequestId(form.get("request_id"));
 
-    // First the model detects the language itself.
-    const first = await listen(requestId, apiKey, audio, name, model, "", hint);
+    const work = async (): Promise<Snapshot> => {
+      const decision = limiter.check(userId);
 
-    if (!first.ok) {
-      return first.response;
-    }
+      if (!decision.allowed) {
+        return await snapshotOf(
+          fail(requestId, 429, "RATE_LIMITED", "Too many voice requests. Try again shortly.", true, {
+            "Retry-After": String(decision.retryAfterSeconds),
+          }),
+        );
+      }
 
-    let heard = first.heard;
-    let usedExpected = false;
-    let qualityExpected: number | null = null;
-
-    // Detected something other than the expected language: the detection may
-    // be wrong, so the expected language is tried too and the result the model
-    // is more sure about is kept. (Speech in another language than expected
-    // keeps its own language, because forcing the wrong one gives nonsense.)
-    if (
-      expected &&
-      first.heard.text &&
-      !isExpectedLanguage(first.heard.language, expected)
-    ) {
-      const second = await listen(
+      return await transcribeRecording(
         requestId,
         apiKey,
         audio,
         name,
-        model,
         expected,
-        hint,
+        context,
       );
+    };
 
-      if (second.ok) {
-        qualityExpected = second.heard.quality;
+    // The same recording sent again (a retry after a slow or lost answer) is
+    // worked on once and does not use up the person's allowance twice.
+    const snapshot = clientRequestId
+      ? await replay.run(`${userId}:${clientRequestId}`, work)
+      : await work();
 
-        if (second.heard.quality > first.heard.quality) {
-          heard = second.heard;
-          usedExpected = true;
-        }
-      }
-    }
-
-    // The sound was only the hint repeated: there was no speech.
-    const echo = echoesHint(heard.text, hint);
-    const heardText = echo ? "" : heard.text;
-
-    const repaired = heardText
-      ? await repairTranscript(heardText, context, apiKey)
-      : unchanged("", "none");
-
-    // Sizes and scores only, never the words that were said or written.
-    console.log(
-      JSON.stringify({
-        event: "transcribe",
-        requestId,
-        model,
-        bytes: audio.size,
-        mime: audio.type.slice(0, 40),
-        expected: expected || "none",
-        detected: first.heard.language || "unknown",
-        usedExpected,
-        qualityDetected: first.heard.quality,
-        qualityExpected,
-        hintUsed: hint.length > 0,
-        contextChars: context.length,
-        echo,
-        segments: heard.total,
-        kept: heard.kept,
-        dropped: heard.dropped,
-        maxNoSpeech: heard.maxNoSpeech,
-        lastNoSpeech: heard.lastNoSpeech,
-        lastLogprob: heard.lastLogprob,
-        chars: repaired.text.length,
-        repairModel: repaired.model,
-        repaired: repaired.fixed,
-        change: repaired.change,
-      }),
-    );
-
-    return json({
-      success: true,
-      text: repaired.text,
-      corrected: repaired.fixed,
-      requestId,
-    });
+    return respond(snapshot);
   } catch (error) {
     console.error(`transcribe ${requestId}: failed: ${describeError(error).slice(0, 300)}`);
 
