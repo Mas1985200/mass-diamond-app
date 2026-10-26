@@ -13,11 +13,13 @@ import { createPortal } from "react-dom";
 
 import { supabase } from "../../lib/supabase";
 import { useChat } from "../../hooks/useChat";
-import { useVoiceInput, type VoiceErrorCode } from "../../hooks/useVoiceInput";
+import { useVoiceInput } from "../../hooks/useVoiceInput";
+import { VOICE_LABELS } from "../../features/voice/voiceMessages";
 import type { ChatErrorCode } from "../../lib/chatClient";
 import DiamondMark from "../DiamondMark";
 import MarkdownText from "./MarkdownText";
 import DirectionsButton from "./DirectionsButton";
+import VoiceStatusBar from "./VoiceStatusBar";
 import PhotosCard, { parsePhotosCard, type PhotosCardData } from "./PhotosCard";
 import PhotoStrip, { MessageThumbs } from "./PhotoStrip";
 import AttachSheet from "./AttachSheet";
@@ -45,19 +47,6 @@ const PHOTO_ERROR_MESSAGES: Record<AttachErrorCode, string> = {
   unsupported: "فقط فایل عکس قابل پیوست است.",
   unreadable: "این عکس خوانده نشد. لطفاً عکس دیگری انتخاب کنید.",
   limit: `حداکثر ${MAX_PHOTOS.toLocaleString("fa-IR")} عکس را می‌شود پیوست کرد.`,
-};
-
-const VOICE_ERROR_MESSAGES: Record<VoiceErrorCode, string> = {
-  unsupported: "این مرورگر ضبط صدا را پشتیبانی نمی‌کند.",
-  permission:
-    "اجازه‌ی میکروفون داده نشده است. آن را در تنظیمات مرورگر برای این سایت فعال کنید.",
-  no_microphone: "میکروفونی پیدا نشد.",
-  auth: "نشست شما منقضی شده است. لطفاً دوباره وارد شوید.",
-  no_speech: "صدایی شنیده نشد. دوباره تلاش کنید.",
-  rate_limited:
-    "تعداد درخواست‌های صوتی زیاد است. چند ثانیه بعد دوباره تلاش کنید.",
-  network: "اتصال به سرور برقرار نشد. لطفاً اینترنت خود را بررسی کنید.",
-  failed: "تبدیل صدا به متن انجام نشد. دوباره تلاش کنید.",
 };
 
 const DEFAULT_PLACEHOLDER = "چطور می‌تونم کمکت کنم؟";
@@ -1127,15 +1116,6 @@ function readPosition(
   });
 }
 
-// "۰:۰۵" style recording time.
-function formatRecordTime(totalSeconds: number): string {
-  const minutes = Math.floor(totalSeconds / 60);
-  const rest = totalSeconds % 60;
-  const restText = rest.toLocaleString("fa-IR");
-
-  return `${minutes.toLocaleString("fa-IR")}:${rest < 10 ? "۰" : ""}${restText}`;
-}
-
 // What the person wrote before: their last few messages (oldest first) and,
 // last, the draft that is not sent yet. The server keeps the newest words and
 // uses them to choose the right words, names and spelling. Only the person's
@@ -1415,9 +1395,11 @@ export default function ChatScreen() {
     };
   }, [reset, cancelVoice]);
 
-  // A voice error disappears by itself after a few seconds.
+  // A voice error disappears by itself after a few seconds, except while the
+  // recording is kept for a retry: then the message and its "try again" button
+  // stay until the person uses them, cancels or starts a new recording.
   useEffect(() => {
-    if (!voice.error) {
+    if (!voice.error || voice.canRetry) {
       return;
     }
 
@@ -1426,7 +1408,7 @@ export default function ChatScreen() {
     return () => {
       window.clearTimeout(timer);
     };
-  }, [voice.error, clearVoiceError]);
+  }, [voice.error, voice.canRetry, clearVoiceError]);
 
   useEffect(() => {
     const element = inputRef.current;
@@ -1760,10 +1742,10 @@ export default function ChatScreen() {
 
   const micLabel =
     voice.state === "recording"
-      ? "توقف ضبط"
+      ? VOICE_LABELS.micStop
       : voice.state === "transcribing"
-        ? "در حال تبدیل صدا به متن"
-        : "ورودی صوتی";
+        ? VOICE_LABELS.micBusy
+        : VOICE_LABELS.micIdle;
 
   return (
     <div
@@ -2002,40 +1984,14 @@ export default function ChatScreen() {
             </p>
           )}
 
-          {voice.state === "recording" && (
-            <div
-              role="status"
-              className="flex items-center justify-between gap-3 pb-1 text-xs text-red-300"
-            >
-              <span className="flex items-center gap-2">
-                <span className="md-rec-dot h-2 w-2 rounded-full bg-red-400" />
-                <span>در حال ضبط…</span>
-                <span dir="ltr" className="tabular-nums">
-                  {formatRecordTime(voice.seconds)}
-                </span>
-              </span>
-
-              <button
-                type="button"
-                onClick={cancelVoice}
-                className="rounded-full border border-red-300/30 px-3 py-0.5 text-xs text-red-200 transition-colors hover:bg-red-300/10"
-              >
-                لغو
-              </button>
-            </div>
-          )}
-
-          {voice.state === "transcribing" && (
-            <p role="status" className="pb-1 text-xs text-text-subtle">
-              در حال تبدیل صدا به متن…
-            </p>
-          )}
-
-          {voice.error && (
-            <p role="alert" className="pb-1 text-xs leading-5 text-red-300">
-              {VOICE_ERROR_MESSAGES[voice.error]}
-            </p>
-          )}
+          <VoiceStatusBar
+            state={voice.state}
+            seconds={voice.seconds}
+            error={voice.error}
+            canRetry={voice.canRetry}
+            onCancel={cancelVoice}
+            onRetry={voice.retry}
+          />
 
           <textarea
             ref={inputRef}
