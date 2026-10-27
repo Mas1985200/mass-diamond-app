@@ -15,7 +15,7 @@ import { supabase } from "../../lib/supabase";
 import { useChat } from "../../hooks/useChat";
 import { useVoiceInput } from "../../hooks/useVoiceInput";
 import { VOICE_LABELS } from "../../features/voice/voiceMessages";
-import type { ChatErrorCode } from "../../lib/chatClient";
+import { CHAT_ERROR_MESSAGES } from "../../features/chat/errorMessages";
 import DiamondMark from "../DiamondMark";
 import MarkdownText from "./MarkdownText";
 import DirectionsButton from "./DirectionsButton";
@@ -29,19 +29,6 @@ import {
   type AttachErrorCode,
   type AttachedPhoto,
 } from "../../lib/imageAttach";
-
-const ERROR_MESSAGES: Record<ChatErrorCode, string> = {
-  AUTH_REQUIRED: "نشست شما منقضی شده است. لطفاً دوباره وارد شوید.",
-  CONVERSATION_NOT_FOUND:
-    "این گفتگو پیدا نشد. پیام بعدی شما گفتگوی جدیدی را شروع می‌کند.",
-  AI_PROVIDER_ERROR:
-    "دستیار هوشمند در حال حاضر پاسخ نمی‌دهد. لطفاً دوباره تلاش کنید.",
-  METHOD_NOT_ALLOWED: "درخواست نامعتبر بود. لطفاً دوباره تلاش کنید.",
-  INTERNAL_ERROR: "خطای داخلی سرور رخ داد. لطفاً دوباره تلاش کنید.",
-  NETWORK_ERROR:
-    "اتصال به سرور برقرار نشد. لطفاً اینترنت خود را بررسی کنید.",
-  UNKNOWN_ERROR: "خطای ناشناخته‌ای رخ داد. لطفاً دوباره تلاش کنید.",
-};
 
 const PHOTO_ERROR_MESSAGES: Record<AttachErrorCode, string> = {
   unsupported: "فقط فایل عکس قابل پیوست است.",
@@ -1923,7 +1910,7 @@ export default function ChatScreen() {
             className="mx-auto mb-2 flex w-full max-w-xl items-center justify-between gap-3 rounded-xl border border-red-400/20 bg-red-400/10 px-4 py-3 text-sm leading-6 text-red-300"
           >
             <span>
-              {ERROR_MESSAGES[error.code]}
+              {CHAT_ERROR_MESSAGES[error.code]}
               {error.code === "AI_PROVIDER_ERROR" && error.detail && (
                 <span
                   dir="ltr"
