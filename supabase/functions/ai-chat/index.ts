@@ -6,6 +6,7 @@ import { TOTAL_TIMEOUT_MS } from "./config.ts";
 import type { AIMessage, PhotoItem, ToolContext } from "./types.ts";
 import {
   describeError,
+  getOptionalEnv,
   getRequiredEnv,
   getTavilyKey,
   sleep,
@@ -38,6 +39,8 @@ import { startAgent } from "./agent.ts";
 import { routeCapability } from "./routing/capability.ts";
 import { prepareIllustration } from "./images/illustrate.ts";
 import { createSseResponse } from "./sse.ts";
+import { giveBackMessage, takeMessage } from "./quota/gate.ts";
+import { readLimits } from "./quota/limits.ts";
 
 const RECALL_PATTERN =
   /(کجا\s*بودیم|ادامه\s*بده|ادامه\s*اش|ادامه‌اش|یادته|یادت\s*هست|قبلا|قبلاً|دفعه\s*قبل|دفعه‌ی\s*قبل|where\s+were\s+we|pick\s+up\s+where|continue\s+where|last\s+time|remember\s+when)/i;
@@ -93,6 +96,10 @@ Deno.serve(async (request: Request): Promise<Response> => {
     );
   }
 
+  // Gives back the counted message when the assistant could not answer. It
+  // does nothing until a message has really been counted below.
+  let refund: () => Promise<void> = async () => {};
+
   try {
     const supabaseUrl = getRequiredEnv("SUPABASE_URL");
     const supabaseAnonKey = getRequiredEnv("SUPABASE_ANON_KEY");
@@ -114,6 +121,36 @@ Deno.serve(async (request: Request): Promise<Response> => {
     const message = validateMessage(extracted.text, photos.length > 0);
     const location = body.location ?? extracted.location;
 
+    // Fair use: this message is counted in the database before any AI quota is
+    // spent. A user over the daily limit of their plan is stopped here; if the
+    // database cannot be asked, the user is let through (and it is logged).
+    const decision = await takeMessage(
+      adminClient,
+      user.id,
+      readLimits(getOptionalEnv),
+    );
+
+    if (decision && !decision.allowed) {
+      return jsonResponse(
+        {
+          success: false,
+          error: {
+            code: "QUOTA_EXCEEDED",
+            message: `Daily limit reached: ${decision.used} of ${decision.quota} messages on the ${decision.plan} plan.`,
+            retryable: false,
+          },
+          requestId,
+        },
+        429,
+      );
+    }
+
+    if (decision) {
+      const countedUserId = user.id;
+
+      refund = () => giveBackMessage(adminClient, countedUserId);
+    }
+
     let conversationId = body.conversationId;
     const isNewConversation = !conversationId;
 
@@ -123,6 +160,8 @@ Deno.serve(async (request: Request): Promise<Response> => {
         (await conversationExists(adminClient, user.id, conversationId));
 
       if (!exists) {
+        await refund();
+
         return jsonResponse(
           {
             success: false,
@@ -235,6 +274,7 @@ Deno.serve(async (request: Request): Promise<Response> => {
 
         if (!seen.ok) {
           clearTimeout(totalTimer);
+          await refund();
 
           console.error(
             `request ${requestId}: photo analysis failed: ${seen.error}`,
@@ -307,6 +347,7 @@ Deno.serve(async (request: Request): Promise<Response> => {
 
     if (!started.success) {
       clearTimeout(totalTimer);
+      await refund();
 
       console.error(
         `request ${requestId}: AI start failed: ${started.error.slice(0, 300)}`,
@@ -347,6 +388,8 @@ Deno.serve(async (request: Request): Promise<Response> => {
     try {
       content = (await collectChunks(started.chunks)).trim();
     } catch (error) {
+      await refund();
+
       console.error(
         `request ${requestId}: generation failed: ${describeError(error).slice(0, 300)}`,
       );
@@ -369,6 +412,8 @@ Deno.serve(async (request: Request): Promise<Response> => {
     }
 
     if (!content) {
+      await refund();
+
       return jsonResponse(
         {
           success: false,
@@ -414,6 +459,8 @@ Deno.serve(async (request: Request): Promise<Response> => {
       message === AUTH_REQUIRED_MESSAGE || message === AUTH_INVALID_MESSAGE;
 
     console.error(`request ${requestId}: failed: ${message.slice(0, 300)}`);
+
+    await refund();
 
     return jsonResponse(
       {
