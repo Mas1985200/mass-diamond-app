@@ -58,7 +58,10 @@ export interface VoiceInput {
 
 const MAX_RECORD_SECONDS = 60;
 const MIN_AUDIO_BYTES = 800;
-const AUDIO_BITS_PER_SECOND = 32_000;
+// Speech is sent as Opus. At 32 000 bits per second the soft parts of words
+// are already compressed hard; 64 000 keeps them clearer for the speech model
+// and a recording is still small (about 8 KB per second).
+const AUDIO_BITS_PER_SECOND = 64_000;
 const MAX_CONTEXT_SEND_CHARS = 600;
 // The server does two steps (speech model, then a repair step), so a normal
 // answer can take several seconds. A request that is stuck (weak or
@@ -495,8 +498,14 @@ export function useVoiceInput(options: VoiceInputOptions): VoiceInput {
     try {
       stream = await navigator.mediaDevices.getUserMedia({
         audio: {
-          echoCancellation: true,
-          noiseSuppression: true,
+          // One channel is all speech needs.
+          channelCount: 1,
+          // Nothing is played back while dictating, so there is no echo to
+          // remove, and the phone's own noise suppression can cut the soft
+          // parts of words, which the speech model then has to guess.
+          echoCancellation: false,
+          noiseSuppression: false,
+          // Kept, so a quiet voice still reaches the model loud enough.
           autoGainControl: true,
         },
       });
