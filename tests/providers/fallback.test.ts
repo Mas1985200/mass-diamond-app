@@ -258,3 +258,41 @@ test("the order secret ignores unknown names and falls back to the default", () 
     globals.Deno = originalDeno;
   }
 });
+
+test("a turn that only called a tool has empty text, not null, on other services", async () => {
+  const withToolTurn = [
+    { role: "user" as const, content: "news" },
+    {
+      role: "assistant" as const,
+      content: null,
+      tool_calls: [
+        { id: "c1", type: "function" as const, function: { name: "web_search", arguments: "{}" } },
+      ],
+    },
+    { role: "tool" as const, tool_call_id: "c1", content: "result" },
+  ];
+
+  await withNetwork(
+    {
+      GROQ_API_KEY: "groq-key",
+      GROQ_MODEL_PREFERRED: "fb-groq-8",
+      CF_ACCOUNT_ID: ACCOUNT,
+      CF_AI_TOKEN: "cf-token",
+      CF_AI_MODEL: "@cf/fb-model-8",
+    },
+    (url) => (url.includes(GROQ_HOST) ? busy() : fine()),
+    async (calls) => {
+      const result = await openRound(withToolTurn, null, signal(), new Set(DEFAULT_MODELS));
+
+      assert.equal(result.ok, true);
+
+      const toCloudflare = calls.filter((call) => call.url.includes(CF_HOST));
+      const toGroq = calls.filter((call) => call.url.includes(GROQ_HOST));
+      const cfMessages = toCloudflare[0]?.body.messages as { role: string; content: unknown }[];
+      const groqMessages = toGroq[0]?.body.messages as { role: string; content: unknown }[];
+
+      assert.equal(cfMessages[1]?.content, "");
+      assert.equal(groqMessages[1]?.content, null);
+    },
+  );
+});
