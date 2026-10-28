@@ -118,7 +118,7 @@ async function tryModels(
     }
 
     console.error(
-      `${provider.name} model ${model} failed (status ${round.status}): ${round.error.slice(0, 200)}`,
+      `${provider.name} model ${model} failed (status ${round.status}): ${round.error.slice(0, 500)}`,
     );
 
     lastError = round.error;
