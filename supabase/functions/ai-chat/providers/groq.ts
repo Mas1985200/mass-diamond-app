@@ -44,6 +44,18 @@ export function effortFor(tools: ToolOptions): ReasoningEffort {
   return effort;
 }
 
+// Some services insist that every message has text. A turn that only called a
+// tool has none (null on Groq), so for them it becomes an empty string.
+function withTextEverywhere(
+  messages: readonly OAIMessage[],
+): readonly OAIMessage[] {
+  return messages.map((message) =>
+    message.role === "assistant" && message.content === null
+      ? { ...message, content: "" }
+      : message,
+  );
+}
+
 export async function requestRound(
   apiKey: string,
   model: string,
@@ -57,16 +69,16 @@ export async function requestRound(
   const attempt = createAttempt(master);
 
   try {
-    const payload: Record<string, unknown> = {
-      model,
-      messages,
-      temperature: TEMPERATURE,
-      stream: true,
-    };
-
     // Any other OpenAI-style service gets only the long-standing field names;
     // the Groq-specific ones stay on Groq.
     const isGroq = endpoint === GROQ_ENDPOINT;
+
+    const payload: Record<string, unknown> = {
+      model,
+      messages: isGroq ? messages : withTextEverywhere(messages),
+      temperature: TEMPERATURE,
+      stream: true,
+    };
 
     if (isGroq) {
       payload.max_completion_tokens = maxTokens;
