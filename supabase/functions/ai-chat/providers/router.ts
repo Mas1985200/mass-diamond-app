@@ -1,14 +1,16 @@
 // supabase/functions/ai-chat/providers/router.ts
 // Opens a streaming round on the first model that works. A rate-limited model
 // is put on cooldown and skipped immediately; there is no waiting on 429.
+// When every model of one service is refused, the next service is tried
+// (see registry.ts for the services and their order).
 
 import { MAX_OUTPUT_TOKENS, MAX_QUEUE_WAIT_MS } from "../config.ts";
 import type { OAIMessage } from "../types.ts";
 import { sleep } from "../lib/util.ts";
 import { cooldownLeftMs, markCooldown, soonestReadyMs } from "./cooldown.ts";
-import { groqApiKey, groqModels, groqVisionModels } from "./models.ts";
 import { shrinkForTokenLimit } from "./budget.ts";
 import { effortFor, requestRound } from "./groq.ts";
+import { activeProviders, type Provider } from "./registry.ts";
 import type { ToolOptions } from "./types.ts";
 
 export type OpenSuccess = {
@@ -41,15 +43,18 @@ type PassResult =
     };
 
 async function tryModels(
-  apiKey: string,
+  provider: Provider,
   models: readonly string[],
   messages: readonly OAIMessage[],
   tools: ToolOptions,
   master: AbortSignal,
+  mayWait: boolean,
 ): Promise<PassResult> {
+  const { apiKey, endpoint } = provider;
   let ready = models.filter((model) => cooldownLeftMs(model) === 0);
 
-  if (ready.length === 0) {
+  // Waiting for a cooldown is only worth it when no other service is left.
+  if (ready.length === 0 && mayWait) {
     const wait = soonestReadyMs(models);
 
     if (wait <= MAX_QUEUE_WAIT_MS) {
@@ -78,7 +83,16 @@ async function tryModels(
     }
 
     const effort = effortFor(tools);
-    let round = await requestRound(apiKey, model, messages, tools, master, effort);
+    let round = await requestRound(
+      apiKey,
+      model,
+      messages,
+      tools,
+      master,
+      effort,
+      MAX_OUTPUT_TOKENS,
+      endpoint,
+    );
 
     // Refused only because this minute's token allowance is nearly used up:
     // ask the same model again with less room for the answer, if that fits.
@@ -94,6 +108,7 @@ async function tryModels(
           master,
           smaller.effort,
           smaller.maxTokens,
+          endpoint,
         );
       }
     }
@@ -103,7 +118,7 @@ async function tryModels(
     }
 
     console.error(
-      `Groq model ${model} failed (status ${round.status}): ${round.error.slice(0, 200)}`,
+      `${provider.name} model ${model} failed (status ${round.status}): ${round.error.slice(0, 200)}`,
     );
 
     lastError = round.error;
@@ -137,15 +152,71 @@ export function hasPhotos(messages: readonly OAIMessage[]): boolean {
   );
 }
 
+// Tries each service in order and returns the first round that opens. The
+// failure it returns is the last one seen, but "rate limited" and "bad
+// request" are remembered from every service.
+async function tryProviders(
+  providers: readonly Provider[],
+  exclude: ReadonlySet<string>,
+  messages: readonly OAIMessage[],
+  tools: ToolOptions,
+  master: AbortSignal,
+): Promise<PassResult> {
+  let last: PassResult | null = null;
+  let sawBadRequest = false;
+  let rateLimited = false;
+
+  for (const [index, provider] of providers.entries()) {
+    const models = provider.models.filter((model) => !exclude.has(model));
+
+    if (models.length === 0) {
+      continue;
+    }
+
+    const result = await tryModels(
+      provider,
+      models,
+      messages,
+      tools,
+      master,
+      index === providers.length - 1,
+    );
+
+    if (result.kind === "ok") {
+      return result;
+    }
+
+    last = result;
+    sawBadRequest = sawBadRequest || result.sawBadRequest;
+    rateLimited = rateLimited || result.rateLimited;
+
+    if (master.aborted) {
+      break;
+    }
+  }
+
+  return last
+    ? { ...last, sawBadRequest, rateLimited }
+    : {
+        kind: "failed",
+        error: "No AI model is left to try.",
+        retryable: true,
+        sawBadRequest: false,
+        rateLimited: false,
+      };
+}
+
 export async function openRound(
   messages: readonly OAIMessage[],
   toolOptions: ToolOptions,
   master: AbortSignal,
   exclude: ReadonlySet<string>,
 ): Promise<OpenResult> {
-  const apiKey = groqApiKey();
+  // Every round of a conversation that holds a photo goes to a vision model;
+  // all other requests use the normal models.
+  const providers = activeProviders(hasPhotos(messages));
 
-  if (!apiKey) {
+  if (providers.length === 0) {
     return {
       ok: false,
       error: "GROQ_API_KEY is not configured.",
@@ -153,12 +224,11 @@ export async function openRound(
     };
   }
 
-  // Every round of a conversation that holds a photo goes to a vision model;
-  // all other requests use the normal models.
-  const candidates = hasPhotos(messages) ? groqVisionModels() : groqModels();
-  const models = candidates.filter((model) => !exclude.has(model));
+  const anyModel = providers.some((provider) =>
+    provider.models.some((model) => !exclude.has(model)),
+  );
 
-  if (models.length === 0) {
+  if (!anyModel) {
     return {
       ok: false,
       error: "No AI model is left to try.",
@@ -169,7 +239,7 @@ export async function openRound(
   let tools = toolOptions;
 
   while (true) {
-    const result = await tryModels(apiKey, models, messages, tools, master);
+    const result = await tryProviders(providers, exclude, messages, tools, master);
 
     if (result.kind === "ok") {
       return {
