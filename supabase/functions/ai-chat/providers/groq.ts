@@ -52,6 +52,7 @@ export async function requestRound(
   master: AbortSignal,
   effort: ReasoningEffort = "low",
   maxTokens: number = MAX_OUTPUT_TOKENS,
+  endpoint: string = GROQ_ENDPOINT,
 ): Promise<RoundResult> {
   const attempt = createAttempt(master);
 
@@ -60,11 +61,20 @@ export async function requestRound(
       model,
       messages,
       temperature: TEMPERATURE,
-      max_completion_tokens: maxTokens,
       stream: true,
     };
 
-    if (model.includes("gpt-oss")) {
+    // Any other OpenAI-style service gets only the long-standing field names;
+    // the Groq-specific ones stay on Groq.
+    const isGroq = endpoint === GROQ_ENDPOINT;
+
+    if (isGroq) {
+      payload.max_completion_tokens = maxTokens;
+    } else {
+      payload.max_tokens = maxTokens;
+    }
+
+    if (isGroq && model.includes("gpt-oss")) {
       payload.reasoning_effort = effort;
     }
 
@@ -73,7 +83,7 @@ export async function requestRound(
       payload.tool_choice = toolOptions.toolChoice;
     }
 
-    const response = await fetch(GROQ_ENDPOINT, {
+    const response = await fetch(endpoint, {
       method: "POST",
       headers: {
         Authorization: `Bearer ${apiKey}`,
