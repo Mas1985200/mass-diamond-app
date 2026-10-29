@@ -166,11 +166,18 @@ function extractDelta(payload: unknown): Record<string, unknown> | null {
 }
 
 // Yields text chunks as they arrive and returns the full turn at the end.
+// A turn whose text starts with "{" or a code fence is not streamed: it may be
+// a tool call written as text, which must never be shown to the user. Its text
+// is returned whole with held = true and the caller decides (see
+// text-tool-call.ts). Ordinary answers stream as before.
 export async function* readTurn(
   body: ReadableStream<Uint8Array>,
   model: string,
 ): AsyncGenerator<string, ModelTurn, void> {
   let text = "";
+  let decided = false;
+  let held = false;
+  let flushed = 0;
   const calls = new Map<number, { id: string; name: string; args: string }>();
 
   for await (const data of readSseData(body)) {
@@ -200,7 +207,20 @@ export async function* readTurn(
 
     if (typeof content === "string" && content) {
       text += content;
-      yield content;
+
+      if (!decided) {
+        const first = text.trimStart()[0];
+
+        if (first !== undefined) {
+          decided = true;
+          held = first === "{" || first === "`";
+        }
+      }
+
+      if (decided && !held) {
+        yield text.slice(flushed);
+        flushed = text.length;
+      }
     }
 
     const toolDeltas = delta.tool_calls;
@@ -241,5 +261,5 @@ export async function* readTurn(
     }))
     .filter((call) => call.name);
 
-  return { text, toolCalls, model };
+  return { text, toolCalls, model, ...(held ? { held: true } : {}) };
 }
