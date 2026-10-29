@@ -8,7 +8,13 @@ import {
   WEB_MAX_RESULTS,
   WEB_SNIPPET_CHARS,
 } from "../config.ts";
-import type { ToolContext, ToolOutcome, WebResult } from "../types.ts";
+import type {
+  CardPayload,
+  SourceItem,
+  ToolContext,
+  ToolOutcome,
+  WebResult,
+} from "../types.ts";
 import { describeError, isRecord, pickString } from "../lib/util.ts";
 import { createAttempt } from "../lib/http.ts";
 
@@ -150,6 +156,33 @@ function forModel(result: WebResult): Record<string, string> {
   };
 }
 
+// The real pages the answer rests on, shown to the user under the answer. The
+// addresses come only from the search results (never from the model), at most
+// one per site, so the user can check the answer and the model cannot invent a
+// link.
+export function sourcesCard(
+  results: readonly WebResult[],
+  lang: ToolContext["lang"],
+): CardPayload | null {
+  const items: SourceItem[] = [];
+  const seen = new Set<string>();
+
+  for (const result of results) {
+    if (seen.has(result.source)) {
+      continue;
+    }
+
+    seen.add(result.source);
+    items.push({
+      url: result.url,
+      host: result.source,
+      title: result.title,
+    });
+  }
+
+  return items.length > 0 ? { t: "sources", lang, items } : null;
+}
+
 export async function runWebSearch(
   args: Record<string, unknown>,
   ctx: ToolContext,
@@ -192,5 +225,10 @@ export async function runWebSearch(
     };
   }
 
-  return { data: { results: results.map(forModel) } };
+  const card = sourcesCard(results, ctx.lang);
+
+  return {
+    data: { results: results.map(forModel) },
+    ...(card ? { cards: [card] } : {}),
+  };
 }
