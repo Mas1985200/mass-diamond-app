@@ -22,6 +22,7 @@ import { buildUserContent } from "./attachments/images.ts";
 import { buildToolDefinitions } from "./tools/definitions.ts";
 import { executeTool } from "./tools/registry.ts";
 import { readTurn } from "./providers/groq.ts";
+import { settleHeldTurn } from "./providers/text-tool-call.ts";
 import { openRound, type OpenSuccess } from "./providers/router.ts";
 import type { ToolOptions } from "./providers/types.ts";
 import {
@@ -185,7 +186,20 @@ async function* agentChunks(
   let picturesFromTools = false;
 
   for (let round = 0; ; round += 1) {
-    const turn = yield* readTurn(current.body, current.model);
+    const rawTurn = yield* readTurn(current.body, current.model);
+
+    // A tool call the model wrote as text is run as a real call (or dropped),
+    // never shown; an ordinary answer that merely starts with "{" is shown.
+    const settled = settleHeldTurn(
+      rawTurn,
+      params.tools.map((tool) => tool.function.name),
+      current.withTools && round + 1 < MAX_TOOL_ROUNDS,
+    );
+    const turn = settled.turn;
+
+    if (settled.show) {
+      yield settled.show;
+    }
 
     const wantsTools =
       current.withTools &&
