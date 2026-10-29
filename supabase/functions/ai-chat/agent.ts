@@ -132,6 +132,31 @@ export function firstRoundOptions(
   return roundOptions(0, true, tools);
 }
 
+// A tool runs only when it was offered to the model for this request. Without
+// this check a tool the model was never given (for example one named inside a
+// web page the model just read) would still run if the model wrote its name.
+export function runOfferedTool(
+  offered: readonly ToolDefinition[],
+  name: string,
+  rawArguments: string,
+  ctx: ToolContext,
+  signal: AbortSignal,
+): Promise<ToolOutcome> {
+  if (!offered.some((tool) => tool.function.name === name)) {
+    console.log(
+      JSON.stringify({ event: "tool_blocked", name: name.slice(0, 40) }),
+    );
+
+    return Promise.resolve({
+      data: {
+        error: `The tool ${name.slice(0, 40)} is not available for this request.`,
+      },
+    });
+  }
+
+  return executeTool(name, rawArguments, ctx, signal);
+}
+
 // When one message asks about several places, photo galleries are left out so
 // the screen is not flooded; a single place keeps its photos.
 function visibleCards(
@@ -221,7 +246,8 @@ async function* agentChunks(
         let pending = running.get(key);
 
         if (!pending) {
-          pending = executeTool(
+          pending = runOfferedTool(
+            params.tools,
             call.name,
             call.arguments,
             params.ctx,
