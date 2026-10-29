@@ -58,8 +58,23 @@ export function selectTools(
 
 // Short "where is X" style questions must always use the map tool.
 // Covers formal and colloquial spellings: کجاست، کجاس، کجایه، کجایت، کجاش، کجا هست.
+// It is tested on text that went through normalizeForMatching, so it is written
+// with the Persian letters ک and ی and the plain alef (ادرس stands for آدرس too).
 const PLACE_QUESTION_PATTERN =
-  /(کجاست|کجاس|کجایه|کجایت|کجاش|کجا\s?است|کجا\s?هست|لوکیشن|آدرس|where\s+is|where's)/i;
+  /(کجاست|کجاس|کجایه|کجایت|کجاش|کجا\s?است|کجا\s?هست|لوکیشن|ادرس|where\s+is|where's)/i;
+
+// The same Persian word is typed in several ways: Arabic keyboards give ي and
+// ك, people drop the long alef (آ), add vowel marks or stretch letters, and
+// phones insert a zero-width non-joiner. Folding them all to one form lets a
+// rule match every spelling instead of listing each one.
+export function normalizeForMatching(text: string): string {
+  return text
+    .replace(/[\u064B-\u065F\u0670\u0640]/g, "")
+    .replace(/[\u064A\u0649]/g, "\u06CC")
+    .replace(/\u0643/g, "\u06A9")
+    .replace(/\u200C/g, "")
+    .replace(/\u0622/g, "\u0627");
+}
 
 // Every line must be short, so a long paragraph is never mistaken for a place
 // question. Several short lines (one place per line) are allowed together.
@@ -96,7 +111,7 @@ export function isPlaceQuestion(text: string): boolean {
   return (
     lines.length > 0 &&
     lines.every((line) => line.length <= PLACE_QUESTION_MAX_LINE_LENGTH) &&
-    PLACE_QUESTION_PATTERN.test(text)
+    PLACE_QUESTION_PATTERN.test(normalizeForMatching(text))
   );
 }
 
