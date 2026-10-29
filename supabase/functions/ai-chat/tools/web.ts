@@ -156,10 +156,9 @@ function forModel(result: WebResult): Record<string, string> {
   };
 }
 
-// The real pages the answer rests on, shown to the user under the answer. The
-// addresses come only from the search results (never from the model), at most
-// one per site, so the user can check the answer and the model cannot invent a
-// link.
+// The real pages a web answer rests on, as a card. The addresses come only from
+// the search results (never from the model), at most one per site. Not shown at
+// the moment (see runWebSearch).
 export function sourcesCard(
   results: readonly WebResult[],
   lang: ToolContext["lang"],
@@ -225,10 +224,8 @@ export async function runWebSearch(
     };
   }
 
-  const card = sourcesCard(results, ctx.lang);
-
-  return {
-    data: { results: results.map(forModel) },
-    ...(card ? { cards: [card] } : {}),
-  };
+  // The sources card (see sourcesCard) is not shown: the product decision is
+  // that web answers carry no sources under them. To show it again, return
+  // `cards: [sourcesCard(results, ctx.lang)]` here when it is not null.
+  return { data: { results: results.map(forModel) } };
 }
