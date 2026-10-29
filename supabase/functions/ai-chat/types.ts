@@ -95,6 +95,7 @@ export type WebResult = {
 export type SourceItem = {
   readonly url: string;
   readonly host: string;
+  readonly title?: string;
 };
 
 export type CardPayload =
@@ -115,6 +116,11 @@ export type CardPayload =
       readonly t: "photos";
       readonly lang: Lang;
       readonly items: readonly PhotoItem[];
+    }
+  | {
+      readonly t: "sources";
+      readonly lang: Lang;
+      readonly items: readonly SourceItem[];
     };
 
 export type ToolOutcome = {
