@@ -18,6 +18,9 @@ export type ModelTurn = {
   readonly text: string;
   readonly toolCalls: readonly ParsedToolCall[];
   readonly model: string;
+  // True when the text started with "{" or a code fence and was held back
+  // instead of being streamed: it may be a tool call written as text.
+  readonly held?: boolean;
 };
 
 export type RoundSuccess = {
