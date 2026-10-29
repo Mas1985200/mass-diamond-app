@@ -21,6 +21,8 @@ import MarkdownText from "./MarkdownText";
 import DirectionsButton from "./DirectionsButton";
 import VoiceStatusBar from "./VoiceStatusBar";
 import PhotosCard, { parsePhotosCard, type PhotosCardData } from "./PhotosCard";
+import SourcesCard from "./SourcesCard";
+import { parseSourcesCard, type SourcesCardData } from "./sourcesCard";
 import PhotoStrip, { MessageThumbs } from "./PhotoStrip";
 import AttachSheet from "./AttachSheet";
 import {
@@ -198,7 +200,11 @@ interface PlacesCardData {
   readonly items: readonly PlaceItem[];
 }
 
-type CardData = ClockCardData | PlacesCardData | PhotosCardData;
+type CardData =
+  | ClockCardData
+  | PlacesCardData
+  | PhotosCardData
+  | SourcesCardData;
 
 const MARKER_RE =
   /:::md-(?:clock~([^~\s]+)~([A-Za-z0-9_\/+-]+)~(fa|en)|card~([A-Za-z0-9_-]+)):::/g;
@@ -277,6 +283,10 @@ function parseCard(value: unknown): CardData | null {
 
   if (value.t === "photos") {
     return parsePhotosCard(value);
+  }
+
+  if (value.t === "sources") {
+    return parseSourcesCard(value);
   }
 
   return null;
@@ -1063,6 +1073,8 @@ function CardView({ card }: { readonly card: CardData }) {
       return <PlacesCard card={card} />;
     case "photos":
       return <PhotosCard card={card} />;
+    case "sources":
+      return <SourcesCard card={card} />;
   }
 }
 
