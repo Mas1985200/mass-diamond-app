@@ -1,7 +1,7 @@
 // tests/web/sources-card.test.ts
-// The pages a web answer rests on are shown to the user as a "sources" card.
-// The addresses come only from the search results, never from the model, and
-// the model itself still never sees an address.
+// The "sources" card can be built from search results (real addresses only,
+// one per site), but a web answer does not show it: that is a product decision.
+// The model never sees an address either way.
 
 import test from "node:test";
 import assert from "node:assert/strict";
@@ -53,7 +53,7 @@ test("sourcesCard: no results, no card", () => {
   assert.equal(sourcesCard([], "en"), null);
 });
 
-test("runWebSearch: the answer gets a sources card with the real addresses, the model gets none", async () => {
+test("runWebSearch: no sources card is shown under a web answer, and the model gets no address", async () => {
   const original = globalThis.fetch;
 
   globalThis.fetch = (async () =>
@@ -82,23 +82,8 @@ test("runWebSearch: the answer gets a sources card with the real addresses, the 
       signal,
     );
 
-    assert.equal(outcome.cards?.length, 1);
-    assert.deepEqual(outcome.cards?.[0], {
-      t: "sources",
-      lang: "fa",
-      items: [
-        {
-          url: "https://www.sources-card-a.com/world/1",
-          host: "sources-card-a.com",
-          title: "Story",
-        },
-        {
-          url: "https://sources-card-b.org/2",
-          host: "sources-card-b.org",
-          title: "Other",
-        },
-      ],
-    });
+    assert.equal(outcome.cards, undefined);
+    assert.ok(Array.isArray((outcome.data as { results?: unknown }).results));
     assert.ok(!JSON.stringify(outcome.data).includes("http"));
   } finally {
     globalThis.fetch = original;
