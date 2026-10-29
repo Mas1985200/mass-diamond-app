@@ -15,6 +15,7 @@ import assert from "node:assert/strict";
 import {
   buildRouterMessages,
   isPlaceQuestion,
+  normalizeForMatching,
   parseCapability,
   routeCapability,
   selectTools,
@@ -40,6 +41,13 @@ const PLACE_CASES: readonly PlaceCase[] = [
   { text: "ایفل کجا هست؟", place: true },
   { text: "برج میلاد کجاسته؟", place: true },
   { text: "برج میلاد کجا هستش", place: true },
+  // The same words typed in other ways (alef without madda, Arabic keyboard
+  // letters, a zero-width joiner, vowel marks).
+  { text: "ادرس دانشگاه تهران", place: true },
+  { text: "برج ميلاد كجاست", place: true },
+  { text: "آدرس كافه نادري", place: true },
+  { text: "ایفل کجا\u200cست", place: true },
+  { text: "برج میلاد کَجاست", place: true },
   { text: "چیتگر کجاست\nزیباشهر کجاست\nمیدان ونک کجاست", place: true },
   // English.
   { text: "where is the Eiffel Tower", place: true },
@@ -58,8 +66,6 @@ const PLACE_CASES: readonly PlaceCase[] = [
 
 // Cases the rule gets wrong today (measured, see the printed baseline).
 const KNOWN_GAPS: readonly PlaceCase[] = [
-  // Spelling variant of "آدرس" written without the long alef.
-  { text: "ادرس دانشگاه تهران", place: true },
   // Other supported languages.
   { text: "¿dónde está la Torre Eiffel?", place: true },
   { text: "wo ist das Brandenburger Tor?", place: true },
@@ -100,6 +106,15 @@ test("baseline: place rule score is printed for later comparison", () => {
   );
 
   assert.ok(correct.length >= PLACE_CASES.length);
+});
+
+test("normalizeForMatching: folds the usual spelling variants of Persian text", () => {
+  assert.equal(normalizeForMatching("آدرس"), "ادرس");
+  assert.equal(normalizeForMatching("ميلاد"), "میلاد");
+  assert.equal(normalizeForMatching("كجا"), "کجا");
+  assert.equal(normalizeForMatching("کجا\u200cست"), "کجاست");
+  assert.equal(normalizeForMatching("کَجاسـت"), "کجاست");
+  assert.equal(normalizeForMatching("where is it"), "where is it");
 });
 
 test("parseCapability: tolerates messy model output", () => {
