@@ -165,6 +165,21 @@ function extractDelta(payload: unknown): Record<string, unknown> | null {
   return first.delta;
 }
 
+// Why the model stopped ("stop", "length", "tool_calls", ...), when stated.
+function finishReasonOf(payload: unknown): string | null {
+  if (!isRecord(payload) || !Array.isArray(payload.choices)) {
+    return null;
+  }
+
+  const first: unknown = payload.choices[0];
+
+  return isRecord(first) &&
+    typeof first.finish_reason === "string" &&
+    first.finish_reason
+    ? first.finish_reason.slice(0, 30)
+    : null;
+}
+
 // Yields text chunks as they arrive and returns the full turn at the end.
 // A turn whose text starts with "{" or a code fence is not streamed: it may be
 // a tool call written as text, which must never be shown to the user. Its text
@@ -178,6 +193,8 @@ export async function* readTurn(
   let decided = false;
   let held = false;
   let flushed = 0;
+  let finish = "";
+  let thought = false;
   const calls = new Map<number, { id: string; name: string; args: string }>();
 
   for await (const data of readSseData(body)) {
@@ -197,10 +214,19 @@ export async function* readTurn(
       continue;
     }
 
+    finish = finishReasonOf(parsed) ?? finish;
+
     const delta = extractDelta(parsed);
 
     if (!delta) {
       continue;
+    }
+
+    if (
+      (typeof delta.reasoning === "string" && delta.reasoning) ||
+      (typeof delta.reasoning_content === "string" && delta.reasoning_content)
+    ) {
+      thought = true;
     }
 
     const content = delta.content;
@@ -261,5 +287,12 @@ export async function* readTurn(
     }))
     .filter((call) => call.name);
 
-  return { text, toolCalls, model, ...(held ? { held: true } : {}) };
+  return {
+    text,
+    toolCalls,
+    model,
+    ...(held ? { held: true } : {}),
+    ...(finish ? { finish } : {}),
+    ...(thought ? { thought: true } : {}),
+  };
 }
