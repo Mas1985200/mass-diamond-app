@@ -3,7 +3,7 @@
 // today's date in the user's time zone, so the model never has to guess whether
 // a piece of news is "today's".
 
-import { dateKey } from "../lib/time.ts";
+import { dateKey, persianDateText } from "../lib/time.ts";
 
 const DAY_MS = 86_400_000;
 
@@ -119,4 +119,36 @@ export function whenLabel(age: number | null): string {
   }
 
   return `${age} days ago`;
+}
+
+// The day written the way the user reads dates, with its weekday, so the model
+// copies it and never converts between calendars itself (it gets that wrong):
+// Persian (Solar Hijri) for Persian, the ordinary calendar for the rest.
+export function dateLabel(day: string, lang: "fa" | "en"): string | null {
+  const match = /^(\d{4})-(\d{2})-(\d{2})$/.exec(day);
+
+  if (!match) {
+    return null;
+  }
+
+  // Noon UTC read in UTC is the same calendar day everywhere.
+  const noon = new Date(
+    Date.UTC(Number(match[1]), Number(match[2]) - 1, Number(match[3]), 12),
+  );
+
+  if (lang === "fa") {
+    return persianDateText(noon, "UTC") || null;
+  }
+
+  try {
+    return new Intl.DateTimeFormat("en-US", {
+      timeZone: "UTC",
+      weekday: "long",
+      day: "numeric",
+      month: "long",
+      year: "numeric",
+    }).format(noon);
+  } catch {
+    return null;
+  }
 }
