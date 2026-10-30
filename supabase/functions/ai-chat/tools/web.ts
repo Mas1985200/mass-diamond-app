@@ -17,7 +17,12 @@ import type {
 } from "../types.ts";
 import { describeError, isRecord, pickString } from "../lib/util.ts";
 import { createAttempt } from "../lib/http.ts";
-import { dayKey, whenLabel } from "../retrieval/dates.ts";
+import {
+  dateLabel,
+  dayKey,
+  publishedDay,
+  whenLabel,
+} from "../retrieval/dates.ts";
 import {
   evidenceNote,
   selectEvidence,
@@ -152,14 +157,25 @@ export async function tavilySearch(
   }
 }
 
-// What the model reads about one story: the text, the date as the page wrote
-// it, and what the app worked out (how old it is, how many sites carry it).
-// No address and no site name: the model has nothing to quote as a source.
-function forModel(item: EvidenceItem): Record<string, string | number> {
+// What the model reads about one story: the text, its date, what the app
+// worked out (how old it is, how many sites carry it). No address and no site
+// name: the model has nothing to quote as a source. The date in 'published' is
+// written by the app in the user's own calendar whenever the app could read the
+// page's date, so the model never converts one calendar to another (it gets
+// that wrong); a date the app cannot read is passed on as the page wrote it.
+function forModel(
+  item: EvidenceItem,
+  ctx: ToolContext,
+): Record<string, string | number> {
+  const day = item.published
+    ? publishedDay(item.published, ctx.now, ctx.timeZone)
+    : null;
+  const published = (day ? dateLabel(day, ctx.lang) : null) ?? item.published;
+
   return {
     title: item.title,
     snippet: item.snippet,
-    ...(item.published ? { published: item.published } : {}),
+    ...(published ? { published } : {}),
     when: whenLabel(item.ageDays),
     ...(item.ageDays !== null ? { age_days: item.ageDays } : {}),
     ...(item.independentSources > 1
@@ -273,7 +289,7 @@ export async function runWebSearch(
   return {
     data: {
       as_of: dayKey(ctx.now, zone),
-      results: evidence.items.map(forModel),
+      results: evidence.items.map((item) => forModel(item, ctx)),
       ...(note ? { note } : {}),
     },
   };
