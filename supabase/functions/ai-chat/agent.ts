@@ -212,6 +212,21 @@ async function* agentChunks(
         `model ${current.model} returned an empty answer; trying another model`,
       );
 
+      // Numbers and flags only, never any text.
+      console.log(
+        JSON.stringify({
+          event: "empty_answer",
+          model: current.model,
+          round,
+          finish: rawTurn.finish ?? null,
+          thought: rawTurn.thought === true,
+          held: rawTurn.held === true,
+          rawChars: rawTurn.text.length,
+          calls: rawTurn.toolCalls.length,
+          withTools: current.withTools,
+        }),
+      );
+
       failed.add(current.model);
 
       const next = await openRound(
