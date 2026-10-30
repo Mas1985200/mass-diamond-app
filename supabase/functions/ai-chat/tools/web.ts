@@ -259,6 +259,17 @@ export async function runWebSearch(
   });
   const note = evidenceNote(evidence, recencyMatters);
 
+  // Numbers only (see EvidenceStats): never the question or any page text.
+  console.log(
+    JSON.stringify({
+      event: "web_evidence",
+      fresh,
+      news,
+      kept: evidence.items.length,
+      ...evidence.stats,
+    }),
+  );
+
   return {
     data: {
       as_of: dayKey(ctx.now, zone),
