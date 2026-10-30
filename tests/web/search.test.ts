@@ -208,7 +208,7 @@ test("runWebSearch: the model gets text, date, age and no address or site name",
         {
           title: "Story",
           snippet: "Body",
-          published: "2026-10-14",
+          published: "Wednesday, October 14, 2026",
           when: "today",
           age_days: 0,
         },
@@ -221,6 +221,45 @@ test("runWebSearch: the model gets text, date, age and no address or site name",
     assert.ok(!text.includes("http"));
     assert.ok(!text.includes("news-a"));
     assert.ok(!text.includes("news-b"));
+  } finally {
+    fake.restore();
+  }
+});
+
+test("runWebSearch: the date is written by the app in the user's own calendar", async () => {
+  const fake = fakeFetch(() =>
+    jsonResponse({
+      results: [
+        {
+          title: "Story",
+          url: "https://news-a.com/1",
+          content: "Body",
+          published_date: "2026-10-14",
+        },
+        {
+          title: "Odd",
+          url: "https://news-b.org/2",
+          content: "Body 2",
+          published_date: "sometime last week",
+        },
+      ],
+    }),
+  );
+
+  try {
+    const outcome = await runWebSearch(
+      { query: "q run-calendar" },
+      { ...context, lang: "fa" },
+      signal,
+    );
+    const data = outcome.data as {
+      results: Record<string, unknown>[];
+    };
+
+    // A date the app could read is written by the app, not the page's own text.
+    assert.equal(data.results[0]?.published, "چهارشنبه، ۲۲ مهر ۱۴۰۵");
+    // A date that cannot be read is passed on as the page wrote it.
+    assert.equal(data.results[1]?.published, "sometime last week");
   } finally {
     fake.restore();
   }
