@@ -35,10 +35,23 @@ export type EvidenceItem = {
   readonly relevance: number;
 };
 
+// Numbers only, never text: they say what the step did, so a weak answer can be
+// traced to the search or to the filter without storing what the user asked.
+export type EvidenceStats = {
+  readonly considered: number;
+  readonly droppedIrrelevant: number;
+  readonly droppedStale: number;
+  readonly merged: number;
+  // For every result the search returned, in order (null = no readable date).
+  readonly relevance: readonly number[];
+  readonly ageDays: readonly (number | null)[];
+};
+
 export type Evidence = {
   readonly items: readonly EvidenceItem[];
   readonly newestAgeDays: number | null;
   readonly datedCount: number;
+  readonly stats: EvidenceStats;
 };
 
 export type EvidenceOptions = {
@@ -159,6 +172,12 @@ export function selectEvidence(
     titleWords: tokensOf(result.title),
   }));
 
+  const stats = {
+    considered: candidates.length,
+    relevance: candidates.map((item) => Math.round(item.relevance * 100) / 100),
+    ageDays: candidates.map((item) => item.ageDays),
+  };
+
   // 2. Results that have almost nothing to do with the question are dropped.
   // When no result shares any word (for example the question is in another
   // language than the pages) nothing can be judged, so all are kept.
@@ -170,6 +189,8 @@ export function selectEvidence(
     candidates = candidates.filter((item) => item.relevance >= floor);
   }
 
+  const afterRelevance = candidates.length;
+
   // Old news is dropped when fresher results exist.
   if (options.recencyMatters) {
     const fresher = candidates.filter(
@@ -180,6 +201,8 @@ export function selectEvidence(
       candidates = fresher;
     }
   }
+
+  const afterStale = candidates.length;
 
   // 3. The same story from several sites becomes one item.
   const clusters: Cluster[] = [];
@@ -243,6 +266,12 @@ export function selectEvidence(
     items,
     newestAgeDays: ages.length > 0 ? Math.min(...ages) : null,
     datedCount: ages.length,
+    stats: {
+      ...stats,
+      droppedIrrelevant: stats.considered - afterRelevance,
+      droppedStale: afterRelevance - afterStale,
+      merged: afterStale - clusters.length,
+    },
   };
 }
 
