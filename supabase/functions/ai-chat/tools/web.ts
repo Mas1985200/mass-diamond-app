@@ -17,6 +17,12 @@ import type {
 } from "../types.ts";
 import { describeError, isRecord, pickString } from "../lib/util.ts";
 import { createAttempt } from "../lib/http.ts";
+import { dayKey, whenLabel } from "../retrieval/dates.ts";
+import {
+  evidenceNote,
+  selectEvidence,
+  type EvidenceItem,
+} from "../retrieval/evidence.ts";
 
 const webCache = new Map<
   string,
@@ -146,14 +152,29 @@ export async function tavilySearch(
   }
 }
 
-// What the model reads: text and date, without the address.
-function forModel(result: WebResult): Record<string, string> {
+// What the model reads about one story: the text, the date as the page wrote
+// it, and what the app worked out (how old it is, how many sites carry it).
+// No address and no site name: the model has nothing to quote as a source.
+function forModel(item: EvidenceItem): Record<string, string | number> {
   return {
-    title: result.title,
-    source: result.source,
-    snippet: result.snippet,
-    ...(result.published ? { published: result.published } : {}),
+    title: item.title,
+    snippet: item.snippet,
+    ...(item.published ? { published: item.published } : {}),
+    when: whenLabel(item.ageDays),
+    ...(item.ageDays !== null ? { age_days: item.ageDays } : {}),
+    ...(item.independentSources > 1
+      ? { reported_by: item.independentSources }
+      : {}),
   };
+}
+
+// The model sometimes writes a true/false field as text ("True", "false").
+function flag(value: unknown): boolean {
+  if (typeof value === "string") {
+    return ["true", "yes", "1"].includes(value.trim().toLowerCase());
+  }
+
+  return value === true;
 }
 
 // The real pages a web answer rests on, as a card. The addresses come only from
@@ -189,8 +210,8 @@ export async function runWebSearch(
 ): Promise<ToolOutcome> {
   const query =
     typeof args.query === "string" ? args.query.trim().slice(0, 300) : "";
-  const fresh = args.fresh === true;
-  const news = args.news === true;
+  const fresh = flag(args.fresh);
+  const news = flag(args.news);
 
   if (!query) {
     return { data: { error: "query is required." } };
@@ -227,5 +248,22 @@ export async function runWebSearch(
   // The sources card (see sourcesCard) is not shown: the product decision is
   // that web answers carry no sources under them. To show it again, return
   // `cards: [sourcesCard(results, ctx.lang)]` here when it is not null.
-  return { data: { results: results.map(forModel) } };
+  // News and fresh data are ordered by freshness, and the app says itself when
+  // nothing is from today (see retrieval/evidence.ts).
+  const recencyMatters = fresh || news;
+  const zone = ctx.timeZone;
+  const evidence = selectEvidence(results, query, {
+    now: ctx.now,
+    zone,
+    recencyMatters,
+  });
+  const note = evidenceNote(evidence, recencyMatters);
+
+  return {
+    data: {
+      as_of: dayKey(ctx.now, zone),
+      results: evidence.items.map(forModel),
+      ...(note ? { note } : {}),
+    },
+  };
 }
