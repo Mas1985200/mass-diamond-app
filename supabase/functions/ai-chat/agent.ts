@@ -23,6 +23,7 @@ import { buildToolDefinitions } from "./tools/definitions.ts";
 import { executeTool } from "./tools/registry.ts";
 import { readTurn } from "./providers/groq.ts";
 import { settleHeldTurn } from "./providers/text-tool-call.ts";
+import { withRepeatNote } from "./history/repeat.ts";
 import { openRound, type OpenSuccess } from "./providers/router.ts";
 import type { ToolOptions } from "./providers/types.ts";
 import {
@@ -418,9 +419,12 @@ export async function startAgent(
 ): Promise<AgentStart> {
   const tools = selectTools(buildToolDefinitions(ctx), capability);
 
+  // A question asked a second time is answered in full again (history/repeat.ts).
+  const prepared = withRepeatNote(messages, tools);
+
   const opened = await openRound(
-    messages.map(toOAIMessage),
-    firstRoundOptions(messages, tools, capability),
+    prepared.map(toOAIMessage),
+    firstRoundOptions(prepared, tools, capability),
     signal,
     new Set<string>(),
   );
@@ -438,7 +442,7 @@ export async function startAgent(
     provider: "groq",
     model: opened.model,
     chunks: agentChunks({
-      messages,
+      messages: prepared,
       tools,
       ctx,
       signal,
