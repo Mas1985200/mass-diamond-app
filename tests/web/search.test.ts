@@ -180,7 +180,7 @@ test("tavilySearch: an unexpected body shape gives an empty list", async () => {
   }
 });
 
-test("runWebSearch: the model gets the text and the date but no address", async () => {
+test("runWebSearch: the model gets text, date, age and no address or site name", async () => {
   const fake = fakeFetch(() =>
     jsonResponse({
       results: [
@@ -203,19 +203,100 @@ test("runWebSearch: the model gets the text and the date but no address", async 
     );
 
     assert.deepEqual(outcome.data, {
+      as_of: "2026-10-14",
       results: [
         {
           title: "Story",
-          source: "news-a.com",
           snippet: "Body",
           published: "2026-10-14",
+          when: "today",
+          age_days: 0,
         },
-        { title: "Other", source: "news-b.org", snippet: "Body 2" },
+        { title: "Other", snippet: "Body 2", when: "date not stated" },
       ],
     });
-    assert.ok(!JSON.stringify(outcome.data).includes("http"));
+
+    const text = JSON.stringify(outcome.data);
+
+    assert.ok(!text.includes("http"));
+    assert.ok(!text.includes("news-a"));
+    assert.ok(!text.includes("news-b"));
   } finally {
     fake.restore();
+  }
+});
+
+test("runWebSearch: news that is not from today carries the app's own note", async () => {
+  const fake = fakeFetch(() =>
+    jsonResponse({
+      results: [
+        {
+          title: "Football story",
+          url: "https://news-a.com/1",
+          content: "football news body",
+          published_date: "2026-10-11",
+        },
+      ],
+    }),
+  );
+
+  try {
+    const outcome = await runWebSearch(
+      { query: "football news", news: true },
+      context,
+      signal,
+    );
+    const data = outcome.data as {
+      note?: string;
+      results: Array<{ when: string; age_days?: number }>;
+    };
+
+    assert.equal(data.results[0]?.when, "3 days ago");
+    assert.match(data.note ?? "", /None of these results is from today/);
+  } finally {
+    fake.restore();
+  }
+});
+
+test("runWebSearch: true and false written as text still count", async () => {
+  const fake = fakeFetch(() => jsonResponse({ results: [] }));
+
+  try {
+    await runWebSearch(
+      { query: "q string-flags", news: "True", fresh: "True" },
+      context,
+      signal,
+    );
+
+    const body = JSON.parse(String(fake.calls[0]?.init.body)) as Record<
+      string,
+      unknown
+    >;
+
+    assert.equal(body.topic, "news");
+    assert.equal(body.time_range, "week");
+  } finally {
+    fake.restore();
+  }
+
+  const off = fakeFetch(() => jsonResponse({ results: [] }));
+
+  try {
+    await runWebSearch(
+      { query: "q string-flags-off", news: "false", fresh: "no" },
+      context,
+      signal,
+    );
+
+    const body = JSON.parse(String(off.calls[0]?.init.body)) as Record<
+      string,
+      unknown
+    >;
+
+    assert.equal("topic" in body, false);
+    assert.equal("time_range" in body, false);
+  } finally {
+    off.restore();
   }
 });
 
