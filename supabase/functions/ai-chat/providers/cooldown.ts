@@ -11,6 +11,22 @@ export function markCooldown(model: string, ms: number | null): void {
   readyAt.set(model, Date.now() + wait);
 }
 
+// A model whose own limit is smaller than any useful answer (for example only
+// 1000 output tokens a minute) is set aside for longer than an ordinary
+// cooldown, so a request is not wasted on it every time. It is kept apart from
+// the cooldown above, which is capped at one minute.
+export const UNSUITABLE_MS = 1_800_000;
+
+const unsuitableUntil = new Map<string, number>();
+
+export function markUnsuitable(model: string, ms: number = UNSUITABLE_MS): void {
+  unsuitableUntil.set(model, Date.now() + ms);
+}
+
+export function isUnsuitable(model: string): boolean {
+  return (unsuitableUntil.get(model) ?? 0) > Date.now();
+}
+
 export function cooldownLeftMs(model: string): number {
   const left = (readyAt.get(model) ?? 0) - Date.now();
 
