@@ -21,6 +21,10 @@ export type ModelTurn = {
   // True when the text started with "{" or a code fence and was held back
   // instead of being streamed: it may be a tool call written as text.
   readonly held?: boolean;
+  // For the logs only: how the model ended this turn ("stop", "length", ...)
+  // and whether it sent any reasoning. Never shown and never sent anywhere.
+  readonly finish?: string;
+  readonly thought?: boolean;
 };
 
 export type RoundSuccess = {
