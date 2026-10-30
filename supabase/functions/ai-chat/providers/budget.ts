@@ -53,3 +53,38 @@ export function shrinkForTokenLimit(
 
   return { maxTokens: Math.min(sentMaxTokens, room), effort: lowered };
 }
+
+// Some refusals are about OUTPUT tokens per minute and say only the limit and
+// what was asked: "on output tokens per minute (OTPM): Limit 1000, Requested
+// 1277". The limit is returned, or null when the refusal is not of this kind.
+export function outputTokenLimit(errorText: string): number | null {
+  const match = /output tokens per minute[^:]*:\s*Limit\s+(\d+)/i.exec(errorText);
+
+  if (!match || !match[1]) {
+    return null;
+  }
+
+  const limit = Number(match[1]);
+
+  return Number.isSafeInteger(limit) ? limit : null;
+}
+
+// The room for the answer when the model may produce only `limit` tokens a
+// minute. null = that is too little for a useful answer (a reasoning model
+// could not finish thinking and answering), so the model does not fit this job.
+export function shrinkForOutputLimit(
+  limit: number,
+  sentMaxTokens: number,
+  effort: ReasoningEffort,
+): Shrunk | null {
+  const room = limit - SAFETY_TOKENS;
+
+  if (!Number.isFinite(room) || room < MIN_OUTPUT_TOKENS) {
+    return null;
+  }
+
+  const lowered: ReasoningEffort =
+    room < 2_500 ? "low" : room < 3_500 && effort === "high" ? "medium" : effort;
+
+  return { maxTokens: Math.min(sentMaxTokens, room), effort: lowered };
+}
