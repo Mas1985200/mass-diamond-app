@@ -7,8 +7,18 @@
 import { MAX_OUTPUT_TOKENS, MAX_QUEUE_WAIT_MS } from "../config.ts";
 import type { OAIMessage } from "../types.ts";
 import { sleep } from "../lib/util.ts";
-import { cooldownLeftMs, markCooldown, soonestReadyMs } from "./cooldown.ts";
-import { shrinkForTokenLimit } from "./budget.ts";
+import {
+  cooldownLeftMs,
+  isUnsuitable,
+  markCooldown,
+  markUnsuitable,
+  soonestReadyMs,
+} from "./cooldown.ts";
+import {
+  outputTokenLimit,
+  shrinkForOutputLimit,
+  shrinkForTokenLimit,
+} from "./budget.ts";
 import { effortFor, requestRound } from "./groq.ts";
 import { activeProviders, type Provider } from "./registry.ts";
 import type { ToolOptions } from "./types.ts";
@@ -51,7 +61,10 @@ async function tryModels(
   mayWait: boolean,
 ): Promise<PassResult> {
   const { apiKey, endpoint } = provider;
-  let ready = models.filter((model) => cooldownLeftMs(model) === 0);
+  const usable = (model: string): boolean =>
+    cooldownLeftMs(model) === 0 && !isUnsuitable(model);
+
+  let ready = models.filter(usable);
 
   // Waiting for a cooldown is only worth it when no other service is left.
   if (ready.length === 0 && mayWait) {
@@ -59,7 +72,7 @@ async function tryModels(
 
     if (wait <= MAX_QUEUE_WAIT_MS) {
       await sleep(wait + 100);
-      ready = models.filter((model) => cooldownLeftMs(model) === 0);
+      ready = models.filter(usable);
     }
   }
 
@@ -97,7 +110,11 @@ async function tryModels(
     // Refused only because this minute's token allowance is nearly used up:
     // ask the same model again with less room for the answer, if that fits.
     if (!round.ok && round.status === 429) {
-      const smaller = shrinkForTokenLimit(round.error, MAX_OUTPUT_TOKENS, effort);
+      const outputLimit = outputTokenLimit(round.error);
+      const smaller =
+        outputLimit !== null
+          ? shrinkForOutputLimit(outputLimit, MAX_OUTPUT_TOKENS, effort)
+          : shrinkForTokenLimit(round.error, MAX_OUTPUT_TOKENS, effort);
 
       if (smaller) {
         round = await requestRound(
@@ -110,10 +127,22 @@ async function tryModels(
           smaller.maxTokens,
           endpoint,
         );
+      } else if (outputLimit !== null) {
+        // The model may produce too little per minute for any useful answer:
+        // it is set aside for a while instead of being tried every time.
+        markUnsuitable(model);
+        console.log(
+          JSON.stringify({ event: "model_unsuitable", model, outputLimit }),
+        );
       }
     }
 
     if (round.ok) {
+      // Which model answered; never any user text.
+      console.log(
+        JSON.stringify({ event: "model_used", provider: provider.name, model }),
+      );
+
       return { kind: "ok", body: round.body, model };
     }
 
