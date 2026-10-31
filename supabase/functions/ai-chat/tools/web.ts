@@ -5,7 +5,10 @@ import {
   TOOL_TIMEOUT_MS,
   WEB_CACHE_MAX_ENTRIES,
   WEB_CACHE_TTL_MS,
+  WEB_FETCH_NEWS,
+  WEB_FETCH_RESULTS,
   WEB_MAX_RESULTS,
+  WEB_NEWS_RESULTS,
   WEB_SNIPPET_CHARS,
 } from "../config.ts";
 import type {
@@ -237,10 +240,12 @@ export async function runWebSearch(
     return { data: { error: "Web search is not available." } };
   }
 
+  // News and fresh data cast the widest net; the app then keeps the best few.
+  const recencyMatters = fresh || news;
   const results = await tavilySearch(
     query,
     ctx.tavilyKey,
-    WEB_MAX_RESULTS,
+    recencyMatters ? WEB_FETCH_NEWS : WEB_FETCH_RESULTS,
     signal,
     fresh,
     news,
@@ -266,7 +271,6 @@ export async function runWebSearch(
   // `cards: [sourcesCard(results, ctx.lang)]` here when it is not null.
   // News and fresh data are ordered by freshness, and the app says itself when
   // nothing is from today (see retrieval/evidence.ts).
-  const recencyMatters = fresh || news;
   const zone = ctx.timeZone;
   const evidence = selectEvidence(results, query, {
     now: ctx.now,
@@ -274,6 +278,10 @@ export async function runWebSearch(
     recencyMatters,
   });
   const note = evidenceNote(evidence, recencyMatters);
+  const shown = evidence.items.slice(
+    0,
+    recencyMatters ? WEB_NEWS_RESULTS : WEB_MAX_RESULTS,
+  );
 
   // Numbers only (see EvidenceStats): never the question or any page text.
   console.log(
@@ -282,6 +290,7 @@ export async function runWebSearch(
       fresh,
       news,
       kept: evidence.items.length,
+      shown: shown.length,
       ...evidence.stats,
     }),
   );
@@ -289,7 +298,7 @@ export async function runWebSearch(
   return {
     data: {
       as_of: dayKey(ctx.now, zone),
-      results: evidence.items.map((item) => forModel(item, ctx)),
+      results: shown.map((item) => forModel(item, ctx)),
       ...(note ? { note } : {}),
     },
   };
