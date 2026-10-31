@@ -89,6 +89,9 @@ export type WebResult = {
   readonly url: string;
   readonly published: string;
   readonly snippet: string;
+  // How well the search service itself judged this page to answer the query
+  // (0 to 1), when it says. See retrieval/evidence.ts.
+  readonly score?: number;
 };
 
 // A real address the app shows to the user as the source of an answer.
