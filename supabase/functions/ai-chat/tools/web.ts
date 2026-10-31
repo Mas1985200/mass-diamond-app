@@ -116,6 +116,10 @@ export async function tavilySearch(
       const rawUrl = pickString(raw, "url");
       const content = pickString(raw, "content");
       const published = pickString(raw, "published_date").trim();
+      const score =
+        typeof raw.score === "number" && Number.isFinite(raw.score)
+          ? Math.min(1, Math.max(0, raw.score))
+          : null;
 
       let host = "";
       let address = "";
@@ -143,6 +147,7 @@ export async function tavilySearch(
         url: address,
         published: published.slice(0, 40),
         snippet: content.slice(0, WEB_SNIPPET_CHARS),
+        ...(score !== null ? { score } : {}),
       });
     }
 
