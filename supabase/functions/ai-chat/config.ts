@@ -29,7 +29,16 @@ export const MAX_QUEUE_WAIT_MS = 3_000;
 
 export const WEB_CACHE_TTL_MS = 300_000;
 export const WEB_CACHE_MAX_ENTRIES = 40;
+// The search service is asked for more candidates than the model reads: the
+// app keeps the best ones (relevant, fresh) and drops the rest, so a story
+// that is not among the first few results is still found. News and other
+// fresh data need the widest net, because that is where the newest item is
+// often not the first one the service returns.
+export const WEB_FETCH_RESULTS = 8;
+export const WEB_FETCH_NEWS = 12;
+// The most results the model reads.
 export const WEB_MAX_RESULTS = 4;
+export const WEB_NEWS_RESULTS = 5;
 export const WEB_SNIPPET_CHARS = 900;
 
 export const GROQ_ENDPOINT = "https://api.groq.com/openai/v1/chat/completions";
