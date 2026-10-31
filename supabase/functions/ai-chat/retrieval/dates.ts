@@ -123,8 +123,15 @@ export function whenLabel(age: number | null): string {
 
 // The day written the way the user reads dates, with its weekday, so the model
 // copies it and never converts between calendars itself (it gets that wrong):
-// Persian (Solar Hijri) for Persian, the ordinary calendar for the rest.
-export function dateLabel(day: string, lang: "fa" | "en"): string | null {
+// Persian (Solar Hijri) for Persian, and for every other language the ordinary
+// calendar written in that language. The language is the one the model says it
+// is answering in (a BCP-47 tag such as "es", "ru", "zh"); when it is missing or
+// not one the runtime knows, English is used.
+export function dateLabel(
+  day: string,
+  lang: "fa" | "en",
+  locale: string | null = null,
+): string | null {
   const match = /^(\d{4})-(\d{2})-(\d{2})$/.exec(day);
 
   if (!match) {
@@ -135,19 +142,41 @@ export function dateLabel(day: string, lang: "fa" | "en"): string | null {
   const noon = new Date(
     Date.UTC(Number(match[1]), Number(match[2]) - 1, Number(match[3]), 12),
   );
+  const tag = knownLocale(locale);
 
-  if (lang === "fa") {
+  if (lang === "fa" || tag === "fa") {
     return persianDateText(noon, "UTC") || null;
   }
 
   try {
-    return new Intl.DateTimeFormat("en-US", {
+    return new Intl.DateTimeFormat(tag ?? "en-US", {
       timeZone: "UTC",
       weekday: "long",
       day: "numeric",
       month: "long",
       year: "numeric",
     }).format(noon);
+  } catch {
+    return null;
+  }
+}
+
+// A language tag the runtime can format dates in, or null.
+export function knownLocale(value: string | null | undefined): string | null {
+  if (typeof value !== "string") {
+    return null;
+  }
+
+  const tag = value.trim();
+
+  if (!/^[A-Za-z]{2,3}(-[A-Za-z0-9]{2,8}){0,3}$/.test(tag)) {
+    return null;
+  }
+
+  try {
+    const [supported] = Intl.DateTimeFormat.supportedLocalesOf([tag]);
+
+    return supported ?? null;
   } catch {
     return null;
   }
