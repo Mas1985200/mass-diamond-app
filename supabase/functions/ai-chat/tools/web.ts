@@ -174,11 +174,13 @@ export async function tavilySearch(
 function forModel(
   item: EvidenceItem,
   ctx: ToolContext,
+  locale: string | null = null,
 ): Record<string, string | number> {
   const day = item.published
     ? publishedDay(item.published, ctx.now, ctx.timeZone)
     : null;
-  const published = (day ? dateLabel(day, ctx.lang) : null) ?? item.published;
+  const published =
+    (day ? dateLabel(day, ctx.lang, locale) : null) ?? item.published;
 
   return {
     title: item.title,
@@ -236,6 +238,7 @@ export async function runWebSearch(
     typeof args.query === "string" ? args.query.trim().slice(0, 300) : "";
   const fresh = flag(args.fresh);
   const news = flag(args.news);
+  const locale = typeof args.language === "string" ? args.language : null;
 
   if (!query) {
     return { data: { error: "query is required." } };
@@ -303,7 +306,7 @@ export async function runWebSearch(
   return {
     data: {
       as_of: dayKey(ctx.now, zone),
-      results: shown.map((item) => forModel(item, ctx)),
+      results: shown.map((item) => forModel(item, ctx, locale)),
       ...(note ? { note } : {}),
     },
   };
