@@ -337,6 +337,9 @@ export async function runWebSearch(
       kept: judged.items.length,
       shown: shown.length,
       widened,
+      // How long each shown snippet is: a handful of characters means a page
+      // menu or a bare headline, not an article.
+      snippetChars: shown.map((item) => item.snippet.length),
       ...judged.stats,
     }),
   );
