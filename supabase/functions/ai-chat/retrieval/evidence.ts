@@ -26,6 +26,12 @@ const MIN_RELEVANCE = 0.34;
 // with the question), only a result far below the best one is dropped.
 const MIN_SCORE_SHARE = 0.4;
 
+// When even the best result scores below this, nothing found really answers
+// the question: the keep-the-best-share rule above would otherwise let weak
+// results through just because all of them are weak (a question about one
+// topic answered with stories about another).
+const WEAK_SCORE = 0.3;
+
 // Two titles are one story when they share this much of their words and each
 // has enough words for the comparison to mean something.
 const SAME_STORY = 0.6;
@@ -57,6 +63,8 @@ export type Evidence = {
   readonly items: readonly EvidenceItem[];
   readonly newestAgeDays: number | null;
   readonly datedCount: number;
+  // True when the search service's own score says no result is a real match.
+  readonly weakMatch: boolean;
   readonly stats: EvidenceStats;
 };
 
@@ -284,6 +292,7 @@ export function selectEvidence(
     items,
     newestAgeDays: ages.length > 0 ? Math.min(...ages) : null,
     datedCount: ages.length,
+    weakMatch: scored && best < WEAK_SCORE,
     stats: {
       ...stats,
       droppedIrrelevant: stats.considered - afterRelevance,
@@ -293,13 +302,22 @@ export function selectEvidence(
   };
 }
 
-// 5. A sentence the model must respect, written by the app. It exists only for
-// news and fresh data, where calling an old result "today's" is the mistake.
+// 5. A sentence the model must respect, written by the app. The date notes
+// exist only for news and fresh data, where calling an old result "today's" is
+// the mistake; the weak-match note applies to every search.
 export function evidenceNote(
   evidence: Evidence,
   recencyMatters: boolean,
 ): string | null {
-  if (!recencyMatters || evidence.items.length === 0) {
+  if (evidence.items.length === 0) {
+    return null;
+  }
+
+  if (evidence.weakMatch) {
+    return "None of these results clearly matches the question. Do not present them as the answer or list them as if they were; say that you could not find a good answer.";
+  }
+
+  if (!recencyMatters) {
     return null;
   }
 
@@ -313,5 +331,5 @@ export function evidenceNote(
     return `None of these results is from today; the newest is ${days} day${days === 1 ? "" : "s"} old. Do not call them today's news: give each one's date or how long ago it was, and say that nothing newer was found.`;
   }
 
-  return null;
+  return "At least one result is from today (age_days 0). Report it as today's news; never say that nothing from today was found.";
 }
