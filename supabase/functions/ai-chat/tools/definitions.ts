@@ -190,6 +190,11 @@ export const WEB_SEARCH_TOOL: ToolDefinition = {
           description:
             "Set true for news and current events (what happened, headlines, breaking stories). Then only news articles with their publication dates are searched, not website home pages or menus.",
         },
+        local_query: {
+          type: "string",
+          description:
+            "Optional. The same search written in the main language of the country or place the question is about (for example Persian for Iranian news, Turkish for Turkish news), when that is not the language of query. The app uses it only when the first search finds too little, so it never costs anything when the first search is enough.",
+        },
         language: {
           type: "string",
           description:
