@@ -16,9 +16,15 @@ import { ageInDays } from "./dates.ts";
 // News older than this is left out when fresher results exist.
 export const STALE_AFTER_DAYS = 30;
 
-// A result must share at least this part of the question's words (or half of
-// what the best result shares, whichever is higher) to be kept.
+// Without the search service's own score, a result must share at least this
+// part of the question's words (or half of what the best result shares,
+// whichever is higher) to be kept.
 const MIN_RELEVANCE = 0.34;
+
+// With the search service's own score (it understands meaning and synonyms, so
+// a match report is found for "latest football news" although it shares no word
+// with the question), only a result far below the best one is dropped.
+const MIN_SCORE_SHARE = 0.4;
 
 // Two titles are one story when they share this much of their words and each
 // has enough words for the comparison to mean something.
@@ -165,10 +171,15 @@ export function selectEvidence(
 ): Evidence {
   const queryWords = tokensOf(query);
 
+  // The service's own judgement is used when every result carries it; otherwise
+  // the words of the question are compared with the words of each result.
+  const scored =
+    results.length > 0 && results.every((result) => typeof result.score === "number");
+
   let candidates: Candidate[] = results.map((result) => ({
     result,
     ageDays: ageInDays(result.published, options.now, options.zone),
-    relevance: relevanceOf(queryWords, result),
+    relevance: scored ? (result.score ?? 0) : relevanceOf(queryWords, result),
     titleWords: tokensOf(result.title),
   }));
 
@@ -179,11 +190,18 @@ export function selectEvidence(
   };
 
   // 2. Results that have almost nothing to do with the question are dropped.
-  // When no result shares any word (for example the question is in another
-  // language than the pages) nothing can be judged, so all are kept.
+  // When no result shares any word with the question (for example the question
+  // is in another language than the pages) nothing can be judged, so all are
+  // kept.
   const best = Math.max(0, ...candidates.map((item) => item.relevance));
 
-  if (queryWords.length >= 2 && best > 0) {
+  if (scored) {
+    if (best > 0) {
+      candidates = candidates.filter(
+        (item) => item.relevance >= best * MIN_SCORE_SHARE,
+      );
+    }
+  } else if (queryWords.length >= 2 && best > 0) {
     const floor = Math.max(Math.min(MIN_RELEVANCE, best), best * 0.5);
 
     candidates = candidates.filter((item) => item.relevance >= floor);
