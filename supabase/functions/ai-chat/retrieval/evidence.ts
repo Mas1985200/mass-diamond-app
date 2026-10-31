@@ -302,6 +302,13 @@ export function selectEvidence(
   };
 }
 
+// Said with every date note: the words and dates inside a page describe the
+// day the page was written, not the day the user is asking on (a schedule
+// published yesterday says "today" about yesterday), and may use another
+// calendar. Only the app's own 'published' and 'when' fields are about now.
+const TEXT_DAYS_NOTE =
+  "Words such as today, tomorrow or tonight, and any date written inside a result's text, refer to the day that result was published, not to the current day, and may use another calendar: never repeat them as current; take every date only from 'published' and 'when'.";
+
 // 5. A sentence the model must respect, written by the app. The date notes
 // exist only for news and fresh data, where calling an old result "today's" is
 // the mistake; the weak-match note applies to every search.
@@ -322,14 +329,14 @@ export function evidenceNote(
   }
 
   if (evidence.datedCount === 0) {
-    return "No result states a publication date, so none of them can be called today's news; say that the date is not stated.";
+    return `No result states a publication date, so none of them can be called today's news; say that the date is not stated. ${TEXT_DAYS_NOTE}`;
   }
 
   if (evidence.newestAgeDays !== null && evidence.newestAgeDays > 0) {
     const days = evidence.newestAgeDays;
 
-    return `None of these results is from today; the newest is ${days} day${days === 1 ? "" : "s"} old. Do not call them today's news: give each one's date or how long ago it was, and say that nothing newer was found.`;
+    return `None of these results is from today; the newest is ${days} day${days === 1 ? "" : "s"} old. Do not call them today's news: give each one's date or how long ago it was, and say that nothing newer was found. ${TEXT_DAYS_NOTE}`;
   }
 
-  return "At least one result is from today (age_days 0). Report it as today's news; never say that nothing from today was found.";
+  return `At least one result is from today (age_days 0). Report it as today's news; never say that nothing from today was found. Results with a larger age_days are older: give their date. ${TEXT_DAYS_NOTE}`;
 }
