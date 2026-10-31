@@ -8,7 +8,10 @@ import assert from "node:assert/strict";
 
 import {
   TOOL_RESULT_CHAR_CAP,
+  WEB_FETCH_NEWS,
+  WEB_FETCH_RESULTS,
   WEB_MAX_RESULTS,
+  WEB_NEWS_RESULTS,
   WEB_SNIPPET_CHARS,
 } from "../../supabase/functions/ai-chat/config.ts";
 import {
@@ -371,7 +374,8 @@ test("runWebSearch: a long result is cut at the snippet limit, not at 400", asyn
 });
 
 test("runWebSearch: the largest possible answer fits the tool-result cap", async () => {
-  const results = Array.from({ length: WEB_MAX_RESULTS }, (_, index) => ({
+  // The widest case: news, the most candidates, the most results kept.
+  const results = Array.from({ length: WEB_FETCH_NEWS }, (_, index) => ({
     title: "T".repeat(200),
     url: `https://site-${index}.example/${"p".repeat(300)}`,
     content: "ک".repeat(WEB_SNIPPET_CHARS * 2),
@@ -381,16 +385,73 @@ test("runWebSearch: the largest possible answer fits the tool-result cap", async
 
   try {
     const outcome = await runWebSearch(
-      { query: "q run-largest" },
-      context,
+      { query: "q run-largest", news: true },
+      { ...context, lang: "fa" },
       signal,
     );
+    const data = outcome.data as { results: unknown[] };
 
+    assert.equal(data.results.length, WEB_NEWS_RESULTS);
     // The agent cuts tool text at TOOL_RESULT_CHAR_CAP; a cut in the middle of
     // the JSON would hide the last results from the model.
     assert.ok(JSON.stringify(outcome.data).length <= TOOL_RESULT_CHAR_CAP);
   } finally {
     fake.restore();
+  }
+});
+
+test("runWebSearch: more candidates are fetched than the model reads, most for news", async () => {
+  const many = (count: number) =>
+    Array.from({ length: count }, (_, index) => ({
+      // Different words in every title, so the stories are not merged as one.
+      title: `Alpha${index} Bravo${index} Charlie${index} Delta${index} football`,
+      url: `https://site-${index}.example/a`,
+      content: `football league story ${index}`,
+      published_date: "2026-10-14",
+    }));
+
+  const plain = fakeFetch(() => jsonResponse({ results: many(WEB_FETCH_RESULTS) }));
+
+  try {
+    const outcome = await runWebSearch(
+      { query: "football league story" },
+      context,
+      signal,
+    );
+    const body = JSON.parse(String(plain.calls[0]?.init.body)) as Record<
+      string,
+      unknown
+    >;
+
+    assert.equal(body.max_results, WEB_FETCH_RESULTS);
+    assert.equal(
+      (outcome.data as { results: unknown[] }).results.length,
+      WEB_MAX_RESULTS,
+    );
+  } finally {
+    plain.restore();
+  }
+
+  const news = fakeFetch(() => jsonResponse({ results: many(WEB_FETCH_NEWS) }));
+
+  try {
+    const outcome = await runWebSearch(
+      { query: "football league story", news: true },
+      context,
+      signal,
+    );
+    const body = JSON.parse(String(news.calls[0]?.init.body)) as Record<
+      string,
+      unknown
+    >;
+
+    assert.equal(body.max_results, WEB_FETCH_NEWS);
+    assert.equal(
+      (outcome.data as { results: unknown[] }).results.length,
+      WEB_NEWS_RESULTS,
+    );
+  } finally {
+    news.restore();
   }
 });
 
