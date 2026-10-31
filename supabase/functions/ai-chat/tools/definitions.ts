@@ -190,6 +190,11 @@ export const WEB_SEARCH_TOOL: ToolDefinition = {
           description:
             "Set true for news and current events (what happened, headlines, breaking stories). Then only news articles with their publication dates are searched, not website home pages or menus.",
         },
+        language: {
+          type: "string",
+          description:
+            "The language you will write your answer in, as a short language tag (es, ru, de, zh, hi, fr, tr, ar, fa, en ...). The app then writes each result's date in that language.",
+        },
       },
       required: ["query"],
     },
