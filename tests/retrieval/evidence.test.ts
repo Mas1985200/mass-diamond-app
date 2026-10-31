@@ -249,7 +249,45 @@ test("evidenceNote: says plainly when nothing is from today or no date is stated
     { now: NOW, zone: ZONE, recencyMatters: true },
   );
 
-  assert.equal(evidenceNote(today, true), null);
+  assert.match(evidenceNote(today, true) ?? "", /At least one result is from today/);
   // For ordinary (non-news) questions there is no note at all.
   assert.equal(evidenceNote(old, false), null);
+});
+
+test("evidenceNote: when even the best result scores low, nothing is presented as an answer", () => {
+  const weak = selectEvidence(
+    [
+      { ...result("War story one", "war news", "a.com", "2026-10-27"), score: 0.18 },
+      { ...result("War story two", "other news", "b.com", "2026-10-27"), score: 0.16 },
+      { ...result("War story three", "more news", "c.com", "2026-10-27"), score: 0.15 },
+    ],
+    "football news",
+    { now: NOW, zone: ZONE, recencyMatters: true },
+  );
+
+  assert.equal(weak.weakMatch, true);
+  assert.match(evidenceNote(weak, true) ?? "", /None of these results clearly matches/);
+  // It applies to ordinary searches too, not only to news.
+  assert.match(evidenceNote(weak, false) ?? "", /None of these results clearly matches/);
+
+  const strong = selectEvidence(
+    [
+      { ...result("Football story", "football news", "a.com", "2026-10-26"), score: 0.71 },
+      { ...result("Other story", "other", "b.com", "2026-10-26"), score: 0.2 },
+    ],
+    "football news",
+    { now: NOW, zone: ZONE, recencyMatters: true },
+  );
+
+  assert.equal(strong.weakMatch, false);
+  assert.match(evidenceNote(strong, true) ?? "", /None of these results is from today/);
+
+  // Without the service's score nothing is called weak: words alone cannot say so.
+  const lexical = selectEvidence(
+    [result("Football story", "football news", "a.com", "2026-10-26")],
+    "football news",
+    { now: NOW, zone: ZONE, recencyMatters: true },
+  );
+
+  assert.equal(lexical.weakMatch, false);
 });
