@@ -29,8 +29,10 @@ import {
 import {
   evidenceNote,
   selectEvidence,
+  type Evidence,
   type EvidenceItem,
 } from "../retrieval/evidence.ts";
+import { mergeResults, needsWiderSearch } from "../retrieval/widen.ts";
 
 const webCache = new Map<
   string,
@@ -239,6 +241,10 @@ export async function runWebSearch(
   const fresh = flag(args.fresh);
   const news = flag(args.news);
   const locale = typeof args.language === "string" ? args.language : null;
+  const localQuery =
+    typeof args.local_query === "string"
+      ? args.local_query.trim().slice(0, 300)
+      : "";
 
   if (!query) {
     return { data: { error: "query is required." } };
@@ -250,14 +256,49 @@ export async function runWebSearch(
 
   // News and fresh data cast the widest net; the app then keeps the best few.
   const recencyMatters = fresh || news;
-  const results = await tavilySearch(
+  const fetchCount = recencyMatters ? WEB_FETCH_NEWS : WEB_FETCH_RESULTS;
+  const judge = (found: readonly WebResult[], asked: string): Evidence =>
+    selectEvidence(found, asked, {
+      now: ctx.now,
+      zone: ctx.timeZone,
+      recencyMatters,
+    });
+
+  let results = await tavilySearch(
     query,
     ctx.tavilyKey,
-    recencyMatters ? WEB_FETCH_NEWS : WEB_FETCH_RESULTS,
+    fetchCount,
     signal,
     fresh,
     news,
   );
+  let evidence =
+    results !== null && results.length > 0 ? judge(results, query) : null;
+  let widened = false;
+
+  // A thin first search is repeated once in the language of the place the
+  // question is about; whatever the second search finds is added, never
+  // replacing what the first found.
+  if (
+    localQuery &&
+    localQuery.toLowerCase() !== query.toLowerCase() &&
+    needsWiderSearch(evidence)
+  ) {
+    const more = await tavilySearch(
+      localQuery,
+      ctx.tavilyKey,
+      fetchCount,
+      signal,
+      fresh,
+      news,
+    );
+
+    if (more !== null && more.length > 0) {
+      results = mergeResults(results ?? [], more);
+      evidence = judge(results, `${query} ${localQuery}`);
+      widened = true;
+    }
+  }
 
   if (results === null) {
     return { data: { error: "Web search failed." } };
@@ -280,13 +321,9 @@ export async function runWebSearch(
   // News and fresh data are ordered by freshness, and the app says itself when
   // nothing is from today (see retrieval/evidence.ts).
   const zone = ctx.timeZone;
-  const evidence = selectEvidence(results, query, {
-    now: ctx.now,
-    zone,
-    recencyMatters,
-  });
-  const note = evidenceNote(evidence, recencyMatters);
-  const shown = evidence.items.slice(
+  const judged = evidence ?? judge(results, query);
+  const note = evidenceNote(judged, recencyMatters);
+  const shown = judged.items.slice(
     0,
     recencyMatters ? WEB_NEWS_RESULTS : WEB_MAX_RESULTS,
   );
@@ -297,9 +334,10 @@ export async function runWebSearch(
       event: "web_evidence",
       fresh,
       news,
-      kept: evidence.items.length,
+      kept: judged.items.length,
       shown: shown.length,
-      ...evidence.stats,
+      widened,
+      ...judged.stats,
     }),
   );
 
