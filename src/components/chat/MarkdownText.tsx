@@ -1,5 +1,10 @@
 import { memo, useEffect, useRef, useState, type ReactNode } from "react";
 
+import {
+  detectDirection,
+  westernDigitsForForeignText,
+} from "../../features/chat/textDirection";
+
 interface MarkdownTextProps {
   readonly text: string;
 }
@@ -69,9 +74,6 @@ const COPY_RESET_MS = 1800;
 
 const PERSIAN_DIGITS = "۰۱۲۳۴۵۶۷۸۹";
 
-const RTL_CHAR = /[\u0590-\u08FF\uFB1D-\uFDFF\uFE70-\uFEFF]/;
-const LTR_CHAR = /[A-Za-z\u00C0-\u024F\u0370-\u03FF\u0400-\u04FF]/;
-
 const INLINE_SOURCE =
   "(`[^`\\n]+`)|(\\*\\*[^*\\n]+?\\*\\*)|(\\*[^*\\s][^*\\n]*?\\*)|(\\[[^\\]\\n]+\\]\\((https?:\\/\\/[^\\s)]+)\\))";
 
@@ -81,22 +83,6 @@ function toPersianDigits(text: string): string {
       ? token
       : token.replace(/[0-9]/g, (digit) => PERSIAN_DIGITS[Number(digit)] ?? digit),
   );
-}
-
-function detectDirection(texts: readonly string[]): "rtl" | "ltr" {
-  for (const text of texts) {
-    for (const char of text) {
-      if (RTL_CHAR.test(char)) {
-        return "rtl";
-      }
-
-      if (LTR_CHAR.test(char)) {
-        return "ltr";
-      }
-    }
-  }
-
-  return "rtl";
 }
 
 function matchSection(text: string): SectionInfo | null {
@@ -829,7 +815,7 @@ function renderBlock(block: Block, key: string): ReactNode {
 }
 
 function MarkdownText({ text }: MarkdownTextProps) {
-  const blocks = parseBlocks(text);
+  const blocks = parseBlocks(westernDigitsForForeignText(text));
 
   return (
     <div className="flex flex-col gap-3">
