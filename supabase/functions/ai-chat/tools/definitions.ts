@@ -193,7 +193,7 @@ export const WEB_SEARCH_TOOL: ToolDefinition = {
         local_query: {
           type: "string",
           description:
-            "Optional. The same search written in the main language of the country or place the question is about (for example Persian for Iranian news, Turkish for Turkish news), when that is not the language of query. The app uses it only when the first search finds too little, so it never costs anything when the first search is enough.",
+            "Required. The same search written in the main language of the country or place the question is about (for example Persian for Iranian news, Turkish for Turkish news, Spanish for news from Mexico). If that language is the language of query, or the question is not about a particular country or place, write the same as query. The app uses it only when the first search finds too little, so it never costs anything when the first search is enough.",
         },
         language: {
           type: "string",
@@ -201,7 +201,7 @@ export const WEB_SEARCH_TOOL: ToolDefinition = {
             "The language you will write your answer in, as a short language tag (es, ru, de, zh, hi, fr, tr, ar, fa, en ...). The app then writes each result's date in that language.",
         },
       },
-      required: ["query"],
+      required: ["query", "local_query"],
     },
   },
 };
