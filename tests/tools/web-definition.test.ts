@@ -1,7 +1,7 @@
 // tests/tools/web-definition.test.ts
 // The web_search schema lives in its own file and is still offered to the
-// model; local_query carries examples so that the model writes it in the
-// language of the place, not a copy of query.
+// model; place_language carries examples so that the app knows which language
+// to search in when the first search finds too little.
 
 import test from "node:test";
 import assert from "node:assert/strict";
@@ -33,15 +33,14 @@ test("web_search is offered when a search key exists, and only then", () => {
   assert.ok(!names({ ...context, tavilyKey: undefined }).includes("web_search"));
 });
 
-test("local_query has examples and forbids copying query", () => {
+test("place_language has examples and says when to use the answer language", () => {
   const parameters = WEB_SEARCH_TOOL.function.parameters as {
     properties: Record<string, { description?: string }>;
   };
-  const text = parameters.properties.local_query?.description ?? "";
+  const text = parameters.properties.place_language?.description ?? "";
 
-  assert.match(text, /Examples:/);
-  assert.match(text, /Persian/);
-  assert.match(text, /Turkish/);
-  assert.match(text, /Japanese/);
-  assert.match(text, /Never copy query/);
+  assert.match(text, /fa for Iran/);
+  assert.match(text, /tr for Turkey/);
+  assert.match(text, /ja for Japan/);
+  assert.match(text, /not about a particular country/);
 });
