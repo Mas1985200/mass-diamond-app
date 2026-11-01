@@ -5,7 +5,7 @@ export const MAX_MESSAGE_LENGTH = 32_000;
 export const MAX_HISTORY_MESSAGES = 40;
 export const HISTORY_CHAR_BUDGET = 6_000;
 export const HISTORY_MESSAGE_CAP = 1_200;
-export const TOOL_RESULT_CHAR_CAP = 6_000;
+export const TOOL_RESULT_CHAR_CAP = 6_500;
 
 export const CONNECT_TIMEOUT_MS = 12_000;
 export const TOOL_TIMEOUT_MS = 8_000;
