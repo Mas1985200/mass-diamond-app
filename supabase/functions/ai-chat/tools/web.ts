@@ -282,7 +282,7 @@ export async function runWebSearch(
   if (
     localQuery &&
     localQuery.toLowerCase() !== query.toLowerCase() &&
-    needsWiderSearch(evidence)
+    needsWiderSearch(evidence, results ?? [])
   ) {
     const more = await tavilySearch(
       localQuery,
@@ -337,6 +337,9 @@ export async function runWebSearch(
       kept: judged.items.length,
       shown: shown.length,
       widened,
+      // Whether the model gave a second wording in the place's own language.
+      hasLocal:
+        localQuery.length > 0 && localQuery.toLowerCase() !== query.toLowerCase(),
       // How long each shown snippet is: a handful of characters means a page
       // menu or a bare headline, not an article.
       snippetChars: shown.map((item) => item.snippet.length),
