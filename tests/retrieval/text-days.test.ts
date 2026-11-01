@@ -27,11 +27,11 @@ function found(published: string) {
   return selectEvidence([item], "football news", OPTIONS);
 }
 
-test("every date note says that days written inside a page are about the page's day", () => {
+test("every date note says that a day written inside a page means the page's own day", () => {
   for (const published of ["2026-10-29", "2026-10-26", ""]) {
     assert.match(
       evidenceNote(found(published), true) ?? "",
-      /refer to the day that result was published, not to the current day/,
+      /means the day that page was published/,
     );
   }
 });
