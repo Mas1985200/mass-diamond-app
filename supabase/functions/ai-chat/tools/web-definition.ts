@@ -28,10 +28,15 @@ export const WEB_SEARCH_TOOL: ToolDefinition = {
           description:
             "Set true for news and current events (what happened, headlines, breaking stories). Then only news articles with their publication dates are searched, not website home pages or menus.",
         },
+        place_language: {
+          type: "string",
+          description:
+            "Required. The short language tag of the main language of the country or place the question is about, for example fa for Iran, tr for Turkey, ja for Japan, es for Mexico. When the question is not about a particular country or place, give the language you answer in. The app uses it, only when the first search finds too little, to search once more in that language, so it never costs anything when the first search is enough.",
+        },
         local_query: {
           type: "string",
           description:
-            "Required. The same search written in the main language of the country or place the question is about, so that pages from that place are found. Examples: a Spanish question about the Iranian economy gets query in Spanish and local_query in Persian; an English question about Turkish politics gets local_query in Turkish; a German question about Japanese cars gets local_query in Japanese. Never copy query when the place's language is another one. Write the same as query only when the place's main language is the language of query, or the question is not about a particular country or place. The app uses it only when the first search finds too little, so it never costs anything when the first search is enough.",
+            "Optional. The same search already written in the main language of that country or place, when you can write it well (for example a Spanish question about the Iranian economy gets query in Spanish and local_query in Persian). Leave it out when place_language is the language of query; the app then translates the search itself when it needs to.",
         },
         language: {
           type: "string",
@@ -39,7 +44,7 @@ export const WEB_SEARCH_TOOL: ToolDefinition = {
             "The language you will write your answer in, as a short language tag (es, ru, de, zh, hi, fr, tr, ar, fa, en ...). The app then writes each result's date in that language.",
         },
       },
-      required: ["query", "local_query"],
+      required: ["query", "place_language"],
     },
   },
 };
