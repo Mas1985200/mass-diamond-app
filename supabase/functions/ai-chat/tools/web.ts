@@ -34,6 +34,11 @@ import {
 } from "../retrieval/evidence.ts";
 import { mergeResults, needsWiderSearch } from "../retrieval/widen.ts";
 import { withoutSiteNames } from "../retrieval/clean.ts";
+import {
+  languageTag,
+  sameLanguage,
+  translateQuery,
+} from "../retrieval/translate.ts";
 
 // Said with every news or fresh-data search, next to the results, because the
 // model follows what sits beside the results more closely than the long rules
@@ -253,6 +258,7 @@ export async function runWebSearch(
     typeof args.local_query === "string"
       ? args.local_query.trim().slice(0, 300)
       : "";
+  const placeLanguage = languageTag(args.place_language);
 
   if (!query) {
     return { data: { error: "query is required." } };
@@ -286,25 +292,40 @@ export async function runWebSearch(
 
   // A thin first search is repeated once in the language of the place the
   // question is about; whatever the second search finds is added, never
-  // replacing what the first found.
-  if (
-    localQuery &&
-    localQuery.toLowerCase() !== query.toLowerCase() &&
-    needsWiderSearch(evidence, results ?? [], recencyMatters)
-  ) {
-    const more = await tavilySearch(
-      localQuery,
-      ctx.tavilyKey,
-      fetchCount,
-      signal,
-      fresh,
-      news,
-    );
+  // replacing what the first found. The model writes that second wording
+  // itself (local_query) or only names the place's language (place_language),
+  // and then a small model translates the search.
+  let secondQuery =
+    localQuery && localQuery.toLowerCase() !== query.toLowerCase()
+      ? localQuery
+      : "";
+  let translated = false;
 
-    if (more !== null && more.length > 0) {
-      results = mergeResults(results ?? [], more);
-      evidence = judge(results, `${query} ${localQuery}`);
-      widened = true;
+  if (needsWiderSearch(evidence, results ?? [], recencyMatters)) {
+    if (
+      !secondQuery &&
+      placeLanguage !== null &&
+      !sameLanguage(placeLanguage, locale)
+    ) {
+      secondQuery = (await translateQuery(query, placeLanguage, signal)) ?? "";
+      translated = secondQuery.length > 0;
+    }
+
+    if (secondQuery && secondQuery.toLowerCase() !== query.toLowerCase()) {
+      const more = await tavilySearch(
+        secondQuery,
+        ctx.tavilyKey,
+        fetchCount,
+        signal,
+        fresh,
+        news,
+      );
+
+      if (more !== null && more.length > 0) {
+        results = mergeResults(results ?? [], more);
+        evidence = judge(results, `${query} ${secondQuery}`);
+        widened = true;
+      }
     }
   }
 
@@ -351,6 +372,8 @@ export async function runWebSearch(
       // Whether the model gave a second wording in the place's own language.
       hasLocal:
         localQuery.length > 0 && localQuery.toLowerCase() !== query.toLowerCase(),
+      // Whether the app had to translate the search itself.
+      translated,
       // How long each shown snippet is: a handful of characters means a page
       // menu or a bare headline, not an article.
       snippetChars: shown.map((item) => item.snippet.length),
