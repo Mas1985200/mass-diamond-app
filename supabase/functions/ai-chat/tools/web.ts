@@ -354,6 +354,9 @@ export async function runWebSearch(
       // How long each shown snippet is: a handful of characters means a page
       // menu or a bare headline, not an article.
       snippetChars: shown.map((item) => item.snippet.length),
+      // The search service's score of each page the model reads, in the order
+      // the model reads them (a word-overlap share when the service gave none).
+      shownRelevance: shown.map((item) => Math.round(item.relevance * 100) / 100),
       ...judged.stats,
     }),
   );
