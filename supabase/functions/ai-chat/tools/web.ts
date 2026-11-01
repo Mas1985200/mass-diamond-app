@@ -33,6 +33,14 @@ import {
   type EvidenceItem,
 } from "../retrieval/evidence.ts";
 import { mergeResults, needsWiderSearch } from "../retrieval/widen.ts";
+import { withoutSiteNames } from "../retrieval/clean.ts";
+
+// Said with every news or fresh-data search, next to the results, because the
+// model follows what sits beside the results more closely than the long rules
+// in the system prompt. It keeps the answer to results about the question and
+// stops a schedule or a table from being read as news.
+const RELEVANCE_NOTE =
+  "Use only results about what was asked; leave out and never mention the others. A schedule, table or live ticker shows what is planned, not what happened: never present its entries as played or as news. If nothing is from today, say so in one sentence, then give at most three relevant recent results with dates.";
 
 const webCache = new Map<
   string,
@@ -185,8 +193,8 @@ function forModel(
     (day ? dateLabel(day, ctx.lang, locale) : null) ?? item.published;
 
   return {
-    title: item.title,
-    snippet: item.snippet,
+    title: withoutSiteNames(item.title),
+    snippet: withoutSiteNames(item.snippet),
     ...(published ? { published } : {}),
     when: whenLabel(item.ageDays),
     ...(item.ageDays !== null ? { age_days: item.ageDays } : {}),
@@ -322,7 +330,10 @@ export async function runWebSearch(
   // nothing is from today (see retrieval/evidence.ts).
   const zone = ctx.timeZone;
   const judged = evidence ?? judge(results, query);
-  const note = evidenceNote(judged, recencyMatters);
+  const evidenceText = evidenceNote(judged, recencyMatters);
+  const note = recencyMatters
+    ? [evidenceText, RELEVANCE_NOTE].filter(Boolean).join(" ")
+    : evidenceText;
   const shown = judged.items.slice(
     0,
     recencyMatters ? WEB_NEWS_RESULTS : WEB_MAX_RESULTS,
