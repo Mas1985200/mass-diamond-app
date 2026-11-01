@@ -1,30 +1,32 @@
 // tests/tools/web-local-query.test.ts
-// The model always writes the place's own language for a web search. The app
-// then repeats a thin search in that language (see tools/web.ts), so this field
-// must never be left out.
+// The model names the language of the place (place_language, required) and may
+// also write the second wording itself (local_query, optional). The app
+// translates the search when the model did not (retrieval/translate.ts).
 
 import test from "node:test";
 import assert from "node:assert/strict";
 
 import { WEB_SEARCH_TOOL } from "../../supabase/functions/ai-chat/tools/definitions.ts";
 
-test("web_search asks for both the query and the place's own language", () => {
-  const parameters = WEB_SEARCH_TOOL.function.parameters as {
-    required?: string[];
-    properties: Record<string, { description?: string }>;
-  };
+type Parameters = {
+  required?: string[];
+  properties: Record<string, { description?: string }>;
+};
+
+test("web_search requires the query and the place's language tag", () => {
+  const parameters = WEB_SEARCH_TOOL.function.parameters as Parameters;
 
   assert.ok(parameters.required?.includes("query"));
-  assert.ok(parameters.required?.includes("local_query"));
+  assert.ok(parameters.required?.includes("place_language"));
+  assert.ok(!parameters.required?.includes("local_query"));
 });
 
-test("the local_query description tells the model what to write", () => {
-  const parameters = WEB_SEARCH_TOOL.function.parameters as {
-    properties: Record<string, { description?: string }>;
-  };
-  const text = parameters.properties.local_query?.description ?? "";
+test("place_language and local_query descriptions tell the model what to write", () => {
+  const parameters = WEB_SEARCH_TOOL.function.parameters as Parameters;
+  const tag = parameters.properties.place_language?.description ?? "";
+  const local = parameters.properties.local_query?.description ?? "";
 
-  assert.match(text, /main language of the country or place/);
-  assert.match(text, /same as query/i);
-  assert.doesNotMatch(text, /^Optional/);
+  assert.match(tag, /language tag/);
+  assert.match(tag, /fa for Iran/);
+  assert.match(local, /main language of that country or place/);
 });
