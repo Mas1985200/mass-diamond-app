@@ -40,7 +40,7 @@ import { withoutSiteNames } from "../retrieval/clean.ts";
 // in the system prompt. It keeps the answer to results about the question and
 // stops a schedule or a table from being read as news.
 const RELEVANCE_NOTE =
-  "Use only results about what was asked; leave out and never mention the others. A schedule, table or live ticker shows what is planned, not what happened: never present its entries as played or as news. If nothing is from today, say so in one sentence, then give at most three relevant recent results with dates.";
+  "Use only results about what was asked; leave out and never mention the others. A schedule, table or live ticker shows what is planned, not what happened: never present its entries as played or as news. A rumour or an expectation is not news: say that it is only reported. Never name a news agency, newspaper or website, even when the result's text does, and never add a remark about where the text came from. Write day and month names only in the language of the user's message, never a Persian month for another reader. If nothing is from today, say that you found nothing from today (never that nothing exists), then give at most three relevant recent results with dates.";
 
 const webCache = new Map<
   string,
@@ -290,7 +290,7 @@ export async function runWebSearch(
   if (
     localQuery &&
     localQuery.toLowerCase() !== query.toLowerCase() &&
-    needsWiderSearch(evidence, results ?? [])
+    needsWiderSearch(evidence, results ?? [], recencyMatters)
   ) {
     const more = await tavilySearch(
       localQuery,
