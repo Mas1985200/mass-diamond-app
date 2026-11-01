@@ -25,9 +25,13 @@ export function lacksStrongMatch(found: readonly WebResult[]): boolean {
   return scores.length > 0 && Math.max(...scores) < STRONG_SCORE;
 }
 
+// For news and fresh data (recent = true) a search with nothing from today is
+// also widened: the same story is often published today in the place's own
+// language long before it reaches pages in another language.
 export function needsWiderSearch(
   evidence: Evidence | null,
   found: readonly WebResult[] = [],
+  recent = false,
 ): boolean {
   if (evidence === null) {
     return true;
@@ -36,7 +40,8 @@ export function needsWiderSearch(
   return (
     evidence.weakMatch ||
     evidence.items.length < MIN_USEFUL_RESULTS ||
-    lacksStrongMatch(found)
+    lacksStrongMatch(found) ||
+    (recent && evidence.newestAgeDays !== 0)
   );
 }
 
