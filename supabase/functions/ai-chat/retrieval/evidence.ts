@@ -302,12 +302,13 @@ export function selectEvidence(
   };
 }
 
-// Said with every date note: the words and dates inside a page describe the
-// day the page was written, not the day the user is asking on (a schedule
-// published yesterday says "today" about yesterday), and may use another
-// calendar. Only the app's own 'published' and 'when' fields are about now.
+// Said with every date note: a "today" or a date written inside a page means
+// the day that page was written (a schedule published yesterday says "today"
+// about yesterday). Only the app's own 'published' and 'when' fields are about
+// now. Kept short and positive on purpose: a long list of prohibitions made the
+// model distrust results that were from today.
 const TEXT_DAYS_NOTE =
-  "Words such as today, tomorrow or tonight, and any date written inside a result's text, refer to the day that result was published, not to the current day, and may use another calendar: never repeat them as current; take every date only from 'published' and 'when'.";
+  "Take every date and day only from each result's 'published' and 'when' fields; a 'today' or a date written inside a result's text means the day that page was published.";
 
 // 5. A sentence the model must respect, written by the app. The date notes
 // exist only for news and fresh data, where calling an old result "today's" is
