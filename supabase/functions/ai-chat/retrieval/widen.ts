@@ -11,12 +11,33 @@ import type { Evidence } from "./evidence.ts";
 // Fewer kept results than this, or only weak matches, means the search was thin.
 export const MIN_USEFUL_RESULTS = 3;
 
-export function needsWiderSearch(evidence: Evidence | null): boolean {
+// The search service scores every page from 0 to 1. A page that really answers
+// the question scores well above this; when even the best page stays below it,
+// the first wording found only loosely related pages.
+export const STRONG_SCORE = 0.6;
+
+// True when the search service scored the pages and none reached STRONG_SCORE.
+export function lacksStrongMatch(found: readonly WebResult[]): boolean {
+  const scores = found
+    .map((result) => result.score)
+    .filter((score): score is number => typeof score === "number");
+
+  return scores.length > 0 && Math.max(...scores) < STRONG_SCORE;
+}
+
+export function needsWiderSearch(
+  evidence: Evidence | null,
+  found: readonly WebResult[] = [],
+): boolean {
   if (evidence === null) {
     return true;
   }
 
-  return evidence.weakMatch || evidence.items.length < MIN_USEFUL_RESULTS;
+  return (
+    evidence.weakMatch ||
+    evidence.items.length < MIN_USEFUL_RESULTS ||
+    lacksStrongMatch(found)
+  );
 }
 
 // The first search's results, then any result of the second search whose
