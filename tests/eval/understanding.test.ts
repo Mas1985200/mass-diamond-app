@@ -52,28 +52,46 @@ const PLACE_CASES: readonly PlaceCase[] = [
   // English.
   { text: "where is the Eiffel Tower", place: true },
   { text: "Where's Shibuya station?", place: true },
+  // Other supported languages (with and without accents and punctuation).
+  { text: "¿dónde está la Torre Eiffel?", place: true },
+  { text: "donde esta la torre eiffel", place: true },
+  { text: "wo ist das Brandenburger Tor?", place: true },
+  { text: "Eyfel Kulesi nerede?", place: true },
+  { text: "где находится Красная площадь?", place: true },
+  { text: "Où se trouve la Tour Eiffel ?", place: true },
+  { text: "Dov'è il Colosseo?", place: true },
+  { text: "Onde fica a Torre de Belém?", place: true },
+  { text: "أين يقع برج خليفة؟", place: true },
+  { text: "ताज महल कहाँ है?", place: true },
+  { text: "埃菲尔铁塔在哪里？", place: true },
+  { text: "故宫在哪", place: true },
+  { text: "東京タワーはどこにありますか", place: true },
   // Must never force the map tool.
   { text: "چرا آسمان آبی است؟", place: false },
   { text: "قیمت دلار امروز چنده", place: false },
   { text: "یک شعر کوتاه برای مادرم بنویس", place: false },
   { text: "how do I reverse a string in python", place: false },
   { text: "what is my IP address", place: false },
+  // "Address" of something that is not a place.
+  { text: "آدرس ایمیل جدید چطور بسازم؟", place: false },
+  { text: "آدرس IP من چیست", place: false },
+  { text: "ادرس سایت فروشگاه رو چطور عوض کنم", place: false },
+  // Other languages, no place asked for.
+  { text: "¿cómo se construyó la Torre Eiffel?", place: false },
+  { text: "wer hat den Eiffelturm gebaut", place: false },
+  { text: "Эйфелева башня высота", place: false },
+  { text: "埃菲尔铁塔有多高", place: false },
+  { text: "ताज महल का इतिहास बताओ", place: false },
+  { text: "où acheter du pain", place: false },
   {
     text: "این یک پاراگراف طولانی است. ".repeat(60) + " کجاست",
     place: false,
   },
 ];
 
-// Cases the rule gets wrong today (measured, see the printed baseline).
-const KNOWN_GAPS: readonly PlaceCase[] = [
-  // Other supported languages.
-  { text: "¿dónde está la Torre Eiffel?", place: true },
-  { text: "wo ist das Brandenburger Tor?", place: true },
-  { text: "Eyfel Kulesi nerede?", place: true },
-  { text: "где находится Красная площадь?", place: true },
-  // "address" used in a non-place sense.
-  { text: "آدرس ایمیل جدید چطور بسازم؟", place: false },
-];
+// Cases the rule gets wrong today (measured, see the printed baseline). Empty
+// now: every case below moved into PLACE_CASES when it was fixed.
+const KNOWN_GAPS: readonly PlaceCase[] = [];
 
 for (const item of PLACE_CASES) {
   test(`place rule: ${item.place ? "forces" : "does not force"} the map tool for «${item.text.slice(0, 40)}»`, () => {
