@@ -40,12 +40,14 @@ jobs:
         with:
           version: latest
 
+      # --yes: the newer CLI asks for confirmation before a deploy, and a
+      # GitHub run has no terminal to answer, so it stops with exit code 1.
       - name: Deploy ai-chat
-        run: supabase functions deploy ai-chat --project-ref xcmvzyoadzhyyrsgywnv --use-api
+        run: supabase functions deploy ai-chat --project-ref xcmvzyoadzhyyrsgywnv --use-api --yes
         env:
           SUPABASE_ACCESS_TOKEN: ${{ secrets.SUPABASE_ACCESS_TOKEN }}
 
       - name: Deploy transcribe
-        run: supabase functions deploy transcribe --project-ref xcmvzyoadzhyyrsgywnv --use-api
+        run: supabase functions deploy transcribe --project-ref xcmvzyoadzhyyrsgywnv --use-api --yes
         env:
           SUPABASE_ACCESS_TOKEN: ${{ secrets.SUPABASE_ACCESS_TOKEN }}
