@@ -43,9 +43,12 @@ import {
 // Said with every news or fresh-data search, next to the results, because the
 // model follows what sits beside the results more closely than the long rules
 // in the system prompt. It keeps the answer to results about the question and
-// stops a schedule or a table from being read as news.
+// stops a schedule or a table from being read as news. The note is written in
+// English, so its last sentence says that the answer itself must never be:
+// without it the model copies the English wording into answers in other
+// languages.
 const RELEVANCE_NOTE =
-  "Use only results about what was asked; leave out and never mention the others. A schedule, table or live ticker shows what is planned, not what happened: never present its entries as played or as news. A rumour or an expectation is not news: say that it is only reported. Never name a news agency, newspaper or website, even when the result's text does, and never add a remark about where the text came from. Write only what a result says: names, roles, scores and dates exactly as written, and a report as a report (\"reportedly\"), never as a fact the text does not state. Write day and month names only in the language of the user's message, never a Persian month for another reader. If nothing is from today, say \"I found nothing from today\", never that nothing was published, then give at most three relevant recent results with dates.";
+  "Use only results about what was asked; leave out and never mention the others. A schedule, table or live ticker shows what is planned, not what happened: never present its entries as played or as news. A rumour or an expectation is not news: say that it is only reported. Never name a news agency, newspaper or website, even when the result's text does, and never add a remark about where the text came from. Write only what a result says: names, roles, scores and dates exactly as written, and a report as a report (\"reportedly\"), never as a fact the text does not state. Write day and month names only in the language of the user's message, never a Persian month for another reader. If nothing is from today, say \"I found nothing from today\", never that nothing was published, then give at most three relevant recent results with dates. This note is in English only for you: say all of it, including that sentence, in the language of the user's message, and never write English unless the user wrote English.";
 
 const webCache = new Map<
   string,
