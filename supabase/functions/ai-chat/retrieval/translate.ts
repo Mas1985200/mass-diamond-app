@@ -67,7 +67,7 @@ export async function translateQuery(
       messages: [
         {
           role: "system",
-          content: `Translate the user's web search into the language with the tag "${tag}". Keep the names of people, teams and places in the form that language uses. Reply with the translated search only: no quotes, no notes.`,
+          content: `Translate the user's web search into the language with the tag "${tag}". When the search is already written in that language, translate it into English instead, so the second search always differs from the first. Keep the names of people, teams and places in the form that language uses. Reply with the translated search only: no quotes, no notes.`,
         },
         { role: "user", content: query },
       ],
