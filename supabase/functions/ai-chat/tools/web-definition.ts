@@ -16,7 +16,7 @@ export const WEB_SEARCH_TOOL: ToolDefinition = {
         query: {
           type: "string",
           description:
-            "Short, specific query with the user's spelling mistakes silently corrected. For several prices put all items in ONE query.",
+            "Short, specific query with the user's spelling mistakes silently corrected. Write it in the language of the country or place the question is about (Persian for Iran, Spanish for Spain, Chinese for China), and in English when the subject is global; never choose it by the language the user wrote in, so the same question asked in any language sends the same query. For several prices put all items in ONE query.",
         },
         fresh: {
           type: "boolean",
@@ -36,15 +36,15 @@ export const WEB_SEARCH_TOOL: ToolDefinition = {
         local_query: {
           type: "string",
           description:
-            "Optional. The same search already written in the main language of that country or place, when you can write it well (for example a Spanish question about the Iranian economy gets query in Spanish and local_query in Persian). Leave it out when place_language is the language of query; the app then translates the search itself when it needs to.",
+            "Optional. A second wording of the same search, used only when the first finds too little: written in the main language of that country or place when query is not already in it, otherwise in English. Leave it out when unsure; the app then translates the search itself when it needs to.",
         },
         language: {
           type: "string",
           description:
-            "The language you will write your answer in, as a short language tag (es, ru, de, zh, hi, fr, tr, ar, fa, en ...). The app then writes each result's date in that language.",
+            "Required. The language you will write your answer in (the language of the user's message), as a short language tag (es, ru, de, zh, hi, fr, tr, ar, fa, en ...). The app then writes each result's date in that language.",
         },
       },
-      required: ["query", "place_language"],
+      required: ["query", "place_language", "language"],
     },
   },
 };
