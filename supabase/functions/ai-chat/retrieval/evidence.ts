@@ -339,5 +339,5 @@ export function evidenceNote(
     return `None of these results is from today; the newest is ${days} day${days === 1 ? "" : "s"} old. Do not call them today's news: give each one's date or how long ago it was, and say that nothing newer was found. ${TEXT_DAYS_NOTE}`;
   }
 
-  return `At least one result is from today (age_days 0). Report it as today's news; never say that nothing from today was found. Results with a larger age_days are older: give their date. ${TEXT_DAYS_NOTE}`;
+  return `At least one result is from today (age_days 0). Report it as today's news; never say that nothing from today was found. Older results (larger age_days) come after today's, each with its date, never under a heading about today. ${TEXT_DAYS_NOTE}`;
 }
