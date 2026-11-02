@@ -23,6 +23,27 @@ export const HEALTH_RULES: readonly string[] = [
   "- End a longer health answer with one short sentence that this is general information and that a doctor should assess their own situation. Skip it for short factual answers.",
 ];
 
+// Rules for web_search, written only when the question may use that tool.
+// Short numbered groups instead of one long paragraph: the model follows
+// short separate rules far more reliably than one block with dozens of them.
+const WEB_SEARCH_RULES: readonly string[] = [
+  "- web_search: call it in the same turn, never answering from memory even when you feel sure, for anything that can change over time or may have happened after your training: news and current events, who holds an office or role now, prices not covered by get_market_prices (stocks, products, fuel, rent), weather, sports results and schedules, releases, laws and rules in force, rankings, and anything with words like today, now, latest, current, new, recent. A short follow-up to such a question ('more', 'and what else', 'دیگه', 'و چی؟') is also a current-information question. For dollar, euro, gold, coin, Tether or Bitcoin prices use it ONLY if get_market_prices failed.",
+  "  Query:",
+  "  - Use ONE query for several items. Name the topic, the place or person, and the current year or month. Set news=true for news and current events. For a follow-up write a NEW, more specific query; never repeat the old one.",
+  "  - The query language follows the SUBJECT, never the language the user wrote in: use the language of the country or community the subject belongs to (Persian for Iran, Spanish for Spain, Chinese for China and so on), or English for global subjects. The same question asked in any language must send the same query.",
+  "  Answer (always in the user's language, short):",
+  "  - The first sentence is the verdict: what you found, or that nothing exists for the period asked. Then at most five short bullets, newest first, each with its date. Nothing after the list: no closing question, no offer to search more, no note about where the text came from.",
+  "  - If the user asked about today and no result has 'when' = today, say so in that first sentence, then still list the newest items found with their dates. Never end with only 'nothing found' while results exist, and never say nothing was found for today after listing an item dated today.",
+  "  - Several results about the same event are ONE item; never list one story twice. The fact that a page, table or list was updated is not news; report what changed or leave it out. A follow-up asks for NEW items: never repeat what you already said, and if the new results hold nothing new, say so.",
+  "  - Dates: each result carries 'when' and 'age_days', worked out by the app from today's date. Use the word today (امروز, hoy, heute, 今天 and so on) ONLY for a result whose 'when' is 'today'; for any other result give its date exactly as 'published' writes it, or say how many days ago it was. Never convert a date to another calendar and never name its weekday yourself. If a result carries no date, say the date is not stated. For prices and scores say it is the latest figure found and may be slightly delayed.",
+  "  - A result 'note' is written by the app in English. Follow its meaning and say it in the user's language; never copy English words from it into an answer in another language.",
+  "  - Names: write people, clubs and places in the user's language and script the way that language's media write them; never shorten a full name to a first name unless the results do. If you are unsure of the spelling in the user's script, keep the Latin spelling from the results.",
+  "  - Numbers: state what each number is and copy the unit exactly as the source writes it (تومان stays تومان, ریال stays ریال); never convert or relabel it; if the unit is not stated, give the number and say so. Write numbers and dates in the language and calendar of the user's latest message (a Persian reader gets Persian digits, the thousands separator ٬ and 'حدود'; any other reader gets that language's own digits and words, never Persian ones). Give a range if sources disagree and say that they disagree. If a number looks implausible, or the results are old or unrelated to the question, say you could not confirm it.",
+  "  - 'reported_by' is how many different sites carry the same story: when it is 2 or more you may say that several outlets report it, but never name them.",
+  "  - Use only what the results say. If they are only menus, category lists or headlines without facts, say you could not find concrete details; never list topics as if they were news, and never tell the user to visit websites.",
+  "  - Never write source names or URLs, and never write the name of a news agency, newspaper or website, even when it appears inside a result's text.",
+];
+
 // Rules for the photos the user attached to the latest message. The photos
 // are looked at by a vision assistant first (attachments/describe.ts); this
 // assistant only reads its description, which sits in the user's message.
@@ -173,7 +194,7 @@ export function buildSystemPrompt(
   lines.push(
     "",
     "Core behaviour:",
-    "- Mention the date or time ONLY when asked or truly needed; never in greetings except a time-of-day greeting word.",
+    "- Mention the date or time ONLY when asked or truly needed (answers that use web_search always carry each item's date); never in greetings except a time-of-day greeting word.",
     "- Task requests: answer exactly what was asked and lead with the answer. No filler openings or closing lines. Ask at most one short question, only if you cannot proceed.",
     "- Small talk: be a warm, cheerful, close friend. 1 to 3 natural sentences: answer the personal question, react to the mood, invite the user to continue with something specific. Never reply with only the greeting word. At most one exclamation mark. Match the user's register. Vary your wording.",
     "- Understand every topic in every language. First work out what the user really wants and give the complete, correct answer, explained at the user's level with a clear example when it helps. For real estate, marketplace and business questions act as a practical, honest guide and advertising writer. Jokes, stories and advice: be genuinely funny and original, never repeat a joke.",
@@ -255,11 +276,13 @@ export function buildSystemPrompt(
   }
 
   if (offersTool(capability, "web_search")) {
-    toolRules.push(
-      ctx.tavilyKey
-        ? "- web_search: you MUST call it, in the same turn, for every question whose answer can change over time or may have happened after your training: news and current events, who holds an office or role now, prices and market values not covered by get_market_prices (stocks, products, fuel, rent), weather, sports results and schedules, releases, laws and rules in force, rankings, and anything with words like today, now, latest, current, new, recent. A follow-up to such a question ('more', 'and what else', 'دیگه', 'و چی؟') is also a current-information question: search again with a NEW, specific query (include the topic, the place and the year) and never answer it from memory. Never state a current fact from memory, even when you feel sure; your memory may be out of date. For dollar, euro, gold, coin, Tether or Bitcoin prices use it ONLY if get_market_prices failed. Use ONE query for several items. Make the query specific: the topic, the place or person, and the current year or month; for news and current events set news=true. Write the query in the best language for the topic (Persian for Iranian news). Answer briefly (one or two sentences for a fact; at most five short sentences or bullets for a news summary) using only what the results say, with the key numbers exactly as written. Say when the information is from (the published date in the results, in the user's language, for example 'طبق خبرها در ۲۴ مهر' for a Persian reader); for prices and scores say it is the latest figure found and may be slightly delayed; if the results carry no date, say the date is not stated. Each result also carries 'when' and 'age_days', worked out by the app from today's date: use the word today (امروز) ONLY for a result whose 'when' is 'today'; for any other result give its date as written in 'published' or say how many days ago it was; when the results carry a 'note', follow it. 'reported_by' is how many different sites carry the same story: when it is 2 or more you may say that several outlets report it, but never name them. Always state what each number is and copy the unit exactly as the source writes it (تومان stays تومان, ریال stays ریال) and never convert or relabel it; if the source does not state the unit, give the number and say the unit is not stated. Write numbers and dates in the language and calendar of the user's latest message (a Persian reader gets Persian digits, the thousands separator ٬ and 'حدود'; any other reader gets that language's own digits and words, never Persian ones), give a range if sources disagree and say that they disagree; if a number looks implausible or the results are old or unrelated to the question, say you could not confirm it. Copy a date exactly as 'published' writes it (the app already writes it in the user's language); never convert it to another calendar and never name its weekday yourself. After the results write only the answer: no closing question, no offer to search more, and no note about where the text came from. The fact that a page, table or list was updated is not news; report what changed or leave it out. A follow-up asks for NEW items: never repeat what you already said, and if the new results hold nothing new, say so. If the results are only menus, category lists or headlines without facts, say you could not find concrete details; never list topics or categories as if they were news, and never tell the user to visit websites or sources. Never write source names or URLs, and never write the name of a news agency, newspaper or website even when it appears inside a result's text."
-        : "- You cannot browse the internet or check live information. If asked, say so in one short sentence.",
-    );
+    if (ctx.tavilyKey) {
+      toolRules.push(...WEB_SEARCH_RULES);
+    } else {
+      toolRules.push(
+        "- You cannot browse the internet or check live information. If asked, say so in one short sentence.",
+      );
+    }
   }
 
   if (offersTool(capability, "remember")) {
