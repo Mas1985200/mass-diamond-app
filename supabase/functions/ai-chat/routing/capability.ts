@@ -57,11 +57,47 @@ export function selectTools(
 }
 
 // Short "where is X" style questions must always use the map tool.
-// Covers formal and colloquial spellings: کجاست، کجاس، کجایه، کجایت، کجاش، کجا هست.
-// It is tested on text that went through normalizeForMatching, so it is written
-// with the Persian letters ک and ی and the plain alef (ادرس stands for آدرس too).
-const PLACE_QUESTION_PATTERN =
-  /(کجاست|کجاس|کجایه|کجایت|کجاش|کجا\s?است|کجا\s?هست|لوکیشن|ادرس|where\s+is|where's)/i;
+// Persian covers formal and colloquial spellings: کجاست، کجاس، کجایه، کجایت،
+// کجاش، کجا هست. It is tested on text that went through normalizeForMatching,
+// so it is written with the Persian letters ک and ی and the plain alef (ادرس
+// stands for آدرس too). "Address" of something that is not a place (an email, a
+// website, an IP) is not a place question, so those words are excluded.
+const PERSIAN_PLACE_PATTERN =
+  /(کجاست|کجاس|کجایه|کجایت|کجاش|کجا\s?است|کجا\s?هست|لوکیشن|ادرس(?!\s+(?:ای\s?میل|میل|ip|ایپی|وب|سایت|اینترنتی|url|لینک|کیف|ولت|wallet|مک|mac|اینستاگرام|تلگرام|ربات)(?![\p{L}\p{N}]))|where\s+is|where's)/iu;
+
+// "Where is / where is it located" in the other languages of the app. Each
+// phrase names a place being looked for, never a bare "where" (so "where can I
+// buy" or "где купить" are not matched). Words are whole words, written with and
+// without accents because people type without them.
+const WORD_PLACE_PATTERN = new RegExp(
+  "(?<![\\p{L}\\p{N}])(?:" +
+    [
+      // Spanish, Portuguese, French, Italian.
+      "d[oó]nde\\s+(?:est[aá]n?|queda[n]?|se\\s+encuentra[n]?|se\\s+ubica[n]?)",
+      "onde\\s+(?:fica[m]?|se\\s+localiza|se\\s+encontra)",
+      "o[uù]\\s+(?:est|se\\s+trouve[n]?t?|se\\s+situe[n]?t?)",
+      "dov['’]?[eè]",
+      "dove\\s+(?:si\\s+trova[n]?|si\\s+trovano|si\\s+situa)",
+      // German.
+      "wo\\s+(?:ist|liegt|befindet\\s+sich|sind|liegen)",
+      // Turkish.
+      "nerede(?:dir)?",
+      "nerde",
+      // Russian.
+      "где\\s+(?:находится|находятся|расположен[аоы]?|располагается)",
+      // Arabic (after normalizeForMatching, whose ي is the Persian ی).
+      "[أاإ]ین\\s+(?:یقع|تقع|یوجد|توجد|موقع)",
+      // Hindi.
+      "कहाँ\\s+(?:है|हैं|स्थित)",
+      "कहां\\s+(?:है|हैं|स्थित)",
+    ].join("|") +
+    ")(?![\\p{L}\\p{N}])",
+  "iu",
+);
+
+// Chinese, Japanese and Korean are written without spaces, so no word edges.
+const CJK_PLACE_PATTERN =
+  /(在哪(?:里|裡|儿|兒)|在哪[?？]?\s*$|どこにあ(?:る|ります)|어디에\s?있)/u;
 
 // The same Persian word is typed in several ways: Arabic keyboards give ي and
 // ك, people drop the long alef (آ), add vowel marks or stretch letters, and
@@ -98,6 +134,14 @@ export function lastUserText(messages: readonly AIMessage[]): string {
 // a missing attachment, whatever the small router model says.
 export const PHOTO_DESCRIPTION_MARKER = "[Photo description:";
 
+function matchesPlaceQuestion(normalized: string): boolean {
+  return (
+    PERSIAN_PLACE_PATTERN.test(normalized) ||
+    WORD_PLACE_PATTERN.test(normalized) ||
+    CJK_PLACE_PATTERN.test(normalized)
+  );
+}
+
 export function isPlaceQuestion(text: string): boolean {
   if (text.length > PLACE_QUESTION_MAX_TOTAL_LENGTH) {
     return false;
@@ -111,7 +155,7 @@ export function isPlaceQuestion(text: string): boolean {
   return (
     lines.length > 0 &&
     lines.every((line) => line.length <= PLACE_QUESTION_MAX_LINE_LENGTH) &&
-    PLACE_QUESTION_PATTERN.test(normalizeForMatching(text))
+    matchesPlaceQuestion(normalizeForMatching(text))
   );
 }
 
