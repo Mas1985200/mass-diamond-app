@@ -212,6 +212,35 @@ function forModel(
   };
 }
 
+// Which writing system most of a search is in ("latin", "arabic", "cyrillic",
+// "han", ...). Logged instead of the search itself, so that the logs show which
+// language the model searched in without ever keeping what the user asked.
+const SCRIPTS: readonly (readonly [string, RegExp])[] = [
+  ["latin", /\p{Script=Latin}/gu],
+  ["arabic", /\p{Script=Arabic}/gu],
+  ["cyrillic", /\p{Script=Cyrillic}/gu],
+  ["devanagari", /\p{Script=Devanagari}/gu],
+  ["han", /\p{Script=Han}/gu],
+  ["kana", /[\p{Script=Hiragana}\p{Script=Katakana}]/gu],
+  ["hangul", /\p{Script=Hangul}/gu],
+];
+
+function scriptOf(text: string): string {
+  let best = "other";
+  let bestCount = 0;
+
+  for (const [name, pattern] of SCRIPTS) {
+    const count = text.match(pattern)?.length ?? 0;
+
+    if (count > bestCount) {
+      best = name;
+      bestCount = count;
+    }
+  }
+
+  return best;
+}
+
 // The model sometimes writes a true/false field as text ("True", "false").
 function flag(value: unknown): boolean {
   if (typeof value === "string") {
@@ -377,6 +406,12 @@ export async function runWebSearch(
         localQuery.length > 0 && localQuery.toLowerCase() !== query.toLowerCase(),
       // Whether the app had to translate the search itself.
       translated,
+      // The language tags the model gave and the writing system of each search
+      // (never the words), to see in the logs which language was searched.
+      placeLanguage,
+      answerLanguage: languageTag(locale),
+      queryScript: scriptOf(query),
+      secondScript: secondQuery ? scriptOf(secondQuery) : null,
       // How long each shown snippet is: a handful of characters means a page
       // menu or a bare headline, not an article.
       snippetChars: shown.map((item) => item.snippet.length),
