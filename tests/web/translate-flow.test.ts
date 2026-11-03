@@ -73,6 +73,12 @@ test("a missing or invalid place_language never translates", async () => {
     { query: "turkey politics news", news: true, fresh: true, place_language: "Persian", language: "es" },
     "c",
   );
-  assert.equal(calls.filter((c) => c.kind === "groq").length, 0);
-  assert.equal(calls.filter((c) => c.kind === "tavily").length, 1);
+  // No translation is asked for (a weak news search may still be simplified,
+  // which is covered in simplify-flow.test.ts).
+  const translating = calls.filter(
+    (c) =>
+      c.kind === "groq" &&
+      JSON.stringify(c.body.messages).includes("Translate the user's web search"),
+  );
+  assert.equal(translating.length, 0);
 });
