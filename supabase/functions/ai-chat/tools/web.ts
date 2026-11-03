@@ -39,6 +39,7 @@ import {
   sameLanguage,
   translateQuery,
 } from "../retrieval/translate.ts";
+import { simplifyQuery } from "../retrieval/simplify.ts";
 import {
   classifyKinds,
   dropNotNews,
@@ -338,6 +339,7 @@ export async function runWebSearch(
       ? localQuery
       : "";
   let translated = false;
+  let simplified = false;
 
   if (needsWiderSearch(evidence, results ?? [], recencyMatters)) {
     if (
@@ -347,6 +349,17 @@ export async function runWebSearch(
     ) {
       secondQuery = (await translateQuery(query, placeLanguage, signal)) ?? "";
       translated = secondQuery.length > 0;
+    }
+
+    // No other language to try and the first search found only loosely related
+    // pages: search again with the plain keywords of the subject.
+    if (
+      !secondQuery &&
+      recencyMatters &&
+      (evidence === null || evidence.weakMatch)
+    ) {
+      secondQuery = (await simplifyQuery(query, signal)) ?? "";
+      simplified = secondQuery.length > 0;
     }
 
     if (secondQuery && secondQuery.toLowerCase() !== query.toLowerCase()) {
@@ -424,6 +437,8 @@ export async function runWebSearch(
         localQuery.length > 0 && localQuery.toLowerCase() !== query.toLowerCase(),
       // Whether the app had to translate the search itself.
       translated,
+      // Whether the app repeated a weak search as plain keywords.
+      simplified,
       // How many results got each label, and how many were left out because
       // they were not reports (numbers only; null = no labels were had).
       kinds: kinds ? kindCounts(kinds) : null,
