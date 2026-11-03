@@ -9,6 +9,7 @@
 //   5. says plainly when nothing is from today or no date is stated.
 // Nothing here depends on a language or a topic: it compares words with words.
 
+import { WEB_NEWS_RESULTS } from "../config.ts";
 import { normalizeForMatching } from "../routing/capability.ts";
 import type { WebResult } from "../types.ts";
 import { ageInDays } from "./dates.ts";
@@ -308,7 +309,7 @@ export function selectEvidence(
 // now. Kept short and positive on purpose: a long list of prohibitions made the
 // model distrust results that were from today.
 const TEXT_DAYS_NOTE =
-  "Take every date and day only from each result's 'published' and 'when' fields; a 'today' or a date written inside a result's text means the day that page was published.";
+  "Take dates only from each result's 'published' and 'when' fields; a 'today' written inside a result's text means the day that page was published.";
 
 // 5. A sentence the model must respect, written by the app. The date notes
 // exist only for news and fresh data, where calling an old result "today's" is
@@ -339,5 +340,15 @@ export function evidenceNote(
     return `None of these results is from today; the newest is ${days} day${days === 1 ? "" : "s"} old. Do not call them today's news: give each one's date or how long ago it was, and say that nothing newer was found. ${TEXT_DAYS_NOTE}`;
   }
 
-  return `At least one result is from today (age_days 0). Report it as today's news; never say that nothing from today was found. Older results (larger age_days) come after today's, each with its date, never under a heading about today. ${TEXT_DAYS_NOTE}`;
+  // The model reads at most WEB_NEWS_RESULTS items, the freshest first. When
+  // only some of them are from today it is told how many, because "the first N
+  // are from today" is followed far more reliably than a general rule.
+  const read = evidence.items.slice(0, WEB_NEWS_RESULTS);
+  const fromToday = read.filter((item) => item.ageDays === 0).length;
+  const split =
+    fromToday < read.length
+      ? ` Only the first ${fromToday} of ${read.length} ${fromToday === 1 ? "is" : "are"} from today: say so in the first sentence; the rest are older.`
+      : "";
+
+  return `At least one result is from today (age_days 0). Report it as today's news; never say that nothing from today was found.${split} ${TEXT_DAYS_NOTE}`;
 }
