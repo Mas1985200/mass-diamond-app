@@ -39,6 +39,12 @@ import {
   sameLanguage,
   translateQuery,
 } from "../retrieval/translate.ts";
+import {
+  classifyKinds,
+  dropNotNews,
+  kindCounts,
+  type ResultKind,
+} from "../retrieval/kind.ts";
 
 // Said with every news or fresh-data search, next to the results, because the
 // model follows what sits beside the results more closely than the long rules
@@ -382,7 +388,19 @@ export async function runWebSearch(
   // News and fresh data are ordered by freshness, and the app says itself when
   // nothing is from today (see retrieval/evidence.ts).
   const zone = ctx.timeZone;
-  const judged = evidence ?? judge(results, query);
+  const found = evidence ?? judge(results, query);
+
+  // A news answer must be built from reports of what happened. A small model
+  // labels what each result is, and timetables, previews and roundups are left
+  // out before the model reads anything (see retrieval/kind.ts). If the labels
+  // cannot be had, every result is kept, exactly as before.
+  let kinds: (ResultKind | null)[] | null = null;
+
+  if (recencyMatters && !found.weakMatch && found.items.length > 0) {
+    kinds = await classifyKinds(found.items, signal);
+  }
+
+  const judged = kinds ? dropNotNews(found, kinds) : found;
   const evidenceText = evidenceNote(judged, recencyMatters);
   const note = recencyMatters
     ? [evidenceText, RELEVANCE_NOTE].filter(Boolean).join(" ")
@@ -406,6 +424,10 @@ export async function runWebSearch(
         localQuery.length > 0 && localQuery.toLowerCase() !== query.toLowerCase(),
       // Whether the app had to translate the search itself.
       translated,
+      // How many results got each label, and how many were left out because
+      // they were not reports (numbers only; null = no labels were had).
+      kinds: kinds ? kindCounts(kinds) : null,
+      droppedNotNews: found.items.length - judged.items.length,
       // The language tags the model gave and the writing system of each search
       // (never the words), to see in the logs which language was searched.
       placeLanguage,
