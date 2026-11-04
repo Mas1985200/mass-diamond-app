@@ -32,7 +32,12 @@ import {
   type Evidence,
   type EvidenceItem,
 } from "../retrieval/evidence.ts";
-import { mergeResults, needsWiderSearch } from "../retrieval/widen.ts";
+import {
+  MIN_USEFUL_RESULTS,
+  mergeResults,
+  needsWiderSearch,
+} from "../retrieval/widen.ts";
+import { scriptsOfLanguage } from "../retrieval/script.ts";
 import { withoutSiteNames } from "../retrieval/clean.ts";
 import {
   languageTag,
@@ -317,8 +322,37 @@ export async function runWebSearch(
       recencyMatters,
     });
 
+  // The search goes out in the language of the place the question is about,
+  // whatever language the model wrote it in: the same question asked in any
+  // language must find the same pages. The model is asked to write it that way
+  // (place_language), but often writes it in the user's language, so when the
+  // writing system of the search is not the place language's (a Latin-script
+  // search for a Persian-speaking country), a small model translates it first.
+  // The model's own wording stays as a second search for when the first is thin.
+  const placeScripts = scriptsOfLanguage(placeLanguage);
+  let searchQuery = query;
+  let pretranslated = false;
+
+  if (
+    recencyMatters &&
+    placeScripts !== null &&
+    !sameLanguage(placeLanguage, locale) &&
+    !placeScripts.includes(scriptOf(query))
+  ) {
+    const inPlaceLanguage = await translateQuery(
+      query,
+      placeLanguage ?? "",
+      signal,
+    );
+
+    if (inPlaceLanguage) {
+      searchQuery = inPlaceLanguage;
+      pretranslated = true;
+    }
+  }
+
   let results = await tavilySearch(
-    query,
+    searchQuery,
     ctx.tavilyKey,
     fetchCount,
     signal,
@@ -326,28 +360,46 @@ export async function runWebSearch(
     news,
   );
   let evidence =
-    results !== null && results.length > 0 ? judge(results, query) : null;
+    results !== null && results.length > 0 ? judge(results, searchQuery) : null;
   let widened = false;
 
   // A thin first search is repeated once in the language of the place the
   // question is about; whatever the second search finds is added, never
   // replacing what the first found. The model writes that second wording
   // itself (local_query) or only names the place's language (place_language),
-  // and then a small model translates the search.
+  // and then a small model translates the search. When the first search was
+  // already in the place's language, its second search is the model's own
+  // wording, and only when the first search was thin (a search with nothing
+  // from today is not repeated: the pages of another language would only
+  // crowd out the place's own news).
   let secondQuery =
-    localQuery && localQuery.toLowerCase() !== query.toLowerCase()
+    localQuery && localQuery.toLowerCase() !== searchQuery.toLowerCase()
       ? localQuery
       : "";
-  let translated = false;
+  let translated = pretranslated;
   let simplified = false;
 
-  if (needsWiderSearch(evidence, results ?? [], recencyMatters)) {
+  const thin =
+    evidence === null ||
+    evidence.weakMatch ||
+    evidence.items.length < MIN_USEFUL_RESULTS;
+  const wider = pretranslated
+    ? thin
+    : needsWiderSearch(evidence, results ?? [], recencyMatters);
+
+  if (wider) {
+    if (pretranslated && !secondQuery) {
+      secondQuery = query;
+    }
+
     if (
+      !pretranslated &&
       !secondQuery &&
       placeLanguage !== null &&
       !sameLanguage(placeLanguage, locale)
     ) {
-      secondQuery = (await translateQuery(query, placeLanguage, signal)) ?? "";
+      secondQuery =
+        (await translateQuery(searchQuery, placeLanguage, signal)) ?? "";
       translated = secondQuery.length > 0;
     }
 
@@ -358,11 +410,14 @@ export async function runWebSearch(
       recencyMatters &&
       (evidence === null || evidence.weakMatch)
     ) {
-      secondQuery = (await simplifyQuery(query, signal)) ?? "";
+      secondQuery = (await simplifyQuery(searchQuery, signal)) ?? "";
       simplified = secondQuery.length > 0;
     }
 
-    if (secondQuery && secondQuery.toLowerCase() !== query.toLowerCase()) {
+    if (
+      secondQuery &&
+      secondQuery.toLowerCase() !== searchQuery.toLowerCase()
+    ) {
       const more = await tavilySearch(
         secondQuery,
         ctx.tavilyKey,
@@ -374,7 +429,7 @@ export async function runWebSearch(
 
       if (more !== null && more.length > 0) {
         results = mergeResults(results ?? [], more);
-        evidence = judge(results, `${query} ${secondQuery}`);
+        evidence = judge(results, `${searchQuery} ${secondQuery}`);
         widened = true;
       }
     }
@@ -401,7 +456,7 @@ export async function runWebSearch(
   // News and fresh data are ordered by freshness, and the app says itself when
   // nothing is from today (see retrieval/evidence.ts).
   const zone = ctx.timeZone;
-  const found = evidence ?? judge(results, query);
+  const found = evidence ?? judge(results, searchQuery);
 
   // A news answer must be built from reports of what happened. A small model
   // labels what each result is, and timetables, previews and roundups are left
@@ -434,9 +489,12 @@ export async function runWebSearch(
       widened,
       // Whether the model gave a second wording in the place's own language.
       hasLocal:
-        localQuery.length > 0 && localQuery.toLowerCase() !== query.toLowerCase(),
-      // Whether the app had to translate the search itself.
+        localQuery.length > 0 &&
+        localQuery.toLowerCase() !== searchQuery.toLowerCase(),
+      // Whether the app had to translate the search itself, and whether it did
+      // so before the first search (the model wrote it in another language).
       translated,
+      pretranslated,
       // Whether the app repeated a weak search as plain keywords.
       simplified,
       // How many results got each label, and how many were left out because
@@ -448,6 +506,7 @@ export async function runWebSearch(
       placeLanguage,
       answerLanguage: languageTag(locale),
       queryScript: scriptOf(query),
+      searchScript: scriptOf(searchQuery),
       secondScript: secondQuery ? scriptOf(secondQuery) : null,
       // How long each shown snippet is: a handful of characters means a page
       // menu or a bare headline, not an article.
