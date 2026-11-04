@@ -48,7 +48,7 @@ function run(args: Record<string, unknown>, tag: string) {
   });
 }
 
-test("a place that speaks another language gets a translated second search", async () => {
+test("a place that speaks another language is searched in its own language first", async () => {
   const calls = await run(
     { query: "iran economy news", news: true, fresh: true, place_language: "fa", language: "es" },
     "a",
@@ -56,7 +56,10 @@ test("a place that speaks another language gets a translated second search", asy
   assert.equal(calls.filter((c) => c.kind === "groq").length, 1);
   const searches = calls.filter((c) => c.kind === "tavily");
   assert.equal(searches.length, 2);
-  assert.equal(searches[1]?.body.query, "ترجمه شده");
+  // The translated search goes first; the model's own wording is the second
+  // search, because the first one found only weak pages.
+  assert.equal(searches[0]?.body.query, "ترجمه شده");
+  assert.equal(searches[1]?.body.query, "iran economy news");
 });
 
 test("a question that is not about a place never translates", async () => {
