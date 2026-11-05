@@ -35,6 +35,11 @@ function run(args: Record<string, unknown>, tag: string) {
       calls.push({ kind: "tavily", body });
       return new Response(JSON.stringify({ results: WEAK.map((r) => ({ ...r, url: r.url + tag + calls.length })) }), { status: 200 });
     }
+    // "Is this news search broad?" (retrieval/aspects.ts) is answered "not
+    // broad" and not counted: this test is about translation.
+    if (JSON.stringify(body).includes("asks for news")) {
+      return new Response(JSON.stringify({ choices: [{ message: { content: "NONE" } }] }), { status: 200 });
+    }
     calls.push({ kind: "groq", body });
     return new Response(JSON.stringify({ choices: [{ message: { content: "ترجمه شده" } }] }), { status: 200 });
   }) as unknown as typeof fetch;
