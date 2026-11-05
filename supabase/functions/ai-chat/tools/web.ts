@@ -38,6 +38,7 @@ import {
   needsWiderSearch,
 } from "../retrieval/widen.ts";
 import { scriptsOfLanguage } from "../retrieval/script.ts";
+import { preferredDomains } from "../retrieval/sources.ts";
 import { withoutSiteNames } from "../retrieval/clean.ts";
 import {
   languageTag,
@@ -86,8 +87,10 @@ export async function tavilySearch(
   master: AbortSignal,
   fresh = false,
   news = false,
+  domains: readonly string[] | null = null,
 ): Promise<WebResult[] | null> {
-  const cacheKey = `${fresh ? "fresh" : "any"}:${news ? "news" : "web"}:${maxResults}:${query.trim().toLowerCase()}`;
+  const sites = domains && domains.length > 0 ? domains : null;
+  const cacheKey = `${fresh ? "fresh" : "any"}:${news ? "news" : "web"}:${maxResults}:${sites ? sites.join(",") : "all"}:${query.trim().toLowerCase()}`;
   const cached = webCache.get(cacheKey);
 
   if (cached && Date.now() - cached.at < WEB_CACHE_TTL_MS) {
@@ -111,6 +114,7 @@ export async function tavilySearch(
           include_answer: false,
           ...(fresh ? { time_range: "week" } : {}),
           ...(withNews ? { topic: "news" } : {}),
+          ...(sites ? { include_domains: sites } : {}),
         }),
         signal: timed.signal,
       });
@@ -337,192 +341,4 @@ export async function runWebSearch(
     recencyMatters &&
     placeScripts !== null &&
     !sameLanguage(placeLanguage, locale) &&
-    !placeScripts.includes(scriptOf(query))
-  ) {
-    const inPlaceLanguage = await translateQuery(
-      query,
-      placeLanguage ?? "",
-      signal,
-    );
-
-    if (inPlaceLanguage) {
-      searchQuery = inPlaceLanguage;
-      pretranslated = true;
-    }
-  }
-
-  let results = await tavilySearch(
-    searchQuery,
-    ctx.tavilyKey,
-    fetchCount,
-    signal,
-    fresh,
-    news,
-  );
-  let evidence =
-    results !== null && results.length > 0 ? judge(results, searchQuery) : null;
-  let widened = false;
-
-  // A thin first search is repeated once in the language of the place the
-  // question is about; whatever the second search finds is added, never
-  // replacing what the first found. The model writes that second wording
-  // itself (local_query) or only names the place's language (place_language),
-  // and then a small model translates the search. When the first search was
-  // already in the place's language, its second search is the model's own
-  // wording, and only when the first search was thin (a search with nothing
-  // from today is not repeated: the pages of another language would only
-  // crowd out the place's own news).
-  let secondQuery =
-    localQuery && localQuery.toLowerCase() !== searchQuery.toLowerCase()
-      ? localQuery
-      : "";
-  let translated = pretranslated;
-  let simplified = false;
-
-  const thin =
-    evidence === null ||
-    evidence.weakMatch ||
-    evidence.items.length < MIN_USEFUL_RESULTS;
-  const wider = pretranslated
-    ? thin
-    : needsWiderSearch(evidence, results ?? [], recencyMatters);
-
-  if (wider) {
-    if (pretranslated && !secondQuery) {
-      secondQuery = query;
-    }
-
-    if (
-      !pretranslated &&
-      !secondQuery &&
-      placeLanguage !== null &&
-      !sameLanguage(placeLanguage, locale)
-    ) {
-      secondQuery =
-        (await translateQuery(searchQuery, placeLanguage, signal)) ?? "";
-      translated = secondQuery.length > 0;
-    }
-
-    // No other language to try and the first search found only loosely related
-    // pages: search again with the plain keywords of the subject.
-    if (
-      !secondQuery &&
-      recencyMatters &&
-      (evidence === null || evidence.weakMatch)
-    ) {
-      secondQuery = (await simplifyQuery(searchQuery, signal)) ?? "";
-      simplified = secondQuery.length > 0;
-    }
-
-    if (
-      secondQuery &&
-      secondQuery.toLowerCase() !== searchQuery.toLowerCase()
-    ) {
-      const more = await tavilySearch(
-        secondQuery,
-        ctx.tavilyKey,
-        fetchCount,
-        signal,
-        fresh,
-        news,
-      );
-
-      if (more !== null && more.length > 0) {
-        results = mergeResults(results ?? [], more);
-        evidence = judge(results, `${searchQuery} ${secondQuery}`);
-        widened = true;
-      }
-    }
-  }
-
-  if (results === null) {
-    return { data: { error: "Web search failed." } };
-  }
-
-  if (results.length === 0) {
-    return {
-      data: {
-        results: [],
-        note: fresh
-          ? "No recent web results were found."
-          : "No web results were found.",
-      },
-    };
-  }
-
-  // The sources card (see sourcesCard) is not shown: the product decision is
-  // that web answers carry no sources under them. To show it again, return
-  // `cards: [sourcesCard(results, ctx.lang)]` here when it is not null.
-  // News and fresh data are ordered by freshness, and the app says itself when
-  // nothing is from today (see retrieval/evidence.ts).
-  const zone = ctx.timeZone;
-  const found = evidence ?? judge(results, searchQuery);
-
-  // A news answer must be built from reports of what happened. A small model
-  // labels what each result is, and timetables, previews and roundups are left
-  // out before the model reads anything (see retrieval/kind.ts). If the labels
-  // cannot be had, every result is kept, exactly as before.
-  let kinds: (ResultKind | null)[] | null = null;
-
-  if (recencyMatters && !found.weakMatch && found.items.length > 0) {
-    kinds = await classifyKinds(found.items, signal);
-  }
-
-  const judged = kinds ? dropNotNews(found, kinds) : found;
-  const evidenceText = evidenceNote(judged, recencyMatters);
-  const note = recencyMatters
-    ? [evidenceText, RELEVANCE_NOTE].filter(Boolean).join(" ")
-    : evidenceText;
-  const shown = judged.items.slice(
-    0,
-    recencyMatters ? WEB_NEWS_RESULTS : WEB_MAX_RESULTS,
-  );
-
-  // Numbers only (see EvidenceStats): never the question or any page text.
-  console.log(
-    JSON.stringify({
-      event: "web_evidence",
-      fresh,
-      news,
-      kept: judged.items.length,
-      shown: shown.length,
-      widened,
-      // Whether the model gave a second wording in the place's own language.
-      hasLocal:
-        localQuery.length > 0 &&
-        localQuery.toLowerCase() !== searchQuery.toLowerCase(),
-      // Whether the app had to translate the search itself, and whether it did
-      // so before the first search (the model wrote it in another language).
-      translated,
-      pretranslated,
-      // Whether the app repeated a weak search as plain keywords.
-      simplified,
-      // How many results got each label, and how many were left out because
-      // they were not reports (numbers only; null = no labels were had).
-      kinds: kinds ? kindCounts(kinds) : null,
-      droppedNotNews: found.items.length - judged.items.length,
-      // The language tags the model gave and the writing system of each search
-      // (never the words), to see in the logs which language was searched.
-      placeLanguage,
-      answerLanguage: languageTag(locale),
-      queryScript: scriptOf(query),
-      searchScript: scriptOf(searchQuery),
-      secondScript: secondQuery ? scriptOf(secondQuery) : null,
-      // How long each shown snippet is: a handful of characters means a page
-      // menu or a bare headline, not an article.
-      snippetChars: shown.map((item) => item.snippet.length),
-      // The search service's score of each page the model reads, in the order
-      // the model reads them (a word-overlap share when the service gave none).
-      shownRelevance: shown.map((item) => Math.round(item.relevance * 100) / 100),
-      ...judged.stats,
-    }),
-  );
-
-  return {
-    data: {
-      as_of: dayKey(ctx.now, zone),
-      results: shown.map((item) => forModel(item, ctx, locale)),
-      ...(note ? { note } : {}),
-    },
-  };
-}
+    !placeSc
