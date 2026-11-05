@@ -5,6 +5,8 @@
 // tavily.ts and the helpers are in web-support.ts.
 
 import {
+  WEB_BROAD_RESULTS,
+  WEB_BROAD_SNIPPET_CHARS,
   WEB_FETCH_NEWS,
   WEB_FETCH_RESULTS,
   WEB_MAX_RESULTS,
@@ -26,6 +28,7 @@ import {
   translateQuery,
 } from "../retrieval/translate.ts";
 import { simplifyQuery } from "../retrieval/simplify.ts";
+import { splitAspects } from "../retrieval/aspects.ts";
 import {
   classifyKinds,
   dropNotNews,
@@ -33,7 +36,9 @@ import {
   type ResultKind,
 } from "../retrieval/kind.ts";
 import { tavilySearch } from "./tavily.ts";
+import { searchSides } from "./web-sides.ts";
 import {
+  BROAD_NOTE,
   RELEVANCE_NOTE,
   flag,
   forModel,
@@ -79,12 +84,10 @@ export async function runWebSearch(
     });
 
   // The search goes out in the language of the place the question is about,
-  // whatever language the model wrote it in: the same question asked in any
-  // language must find the same pages. The model is asked to write it that way
-  // (place_language), but often writes it in the user's language, so when the
-  // writing system of the search is not the place language's (a Latin-script
-  // search for a Persian-speaking country), a small model translates it first.
-  // The model's own wording stays as a second search for when the first is thin.
+  // whatever language the model wrote it in, so the same question asked in any
+  // language finds the same pages: when the search's writing system is not the
+  // place language's, a small model translates it first, and the model's own
+  // wording stays as a second search for when the first is thin.
   const placeScripts = scriptsOfLanguage(placeLanguage);
   let searchQuery = query;
   let pretranslated = false;
@@ -148,17 +151,38 @@ export async function runWebSearch(
     }
   }
 
+  // A broad news question has several sides, and one search finds mostly one of
+  // them: each other side is searched on its own and merged in. A question
+  // about one event gets no extra search (see retrieval/aspects.ts).
+  let aspectCount = 0;
+  const sides = news ? await splitAspects(searchQuery, signal) : [];
+
+  if (sides.length > 0) {
+    const merged = await searchSides(
+      sides,
+      ctx.tavilyKey,
+      fetchCount,
+      signal,
+      fresh,
+      news,
+      preferred,
+      results ?? [],
+    );
+
+    if (merged.length > (results?.length ?? 0)) {
+      results = merged;
+      evidence = judge(results, searchQuery);
+      aspectCount = sides.length;
+    }
+  }
+
   let widened = false;
 
-  // A thin first search is repeated once in the language of the place the
-  // question is about; whatever the second search finds is added, never
-  // replacing what the first found. The model writes that second wording
-  // itself (local_query) or only names the place's language (place_language),
-  // and then a small model translates the search. When the first search was
-  // already in the place's language, its second search is the model's own
-  // wording, and only when the first search was thin (a search with nothing
-  // from today is not repeated: the pages of another language would only
-  // crowd out the place's own news).
+  // A thin first search is repeated once in the language of the place (the
+  // model's own wording, a local_query, or a translation by a small model);
+  // what the second search finds is added, never replacing the first. A search
+  // with nothing from today is not repeated when it was already in the place's
+  // language: pages of another language would only crowd out its own news.
   let secondQuery =
     localQuery && localQuery.toLowerCase() !== searchQuery.toLowerCase()
       ? localQuery
@@ -252,14 +276,22 @@ export async function runWebSearch(
   }
 
   const judged = kinds ? dropNotNews(found, kinds) : found;
-  const evidenceText = evidenceNote(judged, recencyMatters);
+
+  // Broad layout (by side, up to eight items) only when there is enough to
+  // group: a few items are answered as usual.
+  const broad = aspectCount > 0 && judged.items.length >= 4;
+  const readCount = broad
+    ? WEB_BROAD_RESULTS
+    : recencyMatters
+      ? WEB_NEWS_RESULTS
+      : WEB_MAX_RESULTS;
+  const evidenceText = evidenceNote(judged, recencyMatters, readCount);
   const note = recencyMatters
-    ? [evidenceText, RELEVANCE_NOTE].filter(Boolean).join(" ")
+    ? [evidenceText, RELEVANCE_NOTE, broad ? BROAD_NOTE : ""]
+        .filter(Boolean)
+        .join(" ")
     : evidenceText;
-  const shown = judged.items.slice(
-    0,
-    recencyMatters ? WEB_NEWS_RESULTS : WEB_MAX_RESULTS,
-  );
+  const shown = judged.items.slice(0, readCount);
 
   // Numbers only (see EvidenceStats): never the question or any page text.
   console.log(
@@ -270,36 +302,31 @@ export async function runWebSearch(
       kept: judged.items.length,
       shown: shown.length,
       widened,
-      // Whether the model gave a second wording in the place's own language.
       hasLocal:
         localQuery.length > 0 &&
         localQuery.toLowerCase() !== searchQuery.toLowerCase(),
-      // Whether the app had to translate the search itself, and whether it did
-      // so before the first search (the model wrote it in another language).
+      // Translated by the app (before the first search, or for the second).
       translated,
       pretranslated,
-      // How many trusted sites the first search was limited to (0 = the whole
-      // web) and whether it had to open up to the whole web.
+      // Trusted sites searched first (0 = whole web); opened up to the web.
       preferred: preferred ? preferred.length : 0,
       openedUp,
-      // Whether the app repeated a weak search as plain keywords.
       simplified,
-      // How many results got each label, and how many were left out because
-      // they were not reports (numbers only; null = no labels were had).
+      // Other sides searched for a broad subject; answered by side.
+      aspects: aspectCount,
+      broad,
+      // Label counts and results dropped as not reports (null = no labels).
       kinds: kinds ? kindCounts(kinds) : null,
       droppedNotNews: found.items.length - judged.items.length,
-      // The language tags the model gave and the writing system of each search
-      // (never the words), to see in the logs which language was searched.
+      // Language tags and writing systems only, never the words.
       placeLanguage,
       answerLanguage: languageTag(locale),
       queryScript: scriptOf(query),
       searchScript: scriptOf(searchQuery),
       secondScript: secondQuery ? scriptOf(secondQuery) : null,
-      // How long each shown snippet is: a handful of characters means a page
-      // menu or a bare headline, not an article.
+      // A handful of characters means a page menu, not an article.
       snippetChars: shown.map((item) => item.snippet.length),
-      // The search service's score of each page the model reads, in the order
-      // the model reads them (a word-overlap share when the service gave none).
+      // Score of each page the model reads, in the order it reads them.
       shownRelevance: shown.map((item) => Math.round(item.relevance * 100) / 100),
       ...judged.stats,
     }),
@@ -308,7 +335,9 @@ export async function runWebSearch(
   return {
     data: {
       as_of: dayKey(ctx.now, zone),
-      results: shown.map((item) => forModel(item, ctx, locale)),
+      results: shown.map((item) =>
+        forModel(item, ctx, locale, broad ? WEB_BROAD_SNIPPET_CHARS : null),
+      ),
       ...(note ? { note } : {}),
     },
   };
