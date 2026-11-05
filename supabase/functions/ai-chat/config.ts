@@ -39,6 +39,11 @@ export const WEB_FETCH_NEWS = 12;
 // The most results the model reads.
 export const WEB_MAX_RESULTS = 4;
 export const WEB_NEWS_RESULTS = 5;
+// A broad news question (several sides of one subject, see retrieval/aspects.ts)
+// is read as more, shorter items: eight of them at this length fit the tool
+// result cap together with the notes, as five full-length ones do.
+export const WEB_BROAD_RESULTS = 8;
+export const WEB_BROAD_SNIPPET_CHARS = 300;
 export const WEB_SNIPPET_CHARS = 900;
 
 export const GROQ_ENDPOINT = "https://api.groq.com/openai/v1/chat/completions";
