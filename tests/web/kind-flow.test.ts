@@ -52,6 +52,16 @@ async function run(
       return new Response(JSON.stringify({ results: RESULTS }), { status: 200 });
     }
 
+    // The question of whether a news search is broad (retrieval/aspects.ts) is
+    // answered "not broad" here and not counted: these tests are about other
+    // steps. tests/web/aspects-flow.test.ts covers it.
+    if (JSON.stringify(body).includes("asks for news")) {
+      return new Response(
+        JSON.stringify({ choices: [{ message: { content: "NONE" } }] }),
+        { status: 200 },
+      );
+    }
+
     calls.push({ kind: "groq", body });
 
     return groq();
