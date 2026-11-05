@@ -27,6 +27,12 @@ import { withoutSiteNames } from "../retrieval/clean.ts";
 export const RELEVANCE_NOTE =
   "Use only results about what was asked; leave out and never mention the others. A schedule, table or live ticker shows what is planned, not what happened: never present its entries as played or as news. A rumour or an expectation is not news: say that it is only reported. Never name a news agency, newspaper or website, even when the result's text does, and never add a remark about where the text came from. Write only what a result says: names, roles, scores and dates exactly as written, and a report as a report, said in an ordinary sentence in the user's language and never as a bracketed label or tag, never as a fact the text does not state. Write day and month names only in the language of the user's message, never a Persian month for another reader. If nothing is from today, begin with one sentence in the user's language saying that nothing from today was found (never that nothing was published), then give at most three relevant recent results with dates. This note is in English only for you: never copy any of its words into the answer; write everything in the language of the user's message, and never write English unless the user wrote English.";
 
+// Added to the notes when a news question was broad: the results then cover
+// several sides of one subject, and the answer is laid out by side. It replaces
+// the usual limit of three or five items and the ban on a closing question.
+export const BROAD_NOTE =
+  "These results cover several sides of one subject. Group the items under short plain headings in the user's language, one heading per side (for example a league, a national team, a club), each followed by dated one-line items, newest first, up to eight items in all and never one story twice. Then end with one short question offering to go deeper into one of the sides. This layout replaces the usual limit of three or five items and the ban on a closing question.";
+
 // What the model reads about one story: the text, its date, what the app
 // worked out (how old it is, how many sites carry it). No address and no site
 // name: the model has nothing to quote as a source. The date in 'published' is
@@ -37,6 +43,7 @@ export function forModel(
   item: EvidenceItem,
   ctx: ToolContext,
   locale: string | null = null,
+  snippetChars: number | null = null,
 ): Record<string, string | number> {
   const day = item.published
     ? publishedDay(item.published, ctx.now, ctx.timeZone)
@@ -46,7 +53,10 @@ export function forModel(
 
   return {
     title: withoutSiteNames(item.title),
-    snippet: withoutSiteNames(item.snippet),
+    snippet:
+      snippetChars === null
+        ? withoutSiteNames(item.snippet)
+        : withoutSiteNames(item.snippet).slice(0, snippetChars).trimEnd(),
     ...(published ? { published } : {}),
     when: whenLabel(item.ageDays),
     ...(item.ageDays !== null ? { age_days: item.ageDays } : {}),
