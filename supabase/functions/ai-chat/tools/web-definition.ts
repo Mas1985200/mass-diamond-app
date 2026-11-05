@@ -33,6 +33,17 @@ export const WEB_SEARCH_TOOL: ToolDefinition = {
           description:
             "Required. The short language tag of the main language of the country or place the question is about, for example fa for Iran, tr for Turkey, ja for Japan, es for Mexico. When the question is not about a particular country or place, give the language you answer in. The app uses it, only when the first search finds too little, to search once more in that language, so it never costs anything when the first search is enough.",
         },
+        country: {
+          type: "string",
+          description:
+            "Optional. The two-letter code (ISO 3166-1, for example IR, US, DE, TR, IN) of the country the question is about, or GLOBAL when it is about no particular country. The app uses it to look first on well known news sites of that country; leave it out when unsure.",
+        },
+        topic: {
+          type: "string",
+          enum: ["general", "sports", "economy", "technology", "science", "health", "entertainment"],
+          description:
+            "Optional. The field of the question: sports, economy, technology, science, health, entertainment, or general for everything else (politics, society, events). Used with country to pick the sites searched first.",
+        },
         local_query: {
           type: "string",
           description:
