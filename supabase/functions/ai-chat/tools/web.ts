@@ -43,6 +43,7 @@ import {
   flag,
   forModel,
   scriptOf,
+  sourcesCard,
 } from "./web-support.ts";
 
 // Other files and tests import these from here.
@@ -257,9 +258,6 @@ export async function runWebSearch(
     };
   }
 
-  // The sources card (see sourcesCard) is not shown: the product decision is
-  // that web answers carry no sources under them. To show it again, return
-  // `cards: [sourcesCard(results, ctx.lang)]` here when it is not null.
   // News and fresh data are ordered by freshness, and the app says itself when
   // nothing is from today (see retrieval/evidence.ts).
   const zone = ctx.timeZone;
@@ -292,6 +290,19 @@ export async function runWebSearch(
         .join(" ")
     : evidenceText;
   const shown = judged.items.slice(0, readCount);
+
+  // News answers carry a sources card under them: the real pages the model was
+  // given (addresses come from the search, never from the model, and the model
+  // never sees them). Other searches carry none.
+  const pages = shown.flatMap((item) => {
+    const page = results.find(
+      (result) =>
+        result.title === item.title && result.snippet === item.snippet,
+    );
+
+    return page ? [page] : [];
+  });
+  const sources = recencyMatters ? sourcesCard(pages, ctx.lang) : null;
 
   // Numbers only (see EvidenceStats): never the question or any page text.
   console.log(
@@ -340,5 +351,6 @@ export async function runWebSearch(
       ),
       ...(note ? { note } : {}),
     },
+    ...(sources ? { cards: [sources] } : {}),
   };
 }
