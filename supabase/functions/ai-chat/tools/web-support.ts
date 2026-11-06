@@ -44,6 +44,7 @@ export function forModel(
   ctx: ToolContext,
   locale: string | null = null,
   snippetChars: number | null = null,
+  schedule = false,
 ): Record<string, string | number> {
   const day = item.published
     ? publishedDay(item.published, ctx.now, ctx.timeZone)
@@ -60,6 +61,7 @@ export function forModel(
     ...(published ? { published } : {}),
     when: whenLabel(item.ageDays),
     ...(item.ageDays !== null ? { age_days: item.ageDays } : {}),
+    ...(schedule ? { kind: "schedule" } : {}),
     ...(item.independentSources > 1
       ? { reported_by: item.independentSources }
       : {}),
@@ -105,8 +107,8 @@ export function flag(value: unknown): boolean {
 }
 
 // The real pages a web answer rests on, as a card. The addresses come only from
-// the search results (never from the model), at most one per site. Not shown at
-// the moment (see runWebSearch).
+// the search results (never from the model), at most one per site. Shown under
+// news answers (see runWebSearch).
 export function sourcesCard(
   results: readonly WebResult[],
   lang: ToolContext["lang"],
@@ -128,4 +130,19 @@ export function sourcesCard(
   }
 
   return items.length > 0 ? { t: "sources", lang, items } : null;
+}
+
+// The search results behind the items the model was given, in the same order.
+export function pagesOf(
+  items: readonly Pick<EvidenceItem, "title" | "snippet">[],
+  results: readonly WebResult[],
+): WebResult[] {
+  return items.flatMap((item) => {
+    const page = results.find(
+      (result) =>
+        result.title === item.title && result.snippet === item.snippet,
+    );
+
+    return page ? [page] : [];
+  });
 }
