@@ -1,16 +1,9 @@
 {
-  // Mass Diamond web app: static build served by Cloudflare, plus a small
-  // worker that passes /sb/... calls on to Supabase (see worker/index.js).
+  // Mass Diamond web app: static build served by Cloudflare.
   "name": "mass-diamond-app",
-  "main": "worker/index.js",
   "compatibility_date": "2026-10-01",
   "assets": {
     "directory": "./dist",
-    "binding": "ASSETS",
-    "not_found_handling": "single-page-application",
-    "run_worker_first": ["/sb/*"]
-  },
-  "vars": {
-    "SUPABASE_ORIGIN": "https://xcmvzyoadzhyyrsgywnv.supabase.co"
+    "not_found_handling": "single-page-application"
   }
 }
