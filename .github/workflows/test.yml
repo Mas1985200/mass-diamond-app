@@ -3,19 +3,7 @@ name: Tests
 on:
   push:
     branches: [dev]
-    paths:
-      - "tests/**"
-      - "src/**"
-      - "supabase/functions/**"
-      - "package.json"
-      - ".github/workflows/test.yml"
   pull_request:
-    paths:
-      - "tests/**"
-      - "src/**"
-      - "supabase/functions/**"
-      - "package.json"
-      - ".github/workflows/test.yml"
   workflow_dispatch:
 
 permissions:
