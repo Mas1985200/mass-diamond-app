@@ -1,6 +1,6 @@
 // tests/web/sources-card.test.ts
-// The "sources" card can be built from search results (real addresses only,
-// one per site), but a web answer does not show it: that is a product decision.
+// The "sources" card is built from search results (real addresses only, one
+// per site). A news answer shows it under the answer; other web answers do not.
 // The model never sees an address either way.
 
 import test from "node:test";
@@ -118,6 +118,51 @@ test("runWebSearch: a failed or empty search shows no sources card", async () =>
     );
 
     assert.equal(failed.cards, undefined);
+  } finally {
+    globalThis.fetch = original;
+  }
+});
+
+test("runWebSearch: a news answer carries a sources card with real addresses, and the model still sees none", async () => {
+  const original = globalThis.fetch;
+
+  globalThis.fetch = (async () =>
+    new Response(
+      JSON.stringify({
+        results: [
+          {
+            title: "Alpha club wins the cup final",
+            url: "https://www.news-card-a.com/world/1",
+            content: "The captain scored twice in the last minutes",
+            published_date: "2026-10-29",
+            score: 0.9,
+          },
+          {
+            title: "Bravo coach signs a new contract today",
+            url: "https://news-card-b.org/2",
+            content: "The federation announced a two year extension",
+            published_date: "2026-10-29",
+            score: 0.8,
+          },
+        ],
+      }),
+      { status: 200, headers: { "Content-Type": "application/json" } },
+    )) as typeof fetch;
+
+  try {
+    const outcome = await runWebSearch(
+      { query: "sources card news query", news: true, fresh: true },
+      context,
+      signal,
+    );
+    const card = outcome.cards?.[0];
+
+    assert.equal(card?.t, "sources");
+    assert.deepEqual(
+      card && card.t === "sources" ? card.items.map((item) => item.host).sort() : [],
+      ["news-card-a.com", "news-card-b.org"],
+    );
+    assert.ok(!JSON.stringify(outcome.data).includes("http"));
   } finally {
     globalThis.fetch = original;
   }
