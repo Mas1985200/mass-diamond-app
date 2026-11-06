@@ -37,11 +37,13 @@ import {
 } from "../retrieval/kind.ts";
 import { tavilySearch } from "./tavily.ts";
 import { searchSides } from "./web-sides.ts";
+import { SCHEDULE_NOTE, pickSchedules } from "./web-schedule.ts";
 import {
   BROAD_NOTE,
   RELEVANCE_NOTE,
   flag,
   forModel,
+  pagesOf,
   scriptOf,
   sourcesCard,
 } from "./web-support.ts";
@@ -283,26 +285,26 @@ export async function runWebSearch(
     : recencyMatters
       ? WEB_NEWS_RESULTS
       : WEB_MAX_RESULTS;
-  const evidenceText = evidenceNote(judged, recencyMatters, readCount);
+  const schedules = pickSchedules(found, judged, kinds, broad);
+  const newsCount = readCount - schedules.length;
+  const evidenceText = evidenceNote(judged, recencyMatters, newsCount);
   const note = recencyMatters
-    ? [evidenceText, RELEVANCE_NOTE, broad ? BROAD_NOTE : ""]
+    ? [
+        evidenceText,
+        RELEVANCE_NOTE,
+        broad ? BROAD_NOTE : "",
+        schedules.length > 0 ? SCHEDULE_NOTE : "",
+      ]
         .filter(Boolean)
         .join(" ")
     : evidenceText;
-  const shown = judged.items.slice(0, readCount);
+  const shown = [...judged.items.slice(0, newsCount), ...schedules];
 
   // News answers carry a sources card under them: the real pages the model was
-  // given (addresses come from the search, never from the model, and the model
-  // never sees them). Other searches carry none.
-  const pages = shown.flatMap((item) => {
-    const page = results.find(
-      (result) =>
-        result.title === item.title && result.snippet === item.snippet,
-    );
-
-    return page ? [page] : [];
-  });
-  const sources = recencyMatters ? sourcesCard(pages, ctx.lang) : null;
+  // given (the addresses never reach the model). Other searches carry none.
+  const sources = recencyMatters
+    ? sourcesCard(pagesOf(shown, results), ctx.lang)
+    : null;
 
   // Numbers only (see EvidenceStats): never the question or any page text.
   console.log(
@@ -326,6 +328,7 @@ export async function runWebSearch(
       // Other sides searched for a broad subject; answered by side.
       aspects: aspectCount,
       broad,
+      schedules: schedules.length,
       // Label counts and results dropped as not reports (null = no labels).
       kinds: kinds ? kindCounts(kinds) : null,
       droppedNotNews: found.items.length - judged.items.length,
@@ -347,7 +350,13 @@ export async function runWebSearch(
     data: {
       as_of: dayKey(ctx.now, zone),
       results: shown.map((item) =>
-        forModel(item, ctx, locale, broad ? WEB_BROAD_SNIPPET_CHARS : null),
+        forModel(
+          item,
+          ctx,
+          locale,
+          broad ? WEB_BROAD_SNIPPET_CHARS : null,
+          schedules.includes(item),
+        ),
       ),
       ...(note ? { note } : {}),
     },
