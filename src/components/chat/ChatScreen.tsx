@@ -31,6 +31,16 @@ import {
   type AttachErrorCode,
   type AttachedPhoto,
 } from "../../lib/imageAttach";
+import VideoIcon from "../../features/video/VideoIcon";
+import {
+  VIDEO_MODE_ID,
+  VIDEO_TEXT,
+  initialModeId,
+  isVideoBlocked,
+  modeAfterLeavingChat,
+  modeAfterSending,
+  pathForMode,
+} from "../../features/video/videoMode";
 
 const PHOTO_ERROR_MESSAGES: Record<AttachErrorCode, string> = {
   unsupported: "فقط فایل عکس قابل پیوست است.",
@@ -64,6 +74,7 @@ interface QuickAction {
   readonly hint: string;
   readonly enabled: boolean;
   readonly highlight?: boolean;
+  readonly wide?: boolean;
   readonly icon: ReactNode;
 }
 
@@ -110,6 +121,14 @@ const QUICK_ACTIONS: readonly QuickAction[] = [
     hint: "دنبال چه ملکی هستی؟",
     enabled: true,
     icon: <HomeIcon />,
+  },
+  {
+    id: VIDEO_MODE_ID,
+    label: VIDEO_TEXT.label,
+    hint: VIDEO_TEXT.hint,
+    enabled: true,
+    wide: true,
+    icon: <VideoIcon />,
   },
 ];
 
@@ -1161,7 +1180,10 @@ export default function ChatScreen() {
   } = useChat();
 
   const [draft, setDraft] = useState("");
-  const [activeId, setActiveId] = useState<string | null>(null);
+  // The address /video opens the chat already in video mode.
+  const [activeId, setActiveId] = useState<string | null>(() =>
+    initialModeId(window.location.pathname),
+  );
   const [viewportHeight, setViewportHeight] = useState<number | null>(null);
   const [showJump, setShowJump] = useState(false);
   const [photos, setPhotos] = useState<readonly AttachedPhoto[]>([]);
@@ -1217,7 +1239,8 @@ export default function ChatScreen() {
     (draft.trim().length > 0 || photos.length > 0) &&
     !isSending &&
     !isPreparing &&
-    !voiceBusy;
+    !voiceBusy &&
+    !isVideoBlocked(activeId);
   const showThinking = isSending && !isStreaming;
 
   const activeAction =
@@ -1384,7 +1407,7 @@ export default function ChatScreen() {
       setDraft("");
       setPhotos([]);
       setPhotoError(null);
-      setActiveId(null);
+      setActiveId((current) => modeAfterLeavingChat(current));
     };
 
     window.addEventListener("popstate", handlePopState);
@@ -1408,6 +1431,16 @@ export default function ChatScreen() {
       window.clearTimeout(timer);
     };
   }, [voice.error, voice.canRetry, clearVoiceError]);
+
+  // The address bar follows the mode: /video while the video mode is on, and
+  // back to the home address when it is switched off.
+  useEffect(() => {
+    const next = pathForMode(activeId, window.location.pathname);
+
+    if (next !== null) {
+      window.history.replaceState(window.history.state, "", next);
+    }
+  }, [activeId]);
 
   useEffect(() => {
     const element = inputRef.current;
@@ -1569,7 +1602,8 @@ export default function ChatScreen() {
       (!text && photos.length === 0) ||
       isSending ||
       isPreparing ||
-      voiceBusy
+      voiceBusy ||
+      isVideoBlocked(activeId)
     ) {
       return;
     }
@@ -1587,7 +1621,7 @@ export default function ChatScreen() {
     setDraft("");
     setPhotos([]);
     setPhotoError(null);
-    setActiveId(null);
+    setActiveId((current) => modeAfterSending(current));
 
     await sendMessage(text, {
       photos: attached,
@@ -1889,6 +1923,8 @@ export default function ChatScreen() {
                   onClick={() => handleQuickAction(action)}
                   disabled={!action.enabled}
                   className={`md-glass flex items-center gap-2 rounded-full px-3.5 py-2.5 text-[13px] text-text transition-colors duration-180 hover:border-[rgba(57,255,136,0.4)] disabled:cursor-not-allowed ${
+                    action.wide ? "col-span-2 justify-center" : ""
+                  } ${
                     action.highlight
                       ? "md-search-highlight disabled:opacity-90"
                       : "disabled:opacity-40"
@@ -1965,6 +2001,12 @@ export default function ChatScreen() {
                 </button>
               </span>
             </div>
+          )}
+
+          {isVideoBlocked(activeId) && (
+            <p role="status" className="pb-1 text-xs text-text-subtle">
+              {VIDEO_TEXT.engineNotReady}
+            </p>
           )}
 
           <PhotoStrip
