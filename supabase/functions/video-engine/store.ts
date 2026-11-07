@@ -26,6 +26,7 @@ export interface JobPatch {
   resultDurationSeconds?: number | null;
   errorCode?: string | null;
   errorMessage?: string | null;
+  creditsCharged?: number;
   costMicroUsd?: number;
   startedAt?: string | null;
   completedAt?: string | null;
