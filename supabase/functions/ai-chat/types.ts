@@ -1,6 +1,8 @@
 // supabase/functions/ai-chat/types.ts
 // Shared types used across the ai-chat function.
 
+import type { VideoPort } from "./video/port.ts";
+
 export type Lang = "fa" | "en";
 
 export type GeoPoint = {
@@ -16,6 +18,9 @@ export type ChatRequestBody = {
   readonly location: GeoPoint | null;
   // Photos the user attached to this message, as validated data URLs.
   readonly images: readonly string[];
+  // The chat mode the app is in. Only "video" (make a video) is sent today;
+  // every other mode is just a hint in the app and stays undefined here.
+  readonly mode?: "video";
 };
 
 export type ChatMessageRow = {
@@ -54,6 +59,9 @@ export type ToolContext = {
   readonly lang: Lang;
   readonly tavilyKey: string | undefined;
   readonly memory?: MemoryPort | null;
+  // Starts a video in the video function. Present only while the chat is in
+  // video mode.
+  readonly video?: VideoPort | null;
 };
 
 export type PlaceItem = {
@@ -124,6 +132,16 @@ export type CardPayload =
       readonly t: "sources";
       readonly lang: Lang;
       readonly items: readonly SourceItem[];
+    }
+  | {
+      // A video being made: the app follows the job by its id and shows
+      // progress, then the video (see the video function).
+      readonly t: "video";
+      readonly lang: Lang;
+      readonly jobId: string;
+      readonly aspectRatio: "16:9" | "9:16" | "1:1";
+      readonly durationSeconds: number;
+      readonly quality: "draft" | "standard" | "high";
     };
 
 export type ToolOutcome = {
