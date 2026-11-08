@@ -23,7 +23,9 @@ export type Capability =
   | "fresh"
   | "place"
   | "time"
-  | "attach";
+  | "attach"
+  // Never chosen by the router: the app sets it when the user is in video mode.
+  | "video";
 
 export const ROUTER_TIMEOUT_MS = 3_500;
 const CONTEXT_MESSAGES = 3;
@@ -39,6 +41,8 @@ export const TOOLS_BY_CAPABILITY: Record<Capability, readonly string[]> = {
   time: ["get_datetime"],
   // The user points at something they sent that is not there: no tool can help.
   attach: [],
+  // Video mode: every message is about making a video.
+  video: ["create_video"],
 };
 
 // null = unknown: everything is offered.
