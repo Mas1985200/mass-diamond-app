@@ -36,7 +36,9 @@ import { summarizePreviousConversation } from "./memory/summary.ts";
 import { describePhotos, withPhotoDescription } from "./attachments/describe.ts";
 import { lookupPhotoSubject } from "./attachments/visual-search.ts";
 import { startAgent } from "./agent.ts";
-import { routeCapability } from "./routing/capability.ts";
+import { routeCapability, type Capability } from "./routing/capability.ts";
+import { createVideoPort } from "./video/port.ts";
+import { scopeToTurn, turnKeyOf, withVideoRules } from "./video/mode.ts";
 import { prepareIllustration } from "./images/illustrate.ts";
 import { createSseResponse } from "./sse.ts";
 import { giveBackMessage, takeMessage } from "./quota/gate.ts";
@@ -213,6 +215,21 @@ Deno.serve(async (request: Request): Promise<Response> => {
     const memory: MemoryContext = { facts, summaries };
     const activeUserId = user.id;
 
+    // Video mode: the chat only offers the create_video tool, through a door
+    // that calls the video function with this person's own sign-in.
+    const videoMode = body.mode === "video";
+    const video = videoMode
+      ? scopeToTurn(
+          createVideoPort({
+            baseUrl: supabaseUrl,
+            authorization: request.headers.get("Authorization") ?? "",
+            conversationId,
+            apiKey: supabaseAnonKey,
+          }),
+          turnKeyOf(conversationId, history.length, message),
+        )
+      : null;
+
     const ctx: ToolContext = {
       now: new Date(),
       timeZone: resolveTimeZone(body.timeZone),
@@ -222,6 +239,7 @@ Deno.serve(async (request: Request): Promise<Response> => {
       memory: {
         remember: (text: string) => addFact(adminClient, activeUserId, text),
       },
+      video,
     };
 
     console.log(
@@ -317,18 +335,27 @@ Deno.serve(async (request: Request): Promise<Response> => {
       // Pictures of the subject are chosen beside the answer (never when the
       // user sent photos of their own).
       const illustration: Promise<readonly PhotoItem[]> | null =
-        photos.length === 0
+        photos.length === 0 && !videoMode
           ? prepareIllustration(conversation, master.signal)
           : null;
 
       // What kind of question is this? The answer decides which prompt rules
       // and tools the model receives (null = unknown: everything).
-      const capability = await routeCapability(conversation, master.signal);
+      const capability: Capability | null = videoMode
+        ? "video"
+        : await routeCapability(conversation, master.signal);
+
+      const basePrompt = buildSystemPrompt(
+        ctx,
+        memory,
+        capability,
+        photos.length,
+      );
 
       const aiMessages: AIMessage[] = [
         {
           role: "system",
-          content: buildSystemPrompt(ctx, memory, capability, photos.length),
+          content: videoMode ? withVideoRules(basePrompt) : basePrompt,
         },
         ...conversation,
       ];
@@ -418,61 +445,3 @@ Deno.serve(async (request: Request): Promise<Response> => {
         {
           success: false,
           error: {
-            code: "AI_PROVIDER_ERROR",
-            message: "The AI provider returned an empty response.",
-            retryable: true,
-          },
-          requestId,
-          conversationId,
-        },
-        502,
-      );
-    }
-
-    try {
-      await saveExchange(
-        adminClient,
-        user.id,
-        conversationId,
-        storedMessage,
-        content,
-      );
-      await touchConversation(adminClient, user.id, conversationId);
-    } catch (saveError) {
-      console.error(
-        `request ${requestId}: failed to save the exchange: ${describeError(saveError)}`,
-      );
-    }
-
-    return jsonResponse({
-      success: true,
-      requestId,
-      conversationId,
-      message: { role: "assistant", content },
-      provider: started.provider,
-      model: started.model,
-    });
-  } catch (error) {
-    const message = describeError(error);
-
-    const isAuthError =
-      message === AUTH_REQUIRED_MESSAGE || message === AUTH_INVALID_MESSAGE;
-
-    console.error(`request ${requestId}: failed: ${message.slice(0, 300)}`);
-
-    await refund();
-
-    return jsonResponse(
-      {
-        success: false,
-        error: {
-          code: isAuthError ? "AUTH_REQUIRED" : "INTERNAL_ERROR",
-          message,
-          retryable: !isAuthError,
-        },
-        requestId,
-      },
-      isAuthError ? 401 : 500,
-    );
-  }
-});
