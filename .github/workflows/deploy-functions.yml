@@ -52,3 +52,8 @@ jobs:
         run: supabase functions deploy transcribe --project-ref xcmvzyoadzhyyrsgywnv --use-api --yes
         env:
           SUPABASE_ACCESS_TOKEN: ${{ secrets.SUPABASE_ACCESS_TOKEN }}
+
+      - name: Deploy video-engine
+        run: supabase functions deploy video-engine --project-ref xcmvzyoadzhyyrsgywnv --use-api --yes
+        env:
+          SUPABASE_ACCESS_TOKEN: ${{ secrets.SUPABASE_ACCESS_TOKEN }}
