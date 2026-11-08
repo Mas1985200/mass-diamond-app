@@ -10,6 +10,7 @@ import { runRemember } from "./remember.ts";
 import { runMarketPrices } from "./prices.ts";
 import { runKnowledgeLookup } from "./knowledge.ts";
 import { runMedicalLookup } from "./medical.ts";
+import { runCreateVideo } from "./video.ts";
 
 function parseToolArguments(raw: string): Record<string, unknown> {
   if (!raw.trim()) {
@@ -64,6 +65,8 @@ async function runTool(
         return await runMedicalLookup(args, ctx, signal);
       case "remember":
         return await runRemember(args, ctx);
+      case "create_video":
+        return await runCreateVideo(args, ctx);
       default:
         return { data: { error: `Unknown tool: ${name}` } };
     }
