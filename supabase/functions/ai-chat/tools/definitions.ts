@@ -3,6 +3,7 @@
 
 import type { ToolContext, ToolDefinition } from "../types.ts";
 import { WEB_SEARCH_TOOL } from "./web-definition.ts";
+import { CREATE_VIDEO_TOOL } from "./video.ts";
 
 export { WEB_SEARCH_TOOL };
 
@@ -274,6 +275,11 @@ export function buildToolDefinitions(ctx: ToolContext): ToolDefinition[] {
 
   if (ctx.memory) {
     tools.push(REMEMBER_TOOL);
+  }
+
+  // Only when the app has a video door (the user is in video mode).
+  if (ctx.video) {
+    tools.push(CREATE_VIDEO_TOOL);
   }
 
   return tools;
