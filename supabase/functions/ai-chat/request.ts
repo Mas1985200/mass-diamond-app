@@ -10,6 +10,7 @@ import type { ChatRequestBody, GeoPoint } from "./types.ts";
 import { isRecord, isValidGeo, round4 } from "./lib/util.ts";
 import { getBearerToken } from "./lib/http.ts";
 import { parseImages } from "./attachments/images.ts";
+import { parseMode } from "./video/mode.ts";
 
 export const UUID_PATTERN =
   /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
@@ -77,6 +78,7 @@ export function parseRequestBody(value: unknown): ChatRequestBody {
     timeZone,
     location: parseGeoPoint(value.location),
     images: parseImages(value.images),
+    mode: parseMode(value.mode),
   };
 }
 
