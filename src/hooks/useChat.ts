@@ -34,6 +34,8 @@ export interface ChatLocation {
 export interface SendOptions {
   readonly location?: ChatLocation;
   readonly photos?: readonly AttachedPhoto[];
+  // The chat mode of this message. Only "video" (make a video) is sent on.
+  readonly mode?: "video";
 }
 
 export interface UseChatResult {
@@ -308,6 +310,7 @@ export function useChat(): UseChatResult {
   );
   const failedLocationRef = useRef<ChatLocation | null>(null);
   const failedPhotosRef = useRef<readonly AttachedPhoto[]>([]);
+  const failedModeRef = useRef<"video" | null>(null);
   const generationRef = useRef(0);
 
   const abortRef = useRef<AbortController | null>(null);
@@ -429,6 +432,7 @@ export function useChat(): UseChatResult {
       location: ChatLocation | null,
       photos: readonly AttachedPhoto[],
       shownText: string,
+      mode: "video" | null,
     ): Promise<boolean> => {
       if (sendingRef.current) {
         return false;
@@ -442,6 +446,7 @@ export function useChat(): UseChatResult {
       failedTextRef.current = null;
       failedLocationRef.current = null;
       failedPhotosRef.current = [];
+      failedModeRef.current = null;
       resetStreamState();
       setIsSending(true);
       setIsStreaming(false);
@@ -466,6 +471,7 @@ export function useChat(): UseChatResult {
           message: withLocationTag(text, location),
           conversationId: conversationIdRef.current,
           images: photos.map((photo) => photo.dataUrl),
+          ...(mode === "video" ? { mode } : {}),
           signal: controller.signal,
           onMeta: (meta) => {
             if (generation !== generationRef.current) {
@@ -554,6 +560,7 @@ export function useChat(): UseChatResult {
         failedTextRef.current = text;
         failedLocationRef.current = location;
         failedPhotosRef.current = photos;
+        failedModeRef.current = mode;
         setError(toFailure(caught));
 
         return false;
@@ -587,6 +594,7 @@ export function useChat(): UseChatResult {
         options?.location ?? null,
         photos,
         text,
+        options?.mode ?? null,
       );
     },
     [dispatchMessage],
@@ -605,6 +613,7 @@ export function useChat(): UseChatResult {
       failedLocationRef.current,
       failedPhotosRef.current,
       "",
+      failedModeRef.current,
     );
   }, [dispatchMessage]);
 
@@ -619,6 +628,7 @@ export function useChat(): UseChatResult {
     failedTextRef.current = null;
     failedLocationRef.current = null;
     failedPhotosRef.current = [];
+    failedModeRef.current = null;
     sendingRef.current = false;
     setMessages([]);
     setError(null);
@@ -700,3 +710,5 @@ export function useChat(): UseChatResult {
     reset,
   };
 }
+
+// end of useChat.ts
