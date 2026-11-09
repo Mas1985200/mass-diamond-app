@@ -445,3 +445,63 @@ Deno.serve(async (request: Request): Promise<Response> => {
         {
           success: false,
           error: {
+            code: "AI_PROVIDER_ERROR",
+            message: "The AI provider returned an empty response.",
+            retryable: true,
+          },
+          requestId,
+          conversationId,
+        },
+        502,
+      );
+    }
+
+    try {
+      await saveExchange(
+        adminClient,
+        user.id,
+        conversationId,
+        storedMessage,
+        content,
+      );
+      await touchConversation(adminClient, user.id, conversationId);
+    } catch (saveError) {
+      console.error(
+        `request ${requestId}: failed to save the exchange: ${describeError(saveError)}`,
+      );
+    }
+
+    return jsonResponse({
+      success: true,
+      requestId,
+      conversationId,
+      message: { role: "assistant", content },
+      provider: started.provider,
+      model: started.model,
+    });
+  } catch (error) {
+    const message = describeError(error);
+
+    const isAuthError =
+      message === AUTH_REQUIRED_MESSAGE || message === AUTH_INVALID_MESSAGE;
+
+    console.error(`request ${requestId}: failed: ${message.slice(0, 300)}`);
+
+    await refund();
+
+    return jsonResponse(
+      {
+        success: false,
+        error: {
+          code: isAuthError ? "AUTH_REQUIRED" : "INTERNAL_ERROR",
+          message,
+          retryable: !isAuthError,
+        },
+        requestId,
+      },
+      isAuthError ? 401 : 500,
+    );
+  }
+});
+
+// end of index.ts
