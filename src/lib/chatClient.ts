@@ -65,6 +65,9 @@ export interface StreamChatMessageInput {
   readonly conversationId: string | null;
   // Photos attached to this message (JPEG data URLs, at most three).
   readonly images?: readonly string[];
+  // The chat mode the message is sent in. Only "video" (make a video) is
+  // understood by the server; leave it out for a normal message.
+  readonly mode?: "video";
   readonly signal?: AbortSignal;
   readonly onMeta?: (meta: StreamMeta) => void;
   readonly onDelta: (text: string) => void;
@@ -505,6 +508,10 @@ export async function streamChatMessage(
     body.images = [...input.images];
   }
 
+  if (input.mode === "video") {
+    body.mode = "video";
+  }
+
   if (input.conversationId) {
     body.conversationId = input.conversationId;
   }
@@ -594,3 +601,5 @@ export async function streamChatMessage(
 
   throw errorFromPayload(payload, response.status, input.conversationId);
 }
+
+// end of chatClient.ts
