@@ -1,7 +1,7 @@
 // tests/video/video-mode.test.ts
 // The video mode opens from the /video address, keeps the address in step with
-// the mode, survives sending and leaving a chat, and never lets the chat pretend
-// to make a video while the engine is not connected. Pure code, nothing faked.
+// the mode, survives sending and leaving a chat, and holds sending back only
+// when the engine is switched off. Pure code, nothing faked.
 
 import test from "node:test";
 import assert from "node:assert/strict";
@@ -65,9 +65,13 @@ test("leaving a chat keeps the video mode and ends every other mode", () => {
   assert.equal(modeAfterLeavingChat(null), null);
 });
 
-test("while the engine is not connected the video mode holds sending back", () => {
-  assert.equal(VIDEO_ENGINE_READY, false);
-  assert.equal(isVideoBlocked(VIDEO_MODE_ID), true);
+test("the video engine is switched on, so the video mode lets messages through", () => {
+  assert.equal(VIDEO_ENGINE_READY, true);
+  assert.equal(isVideoBlocked(VIDEO_MODE_ID), false);
+});
+
+test("no other mode is ever held back by the video engine", () => {
   assert.equal(isVideoBlocked("web"), false);
+  assert.equal(isVideoBlocked("learn"), false);
   assert.equal(isVideoBlocked(null), false);
 });
