@@ -204,8 +204,9 @@ export function retryDelayMs(attempt: number): number {
 }
 
 // A job whose engine has not finished in this time is given up (and its
-// credits returned), so nothing stays "processing" forever.
-export const JOB_DEADLINE_MS = 15 * 60_000;
+// credits returned), so nothing stays "processing" forever. The free shared
+// GPU engine can queue for a long time when it is busy, so the time is long.
+export const JOB_DEADLINE_MS = 45 * 60_000;
 
 export function isOverdue(job: Job, nowMs: number): boolean {
   const started = Date.parse(job.startedAt ?? job.createdAt);
