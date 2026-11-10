@@ -10,11 +10,11 @@ export const VIDEO_MODE_ID = "video";
 export const VIDEO_PATH = "/video";
 export const HOME_PATH = "/";
 
-// The video engine (server side) is built in later steps. Until it is
-// connected, the chat must not pretend to make a video, so sending in this mode
-// is held back and the person is told why. The step that connects the real
-// engine switches this to true.
-export const VIDEO_ENGINE_READY = false;
+// The video engine is connected: the chat sends the message in video mode, the
+// server starts a real job and the video card shows its progress. If a video
+// cannot be made the card says why; the chat never shows a fake video. Setting
+// this to false holds sending back again and tells the person why.
+export const VIDEO_ENGINE_READY = true;
 
 export const VIDEO_TEXT = {
   label: "ساخت ویدیو",
