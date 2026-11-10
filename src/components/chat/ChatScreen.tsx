@@ -32,6 +32,8 @@ import {
   type AttachedPhoto,
 } from "../../lib/imageAttach";
 import VideoIcon from "../../features/video/VideoIcon";
+import VideoCard from "../../features/video/VideoCard";
+import { parseVideoCard, type VideoCardData } from "../../features/video/videoCard";
 import {
   VIDEO_MODE_ID,
   VIDEO_TEXT,
@@ -223,7 +225,8 @@ type CardData =
   | ClockCardData
   | PlacesCardData
   | PhotosCardData
-  | SourcesCardData;
+  | SourcesCardData
+  | VideoCardData;
 
 const MARKER_RE =
   /:::md-(?:clock~([^~\s]+)~([A-Za-z0-9_\/+-]+)~(fa|en)|card~([A-Za-z0-9_-]+)):::/g;
@@ -306,6 +309,10 @@ function parseCard(value: unknown): CardData | null {
 
   if (value.t === "sources") {
     return parseSourcesCard(value);
+  }
+
+  if (value.t === "video") {
+    return parseVideoCard(value);
   }
 
   return null;
@@ -1094,6 +1101,8 @@ function CardView({ card }: { readonly card: CardData }) {
       return <PhotosCard card={card} />;
     case "sources":
       return <SourcesCard card={card} />;
+    case "video":
+      return <VideoCard card={card} />;
   }
 }
 
@@ -1621,10 +1630,14 @@ export default function ChatScreen() {
     setDraft("");
     setPhotos([]);
     setPhotoError(null);
+    // The mode this message is sent in, read before the mode may change.
+    const sentMode = activeId === VIDEO_MODE_ID ? VIDEO_MODE_ID : undefined;
+
     setActiveId((current) => modeAfterSending(current));
 
     await sendMessage(text, {
       photos: attached,
+      ...(sentMode ? { mode: sentMode } : {}),
       ...(fix ? { location: { lat: fix.lat, lon: fix.lon } } : {}),
     });
   };
