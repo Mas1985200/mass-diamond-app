@@ -1,11 +1,18 @@
 // supabase/functions/video-engine/providers/wan-space.ts
-// The free test engine: the Wan2.2 (TI2V-5B) video model running in a Hugging
-// Face Space (ZeroGPU), called over plain HTTP with the project's own token.
+// The free test engine: the fast Wan 2.2 (14B, Lightning) image-to-video model
+// running in a Hugging Face Space (ZeroGPU), called over plain HTTP with the
+// project's own token.
+//
+// The model always starts from a picture:
+//  - image to video: the person's picture is animated;
+//  - text to video: a picture is first made from the text (cf-image.ts), then
+//    animated. The shape of the video follows the shape of the picture.
 //
 // It follows the documented "Spaces as API endpoints" protocol:
+//   upload  POST {space}/gradio_api/upload                 (the picture)
 //   submit  POST {space}/gradio_api/call/{api}   body {"data":[...]}  -> {"event_id"}
 //   poll    GET  {space}/gradio_api/call/{api}/{event_id}  (server-sent events)
-// A video takes 2-3 minutes, so poll() listens for a short time only and
+// A video takes about a minute, so poll() listens for a short time only and
 // answers "running" when nothing has finished yet; the worker asks again.
 //
 // Free ZeroGPU time is small (a few minutes of GPU per day for the whole
@@ -14,105 +21,130 @@
 // give the credits back. Nothing here pretends: a bad or unexpected answer is
 // an error, never a made-up video.
 //
-// Secrets: HF_TOKEN (required). Optional: HF_VIDEO_SPACE_URL (default below),
+// Secrets: HF_TOKEN (required). For text to video also CF_ACCOUNT_ID and
+// CF_AI_TOKEN (see cf-image.ts). Optional: HF_VIDEO_SPACE_URL (default below),
 // HF_VIDEO_API_NAME (default "generate_video").
 
 import {
   ProviderError,
-  type AspectRatio,
   type PollResult,
   type ProviderCapabilities,
   type SubmitResult,
+  type VideoKind,
   type VideoProvider,
   type VideoQuality,
   type VideoRequest,
 } from "./types.ts";
+import { generateImage, readImageConfig } from "./cf-image.ts";
 
 export const WAN_PROVIDER_ID = "hf-wan22-space";
-export const DEFAULT_SPACE_URL = "https://smikke-wan2-video-generation.hf.space";
+export const DEFAULT_SPACE_URL = "https://zerogpu-aoti-wan2-2-fp8da-aoti-faster.hf.space";
 export const DEFAULT_API_NAME = "generate_video";
 
-const FPS = 24;
-const MIN_FRAMES = 25;
-const MAX_FRAMES = 145;
-const SUBMIT_TIMEOUT_MS = 15_000;
+const MIN_SECONDS = 0.5;
+const MAX_SECONDS = 5;
+const GUIDANCE_SCALE = 1;
+const SUBMIT_TIMEOUT_MS = 20_000;
+const UPLOAD_TIMEOUT_MS = 30_000;
+const DOWNLOAD_TIMEOUT_MS = 20_000;
 const POLL_LISTEN_MS = 20_000;
-const GUIDANCE_SCALE = 5;
+const MAX_PICTURE_BYTES = 12 * 1024 * 1024;
 
-const CAPABILITIES: ProviderCapabilities = {
-  id: WAN_PROVIDER_ID,
-  label: "Wan 2.2 (free)",
-  kinds: ["text_to_video", "image_to_video"],
-  aspectRatios: ["16:9", "9:16", "1:1"],
-  // The Space stops at 145 frames; 5 s keeps a generation inside the free
-  // 3-minute GPU limit.
-  maxDurationSeconds: 5,
-  free: true,
-  costMicroUsdPerSecond: 0,
-};
-
-// Sizes the Space accepts (width 512-1920, height 512-1080), multiples of 32.
-const SIZES: Record<VideoQuality, Record<AspectRatio, [number, number]>> = {
-  draft: { "16:9": [896, 512], "9:16": [512, 896], "1:1": [512, 512] },
-  standard: { "16:9": [896, 512], "9:16": [512, 896], "1:1": [512, 512] },
-  high: { "16:9": [1024, 576], "9:16": [576, 1024], "1:1": [768, 768] },
-};
+// What the model should avoid, in the language it was trained with most.
+const NEGATIVE_PROMPT =
+  "blurry, low quality, distorted, deformed, extra fingers, bad hands, bad face, static image, no motion, jpeg artifacts, watermark, subtitles, text, logo";
 
 const STEPS: Record<VideoQuality, number> = {
-  draft: 20,
-  standard: 30,
-  high: 40,
+  draft: 4,
+  standard: 6,
+  high: 8,
 };
+
+function capabilitiesFor(textToVideo: boolean): ProviderCapabilities {
+  const kinds: VideoKind[] = textToVideo
+    ? ["text_to_video", "image_to_video"]
+    : ["image_to_video"];
+  return {
+    id: WAN_PROVIDER_ID,
+    label: "Wan 2.2 (free)",
+    kinds,
+    aspectRatios: ["16:9", "9:16", "1:1"],
+    // The Space stops at about 5 s, which also keeps a generation inside the
+    // free GPU time limit.
+    maxDurationSeconds: MAX_SECONDS,
+    free: true,
+    costMicroUsdPerSecond: 0,
+  };
+}
 
 export interface WanInputs {
   prompt: string;
-  imageUrl: string | null;
-  width: number;
-  height: number;
-  numFrames: number;
+  negativePrompt: string;
+  durationSeconds: number;
   steps: number;
   guidance: number;
+  guidance2: number;
   seed: number;
 }
 
 // Turns the request into the Space's settings. The same rules for every request.
 export function buildWanInputs(request: VideoRequest): WanInputs {
-  const [width, height] = SIZES[request.quality][request.aspectRatio];
-  const frames = Math.round(request.durationSeconds * FPS) + 1;
+  const seconds = Number.isFinite(request.durationSeconds)
+    ? request.durationSeconds
+    : MAX_SECONDS;
   return {
     prompt: request.prompt,
-    imageUrl:
-      request.kind === "image_to_video" ? (request.imageUrls[0] ?? null) : null,
-    width,
-    height,
-    numFrames: Math.min(MAX_FRAMES, Math.max(MIN_FRAMES, frames)),
+    negativePrompt: NEGATIVE_PROMPT,
+    durationSeconds: Math.min(MAX_SECONDS, Math.max(MIN_SECONDS, seconds)),
     steps: STEPS[request.quality],
     guidance: GUIDANCE_SCALE,
+    guidance2: GUIDANCE_SCALE,
     seed: request.seed ?? Math.floor(Math.random() * 2_147_483_647),
   };
 }
 
 // The positional list the Space expects, in the order of its API description:
-// prompt, image, width, height, num_frames, num_inference_steps,
-// guidance_scale, seed.
-export function buildCallData(inputs: WanInputs): unknown[] {
-  const image = inputs.imageUrl
-    ? {
-        path: inputs.imageUrl,
-        url: inputs.imageUrl,
-        meta: { _type: "gradio.FileData" },
-      }
-    : null;
+// input_image, prompt, steps, negative_prompt, duration_seconds,
+// guidance_scale, guidance_scale_2, seed, randomize_seed.
+export function buildCallData(inputs: WanInputs, picturePath: string): unknown[] {
   return [
+    { path: picturePath, meta: { _type: "gradio.FileData" } },
     inputs.prompt,
-    image,
-    inputs.width,
-    inputs.height,
-    inputs.numFrames,
     inputs.steps,
+    inputs.negativePrompt,
+    inputs.durationSeconds,
     inputs.guidance,
+    inputs.guidance2,
     inputs.seed,
+    false,
   ];
+}
+
+export interface Picture {
+  bytes: Uint8Array<ArrayBuffer>;
+  mime: string;
+}
+
+// A picture from a data link (data:image/png;base64,...), or null when the
+// link is not a valid picture.
+export function pictureFromDataLink(link: string): Picture | null {
+  const match = /^data:(image\/[a-z0-9.+-]+);base64,([A-Za-z0-9+/=]+)$/i.exec(link);
+  if (!match) return null;
+  try {
+    const binary = atob(match[2]);
+    if (binary.length === 0 || binary.length > MAX_PICTURE_BYTES) return null;
+    const bytes = new Uint8Array(binary.length);
+    for (let i = 0; i < binary.length; i += 1) bytes[i] = binary.charCodeAt(i);
+    return { bytes, mime: match[1].toLowerCase() };
+  } catch {
+    return null;
+  }
+}
+
+export function pictureFileName(mime: string): string {
+  if (mime === "image/jpeg") return "picture.jpg";
+  if (mime === "image/webp") return "picture.webp";
+  return "picture.png";
 }
 
 export interface SseEvent {
@@ -140,7 +172,8 @@ export function parseSseEvents(text: string): SseEvent[] {
   return events;
 }
 
-// Finds the video link in the Space's answer: [{video:{url|path}}, "status"].
+// Finds the video link in the Space's answer: [{url|path...}, seed] (or
+// [{video:{url|path}}, "status"] for other Spaces).
 export function extractVideoUrl(
   payload: unknown,
   spaceUrl: string,
@@ -218,17 +251,85 @@ function statusError(status: number, where: string): ProviderError {
   return new ProviderError("engine_error", `${where}: unexpected status ${status}`, status >= 500);
 }
 
+// The person's own picture (a signed storage link or a data link), as bytes.
+async function loadPicture(
+  link: string,
+  fetchImpl: typeof fetch,
+  signal?: AbortSignal,
+): Promise<Picture> {
+  if (link.startsWith("data:")) {
+    const picture = pictureFromDataLink(link);
+    if (!picture) {
+      throw new ProviderError("unsupported_request", "the picture is not readable", false);
+    }
+    return picture;
+  }
+  const timeout = AbortSignal.timeout(DOWNLOAD_TIMEOUT_MS);
+  let response: Response;
+  try {
+    response = await fetchImpl(link, {
+      signal: signal ? AbortSignal.any([signal, timeout]) : timeout,
+    });
+  } catch {
+    throw new ProviderError("timeout", "picture: could not be downloaded", true);
+  }
+  if (!response.ok) throw statusError(response.status, "picture");
+  const mime = (response.headers.get("content-type") ?? "").split(";")[0].trim().toLowerCase();
+  const bytes = new Uint8Array(await response.arrayBuffer());
+  if (!mime.startsWith("image/") || bytes.length === 0 || bytes.length > MAX_PICTURE_BYTES) {
+    throw new ProviderError("unsupported_request", "the picture is not usable", false);
+  }
+  return { bytes, mime };
+}
+
+// Puts the picture into the Space and returns the file path the Space gave it.
+async function uploadPicture(
+  config: WanConfig,
+  picture: Picture,
+  fetchImpl: typeof fetch,
+  signal?: AbortSignal,
+): Promise<string> {
+  const form = new FormData();
+  form.append(
+    "files",
+    new Blob([picture.bytes], { type: picture.mime }),
+    pictureFileName(picture.mime),
+  );
+  const timeout = AbortSignal.timeout(UPLOAD_TIMEOUT_MS);
+  let response: Response;
+  try {
+    response = await fetchImpl(`${config.spaceUrl}/gradio_api/upload`, {
+      method: "POST",
+      headers: { Authorization: `Bearer ${config.token}` },
+      body: form,
+      signal: signal ? AbortSignal.any([signal, timeout]) : timeout,
+    });
+  } catch {
+    throw new ProviderError("timeout", "upload: no answer from the engine", true);
+  }
+  if (!response.ok) throw statusError(response.status, "upload");
+  const body = (await response.json().catch(() => null)) as unknown;
+  const path = Array.isArray(body) ? body[0] : null;
+  if (typeof path !== "string" || !path) {
+    throw new ProviderError("bad_response", "upload: no file path in the answer", true);
+  }
+  return path;
+}
+
 export function createWanSpaceProvider(
   env: Readonly<Record<string, string | undefined>>,
   fetchImpl: typeof fetch = fetch,
 ): VideoProvider {
   const config = readWanConfig(env);
+  const imageConfig = readImageConfig(env);
 
   const callUrl = (): string =>
     `${config!.spaceUrl}/gradio_api/call/${config!.apiName}`;
 
   return {
-    capabilities: CAPABILITIES,
+    // Text to video needs the picture maker; without it only the person's own
+    // pictures can be animated.
+    capabilities: capabilitiesFor(imageConfig !== null),
 
     isConfigured(e) {
       return readWanConfig(e) !== null;
@@ -238,6 +339,44 @@ export function createWanSpaceProvider(
       if (!config) {
         throw new ProviderError("not_configured", "HF_TOKEN is not set", false);
       }
+      const inputs = buildWanInputs(request);
+
+      let picture: Picture;
+      if (request.kind === "image_to_video") {
+        const link = request.imageUrls[0];
+        if (!link) {
+          throw new ProviderError("unsupported_request", "no picture to animate", false);
+        }
+        picture = await loadPicture(link, fetchImpl, signal);
+      } else if (request.kind === "text_to_video") {
+        if (!imageConfig) {
+          throw new ProviderError(
+            "not_configured",
+            "CF_ACCOUNT_ID and CF_AI_TOKEN are not set",
+            false,
+          );
+        }
+        const link = await generateImage(
+          imageConfig,
+          {
+            prompt: request.prompt,
+            aspectRatio: request.aspectRatio,
+            seed: inputs.seed,
+          },
+          fetchImpl,
+          signal,
+        );
+        const made = pictureFromDataLink(link);
+        if (!made) {
+          throw new ProviderError("bad_response", "image: the picture is not readable", true);
+        }
+        picture = made;
+      } else {
+        throw new ProviderError("unsupported_request", "this kind of video is not supported", false);
+      }
+
+      const picturePath = await uploadPicture(config, picture, fetchImpl, signal);
+
       const timeout = AbortSignal.timeout(SUBMIT_TIMEOUT_MS);
       let response: Response;
       try {
@@ -247,7 +386,7 @@ export function createWanSpaceProvider(
             "Content-Type": "application/json",
             Authorization: `Bearer ${config.token}`,
           },
-          body: JSON.stringify({ data: buildCallData(buildWanInputs(request)) }),
+          body: JSON.stringify({ data: buildCallData(inputs, picturePath) }),
           signal: signal ? AbortSignal.any([signal, timeout]) : timeout,
         });
       } catch {
@@ -345,3 +484,5 @@ function failed(
 ): PollResult {
   return { state: "failed", code, message, retryable };
 }
+
+// end of wan-space.ts
