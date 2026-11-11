@@ -10,9 +10,11 @@
 // Answer: {"ok":true,...} or {"ok":false,"error":{code,message,retryable}}
 //
 // Secrets: HF_TOKEN (the free Wan engine; optional HF_VIDEO_SPACE_URL and
-// HF_VIDEO_API_NAME), VIDEO_FREE_MONTHLY_CREDITS and
-// VIDEO_PRO_MONTHLY_CREDITS (optional plan sizes). SUPABASE_URL,
-// SUPABASE_ANON_KEY and SUPABASE_SERVICE_ROLE_KEY are provided by Supabase.
+// HF_VIDEO_API_NAME), CF_ACCOUNT_ID and CF_AI_TOKEN (the picture maker that
+// turns a text into the first picture; optional CF_IMAGE_MODEL),
+// VIDEO_FREE_MONTHLY_CREDITS and VIDEO_PRO_MONTHLY_CREDITS (optional plan
+// sizes). SUPABASE_URL, SUPABASE_ANON_KEY and SUPABASE_SERVICE_ROLE_KEY are
+// provided by Supabase.
 
 import { handleVideoApi, type ApiDeps } from "./api.ts";
 import { readVideoLimits } from "./credits.ts";
@@ -101,6 +103,9 @@ function buildEngine(): EngineDeps | null {
     HF_TOKEN: Deno.env.get("HF_TOKEN"),
     HF_VIDEO_SPACE_URL: Deno.env.get("HF_VIDEO_SPACE_URL"),
     HF_VIDEO_API_NAME: Deno.env.get("HF_VIDEO_API_NAME"),
+    CF_ACCOUNT_ID: Deno.env.get("CF_ACCOUNT_ID"),
+    CF_AI_TOKEN: Deno.env.get("CF_AI_TOKEN"),
+    CF_IMAGE_MODEL: Deno.env.get("CF_IMAGE_MODEL"),
   };
   const client = createServiceClient(url, serviceKey);
 
