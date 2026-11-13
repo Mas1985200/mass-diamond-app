@@ -108,6 +108,12 @@ function errorText(body: unknown): string {
   return "";
 }
 
+// A short, safe description of why a call failed (never the token or the body).
+function reasonOf(error: unknown): string {
+  if (error instanceof Error) return `${error.name}: ${error.message}`.slice(0, 160);
+  return String(error).slice(0, 160);
+}
+
 // Sorts a failed answer into a clear, honest error.
 export function imageError(status: number, text: string): ProviderError {
   const lower = text.toLowerCase();
@@ -136,7 +142,20 @@ export async function generateImage(
   fetchImpl: typeof fetch = fetch,
   signal?: AbortSignal,
 ): Promise<string> {
-  const timeout = AbortSignal.timeout(IMAGE_TIMEOUT_MS);
+  // One controller for both reasons to stop: the caller gave up, or we waited
+  // too long. (No AbortSignal.any, so it works in every runtime.)
+  const controller = new AbortController();
+  let timedOut = false;
+  const timer = setTimeout(() => {
+    timedOut = true;
+    controller.abort();
+  }, IMAGE_TIMEOUT_MS);
+  const onCallerAbort = () => controller.abort();
+  if (signal) {
+    if (signal.aborted) controller.abort();
+    else signal.addEventListener("abort", onCallerAbort, { once: true });
+  }
+
   let response: Response;
   try {
     response = await fetchImpl(
@@ -148,11 +167,18 @@ export async function generateImage(
           Authorization: `Bearer ${config.token}`,
         },
         body: JSON.stringify(buildImageBody(config.model, request)),
-        signal: signal ? AbortSignal.any([signal, timeout]) : timeout,
+        signal: controller.signal,
       },
     );
-  } catch {
-    throw new ProviderError("timeout", "image: no answer from the image engine", true);
+  } catch (error) {
+    throw new ProviderError(
+      "timeout",
+      `image: no answer from the image engine (${timedOut ? "waited too long" : reasonOf(error)})`,
+      true,
+    );
+  } finally {
+    clearTimeout(timer);
+    signal?.removeEventListener("abort", onCallerAbort);
   }
 
   const type = response.headers.get("content-type") ?? "";
