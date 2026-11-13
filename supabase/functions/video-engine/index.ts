@@ -9,7 +9,8 @@
 //   "cancel" | "list", ...}  (see api.ts for the fields)
 // Answer: {"ok":true,...} or {"ok":false,"error":{code,message,retryable}}
 //
-// Secrets: HF_TOKEN (the free Wan engine; optional HF_VIDEO_SPACE_URL and
+// Secrets: FAL_KEY (the paid Wan 2.2 engine, made straight from the text;
+// optional FAL_VIDEO_MODEL), HF_TOKEN (the free Wan engine; optional HF_VIDEO_SPACE_URL and
 // HF_VIDEO_API_NAME), CF_ACCOUNT_ID and CF_AI_TOKEN (the picture maker that
 // turns a text into the first picture; optional CF_IMAGE_MODEL),
 // VIDEO_FREE_MONTHLY_CREDITS and VIDEO_PRO_MONTHLY_CREDITS (optional plan
@@ -27,6 +28,7 @@ import {
   type EngineDeps,
 } from "./engine.ts";
 import { describeModels } from "./providers/registry.ts";
+import { createFalVideoProvider } from "./providers/fal-video.ts";
 import { createWanSpaceProvider } from "./providers/wan-space.ts";
 import {
   createServiceClient,
@@ -100,6 +102,8 @@ function buildEngine(): EngineDeps | null {
 
   // Only the secrets the engines need are handed to them.
   const env: Record<string, string | undefined> = {
+    FAL_KEY: Deno.env.get("FAL_KEY"),
+    FAL_VIDEO_MODEL: Deno.env.get("FAL_VIDEO_MODEL"),
     HF_TOKEN: Deno.env.get("HF_TOKEN"),
     HF_VIDEO_SPACE_URL: Deno.env.get("HF_VIDEO_SPACE_URL"),
     HF_VIDEO_API_NAME: Deno.env.get("HF_VIDEO_API_NAME"),
@@ -113,8 +117,8 @@ function buildEngine(): EngineDeps | null {
     store: createSupabaseStore(client, readVideoLimits((n) => Deno.env.get(n))),
     files: createSupabaseFiles(client),
     download: createDownloadVideo({ hfToken: env.HF_TOKEN }),
-    // Best engine first. More engines are added to this list.
-    providers: [createWanSpaceProvider(env)],
+    // Best engine first. An engine without its secrets is skipped.
+    providers: [createFalVideoProvider(env), createWanSpaceProvider(env)],
     env,
     now: Date.now,
   };
@@ -162,3 +166,5 @@ Deno.serve(async (request: Request): Promise<Response> => {
     return respond(500, errorBody("INTERNAL_ERROR", "The video service failed. Try again.", true));
   }
 });
+
+// end of index.ts
