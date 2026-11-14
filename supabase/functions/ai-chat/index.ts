@@ -38,7 +38,7 @@ import { lookupPhotoSubject } from "./attachments/visual-search.ts";
 import { startAgent } from "./agent.ts";
 import { routeCapability, type Capability } from "./routing/capability.ts";
 import { createVideoPort } from "./video/port.ts";
-import { scopeToTurn, turnKeyOf, withVideoRules } from "./video/mode.ts";
+import { pinModel, scopeToTurn, turnKeyOf, withVideoRules } from "./video/mode.ts";
 import { prepareIllustration } from "./images/illustrate.ts";
 import { createSseResponse } from "./sse.ts";
 import { giveBackMessage, takeMessage } from "./quota/gate.ts";
@@ -220,12 +220,15 @@ Deno.serve(async (request: Request): Promise<Response> => {
     const videoMode = body.mode === "video";
     const video = videoMode
       ? scopeToTurn(
-          createVideoPort({
-            baseUrl: supabaseUrl,
-            authorization: request.headers.get("Authorization") ?? "",
-            conversationId,
-            apiKey: supabaseAnonKey,
-          }),
+          pinModel(
+            createVideoPort({
+              baseUrl: supabaseUrl,
+              authorization: request.headers.get("Authorization") ?? "",
+              conversationId,
+              apiKey: supabaseAnonKey,
+            }),
+            body.videoModel,
+          ),
           turnKeyOf(conversationId, history.length, message),
         )
       : null;
