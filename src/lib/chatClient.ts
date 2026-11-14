@@ -68,6 +68,9 @@ export interface StreamChatMessageInput {
   // The chat mode the message is sent in. Only "video" (make a video) is
   // understood by the server; leave it out for a normal message.
   readonly mode?: "video";
+  // The video model picked in the video model chooser. Only sent in the video
+  // mode; leave it out for "auto" so the engine chooses.
+  readonly videoModel?: string;
   readonly signal?: AbortSignal;
   readonly onMeta?: (meta: StreamMeta) => void;
   readonly onDelta: (text: string) => void;
@@ -510,6 +513,10 @@ export async function streamChatMessage(
 
   if (input.mode === "video") {
     body.mode = "video";
+
+    if (input.videoModel) {
+      body.videoModel = input.videoModel;
+    }
   }
 
   if (input.conversationId) {
