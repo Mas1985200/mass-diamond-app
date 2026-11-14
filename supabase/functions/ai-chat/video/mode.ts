@@ -6,9 +6,33 @@
 import { VIDEO_TOOL_RULE } from "./rules.ts";
 import type { VideoPort } from "./port.ts";
 
+const MODEL_ID_PATTERN = /^[a-z0-9][a-z0-9._-]*$/i;
+const MAX_MODEL_ID_CHARS = 64;
+
 // Only the exact word "video" turns the mode on; anything else is ignored.
 export function parseMode(value: unknown): "video" | undefined {
   return value === "video" ? "video" : undefined;
+}
+
+// The video model the person picked in the app's model chooser. Only a plain
+// model id is accepted; "auto", nothing, or anything else means "no pick".
+export function parseVideoModel(value: unknown): string | undefined {
+  if (typeof value !== "string") return undefined;
+  const id = value.trim();
+  if (!id || id.length > MAX_MODEL_ID_CHARS || !MODEL_ID_PATTERN.test(id)) {
+    return undefined;
+  }
+  return id.toLowerCase() === "auto" ? undefined : id;
+}
+
+// A model the person picked on purpose always wins over what the chat model
+// guessed, so the video is made by exactly the engine they chose. Without a
+// pick the port is returned as it is.
+export function pinModel(port: VideoPort, model: string | undefined): VideoPort {
+  if (!model) return port;
+  return {
+    create: (args, options) => port.create({ ...args, model }, options),
+  };
 }
 
 // The video rule is added at the end of the system prompt, as its own block.
@@ -36,3 +60,5 @@ export function scopeToTurn(port: VideoPort, turnKey: string): VideoPort {
       }),
   };
 }
+
+// end of mode.ts
