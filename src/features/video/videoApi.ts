@@ -1,21 +1,27 @@
 // src/features/video/videoApi.ts
-// Asks the video function (video-engine) about a video, or cancels it. The
-// network and the sign-in are given in (see videoClient.ts), so every case is
-// tested without a network.
+// Asks the video function (video-engine) about a video, cancels it, or asks
+// which video models exist (for the model chooser). The network and the
+// sign-in are given in (see videoClient.ts), so every case is tested without
+// a network.
 //
 // The function answers {"ok":true,"job":{...}} or {"ok":false,"error":{...}}.
 // This file only turns "something went wrong on the way" into three clear
-// outcomes; reading the answer itself is parseJobAnswer's job.
+// outcomes; reading the answer itself is parseJobAnswer's (jobs) and
+// parseModelsAnswer's (models) job.
 
 import { parseJobAnswer, type JobAnswer } from "./videoCard.ts";
+import { parseModelsAnswer, type ModelsAnswer } from "./videoModels.ts";
 
-export type CallOutcome =
+export type Outcome<T> =
   // The function answered (even with an error it explains).
-  | { readonly kind: "answer"; readonly answer: JobAnswer }
+  | { readonly kind: "answer"; readonly answer: T }
   // No answer could be read: no internet, a timeout, or a broken reply.
   | { readonly kind: "unreachable" }
   // The caller stopped the call (the card went away).
   | { readonly kind: "aborted" };
+
+export type CallOutcome = Outcome<JobAnswer>;
+export type ModelsOutcome = Outcome<ModelsAnswer>;
 
 export interface VideoAuth {
   // The project's address, e.g. https://xxxx.supabase.co
@@ -34,14 +40,16 @@ export interface VideoApiDeps {
 export const VIDEO_FUNCTION_PATH = "/functions/v1/video-engine";
 export const CALL_TIMEOUT_MS = 25_000;
 
-type Action = "status" | "cancel";
-
-async function call(
+// One call to the video function: the sign-in, the time limit, the stop
+// signal and the three outcomes are the same for every kind of call; only the
+// request body and the way the answer is read differ.
+async function send<T>(
   deps: VideoApiDeps,
-  action: Action,
-  jobId: string,
+  payload: Record<string, unknown>,
+  parse: (body: unknown) => T,
+  signedOut: T,
   signal?: AbortSignal,
-): Promise<CallOutcome> {
+): Promise<Outcome<T>> {
   if (signal?.aborted) return { kind: "aborted" };
 
   let auth: VideoAuth | null;
@@ -50,9 +58,7 @@ async function call(
   } catch {
     return { kind: "unreachable" };
   }
-  if (!auth) {
-    return { kind: "answer", answer: { ok: false, code: "AUTH_REQUIRED", retryable: false } };
-  }
+  if (!auth) return { kind: "answer", answer: signedOut };
 
   const controller = new AbortController();
   let timedOut = false;
@@ -75,7 +81,7 @@ async function call(
       {
         method: "POST",
         headers,
-        body: JSON.stringify({ action, job_id: jobId }),
+        body: JSON.stringify(payload),
         signal: controller.signal,
       },
     );
@@ -86,7 +92,7 @@ async function call(
     } catch {
       return { kind: "unreachable" };
     }
-    return { kind: "answer", answer: parseJobAnswer(body) };
+    return { kind: "answer", answer: parse(body) };
   } catch {
     if (signal?.aborted && !timedOut) return { kind: "aborted" };
     return { kind: "unreachable" };
@@ -96,6 +102,9 @@ async function call(
   }
 }
 
+const SIGNED_OUT_JOB: JobAnswer = { ok: false, code: "AUTH_REQUIRED", retryable: false };
+const SIGNED_OUT_MODELS: ModelsAnswer = { ok: false };
+
 export interface VideoApi {
   status(jobId: string, signal?: AbortSignal): Promise<CallOutcome>;
   cancel(jobId: string, signal?: AbortSignal): Promise<CallOutcome>;
@@ -103,7 +112,23 @@ export interface VideoApi {
 
 export function createVideoApi(deps: VideoApiDeps): VideoApi {
   return {
-    status: (jobId, signal) => call(deps, "status", jobId, signal),
-    cancel: (jobId, signal) => call(deps, "cancel", jobId, signal),
+    status: (jobId, signal) =>
+      send(deps, { action: "status", job_id: jobId }, parseJobAnswer, SIGNED_OUT_JOB, signal),
+    cancel: (jobId, signal) =>
+      send(deps, { action: "cancel", job_id: jobId }, parseJobAnswer, SIGNED_OUT_JOB, signal),
   };
 }
+
+// The list of video models for the model chooser.
+export interface VideoModelsApi {
+  models(signal?: AbortSignal): Promise<ModelsOutcome>;
+}
+
+export function createVideoModelsApi(deps: VideoApiDeps): VideoModelsApi {
+  return {
+    models: (signal) =>
+      send(deps, { action: "models" }, parseModelsAnswer, SIGNED_OUT_MODELS, signal),
+  };
+}
+
+// end of videoApi.ts
