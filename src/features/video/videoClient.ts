@@ -4,7 +4,13 @@
 // project address. Kept tiny on purpose; the rules are in videoApi.ts.
 
 import { supabase } from "../../lib/supabase";
-import { createVideoApi, type VideoApi, type VideoAuth } from "./videoApi.ts";
+import {
+  createVideoApi,
+  createVideoModelsApi,
+  type VideoApi,
+  type VideoAuth,
+  type VideoModelsApi,
+} from "./videoApi.ts";
 
 function pickString(value: unknown): string | null {
   return typeof value === "string" && value.trim().length > 0
@@ -40,3 +46,6 @@ async function getAuth(): Promise<VideoAuth | null> {
 }
 
 export const videoApi: VideoApi = createVideoApi({ getAuth });
+export const videoModelsApi: VideoModelsApi = createVideoModelsApi({ getAuth });
+
+// end of videoClient.ts
