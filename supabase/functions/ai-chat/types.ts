@@ -21,6 +21,9 @@ export type ChatRequestBody = {
   // The chat mode the app is in. Only "video" (make a video) is sent today;
   // every other mode is just a hint in the app and stays undefined here.
   readonly mode?: "video";
+  // The video model the person picked in the video model chooser. Absent for
+  // "auto" and outside the video mode; the chat then lets the engine choose.
+  readonly videoModel?: string;
 };
 
 export type ChatMessageRow = {
@@ -190,3 +193,5 @@ export type OAIMessage =
       readonly tool_call_id: string;
       readonly content: string;
     };
+
+// end of types.ts
