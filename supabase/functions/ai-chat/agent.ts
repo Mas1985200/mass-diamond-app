@@ -89,6 +89,11 @@ function roundOptions(
   };
 }
 
+// True when the newest user message is the only one the user has sent.
+export function isFirstUserTurn(messages: readonly AIMessage[]): boolean {
+  return messages.filter((message) => message.role === "user").length === 1;
+}
+
 // Tools that can answer a question about current information.
 const FRESH_TOOL_NAMES: readonly string[] = ["web_search", "get_market_prices"];
 
@@ -115,6 +120,18 @@ export function firstRoundOptions(
 
     if (freshTools.some((tool) => tool.function.name === "web_search")) {
       return { tools: freshTools, toolChoice: "required" };
+    }
+  }
+
+  // Video mode: the first message of a video chat is the idea for a video, so
+  // the model must start it. Left to its own choice a model sometimes only
+  // says "I am making it" without calling the tool, and then nothing is made.
+  // Later messages stay free: they may only ask about the video or change it.
+  if (capability === "video" && isFirstUserTurn(messages)) {
+    const videoTools = only(["create_video"]);
+
+    if (videoTools.length > 0) {
+      return { tools: videoTools, toolChoice: "required" };
     }
   }
 
@@ -466,3 +483,5 @@ export async function startAgent(
     }),
   };
 }
+
+// end of agent.ts
