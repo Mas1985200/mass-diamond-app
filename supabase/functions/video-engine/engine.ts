@@ -8,8 +8,8 @@
 // charges the credits, saves the job and starts it at an engine right away.
 // After that, every status request from the app calls advanceVideo, which asks
 // the engine how it is going, and finishes, retries or gives up the job. A job
-// is held by one request at a time (a short "lease"), so two phones or two
-// quick polls never work on the same job twice.
+// is held by one request at a time (a "lease" that lasts as long as one step
+// may take), so two phones or two quick polls never work on the same job twice.
 //
 // Honest rules:
 //  - Credits are taken before the work and given back (once) when no video
@@ -40,7 +40,9 @@ import {
 import type { VideoJobInput } from "./request.ts";
 import type { DownloadVideo, JobStore, VideoFiles } from "./store.ts";
 
-export const LEASE_MS = 60_000;
+// A step may hold the connection to the engine for a long time (the Space is
+// followed by one open connection), so the lease must outlast it.
+export const LEASE_MS = 150_000;
 export const MAX_VIDEO_BYTES = 50 * 1024 * 1024;
 export const LINK_TTL_SECONDS = 3_600;
 // How long an engine usually needs; only used to show a believable progress.
@@ -430,3 +432,5 @@ export async function presentJob(
     : null;
   return toPublicJob(job, { videoUrl, thumbnailUrl });
 }
+
+// end of engine.ts
