@@ -27,6 +27,7 @@ import {
   submitVideo,
   type EngineDeps,
 } from "./engine.ts";
+import { answerSoon } from "./soon.ts";
 import { describeModels } from "./providers/registry.ts";
 import { createFalVideoProvider } from "./providers/fal-video.ts";
 import { createWanSpaceProvider } from "./providers/wan-space.ts";
@@ -38,6 +39,9 @@ import {
 
 const MAX_BODY_BYTES = 64 * 1024;
 const AUTH_TIMEOUT_MS = 6_000;
+// A status request answers within this time even when the engine is still
+// being followed; the following then goes on in the background.
+const STATUS_WAIT_MS = 15_000;
 
 const CORS_HEADERS: Record<string, string> = {
   "Access-Control-Allow-Origin": "*",
@@ -54,6 +58,19 @@ function respond(status: number, body: unknown): Response {
       "Content-Type": "application/json; charset=utf-8",
     },
   });
+}
+
+// Keeps a task alive after the answer is sent when the runtime supports it.
+function keepAlive(task: Promise<unknown>): void {
+  const runtime = (
+    globalThis as {
+      EdgeRuntime?: { waitUntil?: (promise: Promise<unknown>) => void };
+    }
+  ).EdgeRuntime;
+
+  if (runtime?.waitUntil) {
+    runtime.waitUntil(task);
+  }
 }
 
 function errorBody(code: string, message: string, retryable: boolean) {
@@ -152,7 +169,15 @@ Deno.serve(async (request: Request): Promise<Response> => {
     const api: ApiDeps = {
       userId,
       submit: (input) => submitVideo(engine, userId, input),
-      advance: (jobId) => advanceVideo(engine, userId, jobId),
+      advance: (jobId) =>
+        answerSoon({
+          work: advanceVideo(engine, userId, jobId),
+          waitMs: STATUS_WAIT_MS,
+          fallback: () => engine.store.get(userId, jobId),
+          keepAlive,
+          onLateError: (error) =>
+            console.error("video-engine: background step failed:", error),
+        }),
       cancel: (jobId) => cancelVideo(engine, userId, jobId),
       list: (limit, before) => engine.store.list(userId, limit, before),
       present: (job) => presentJob(engine, job),
