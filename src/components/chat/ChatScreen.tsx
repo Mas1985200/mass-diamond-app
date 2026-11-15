@@ -33,6 +33,12 @@ import {
 } from "../../lib/imageAttach";
 import VideoIcon from "../../features/video/VideoIcon";
 import VideoCard from "../../features/video/VideoCard";
+import VideoModelPicker from "../../features/video/VideoModelPicker";
+import {
+  useVideoModelChoice,
+  useVideoModels,
+} from "../../features/video/useVideoModels";
+import { modelToSend } from "../../features/video/videoModels";
 import { parseVideoCard, type VideoCardData } from "../../features/video/videoCard";
 import {
   VIDEO_MODE_ID,
@@ -1193,6 +1199,10 @@ export default function ChatScreen() {
   const [activeId, setActiveId] = useState<string | null>(() =>
     initialModeId(window.location.pathname),
   );
+  // The video model chooser: the list is loaded only while the video mode is
+  // on, and the pick is kept on this device.
+  const videoModels = useVideoModels(activeId === VIDEO_MODE_ID);
+  const videoModelChoice = useVideoModelChoice(videoModels.models);
   const [viewportHeight, setViewportHeight] = useState<number | null>(null);
   const [showJump, setShowJump] = useState(false);
   const [photos, setPhotos] = useState<readonly AttachedPhoto[]>([]);
@@ -1635,9 +1645,15 @@ export default function ChatScreen() {
 
     setActiveId((current) => modeAfterSending(current));
 
+    // "auto" is not sent: the engine then chooses.
+    const sentVideoModel = sentMode
+      ? modelToSend(videoModelChoice.choice)
+      : null;
+
     await sendMessage(text, {
       photos: attached,
       ...(sentMode ? { mode: sentMode } : {}),
+      ...(sentVideoModel ? { videoModel: sentVideoModel } : {}),
       ...(fix ? { location: { lat: fix.lat, lon: fix.lon } } : {}),
     });
   };
@@ -2000,7 +2016,7 @@ export default function ChatScreen() {
           dir="rtl"
         >
           {activeAction && (
-            <div className="flex items-center pb-1">
+            <div className="flex flex-wrap items-center gap-2 pb-1">
               <span className="inline-flex items-center gap-2 rounded-full border border-[rgba(57,255,136,0.35)] bg-[rgba(57,255,136,0.08)] px-3 py-1 text-xs text-primary">
                 <span className="shrink-0">{activeAction.icon}</span>
                 <span>{activeAction.label}</span>
@@ -2013,6 +2029,13 @@ export default function ChatScreen() {
                   ×
                 </button>
               </span>
+              {activeId === VIDEO_MODE_ID && (
+                <VideoModelPicker
+                  models={videoModels.models}
+                  value={videoModelChoice.choice}
+                  onChange={videoModelChoice.choose}
+                />
+              )}
             </div>
           )}
 
@@ -2290,3 +2313,5 @@ function HomeIcon() {
     </svg>
   );
 }
+
+// end of ChatScreen.tsx
