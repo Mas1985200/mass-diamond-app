@@ -12,8 +12,12 @@
 //   upload  POST {space}/gradio_api/upload                 (the picture)
 //   submit  POST {space}/gradio_api/call/{api}   body {"data":[...]}  -> {"event_id"}
 //   poll    GET  {space}/gradio_api/call/{api}/{event_id}  (server-sent events)
-// A video takes about a minute, so poll() listens for a short time only and
-// answers "running" when nothing has finished yet; the worker asks again.
+// The Space follows a job with ONE connection: when that connection is closed
+// the job is cancelled and asking again gives "404: Not Found". So poll() keeps
+// one connection open until the video is ready (a video takes about a minute)
+// and never listens a second time. When the Space does not answer inside
+// POLL_LISTEN_MS the job is reported as failed (retryable), never as "still
+// running", because a job that nobody listens to is already gone.
 //
 // Free ZeroGPU time is small (a few minutes of GPU per day for the whole
 // token), so this engine is for testing and light use. Every failure is
@@ -47,7 +51,7 @@ const GUIDANCE_SCALE = 1;
 const SUBMIT_TIMEOUT_MS = 20_000;
 const UPLOAD_TIMEOUT_MS = 30_000;
 const DOWNLOAD_TIMEOUT_MS = 20_000;
-const POLL_LISTEN_MS = 20_000;
+const POLL_LISTEN_MS = 100_000;
 const MAX_PICTURE_BYTES = 12 * 1024 * 1024;
 
 // What the model should avoid, in the language it was trained with most.
@@ -436,10 +440,18 @@ export function createWanSpaceProvider(
         }
       } catch (error) {
         if (error instanceof ProviderError) throw error;
-        // Our own listening time ran out: the video is simply not ready yet.
         if (signal?.aborted) throw error;
         const late = readOutcome(text, config.spaceUrl);
-        return late ?? { state: "running" };
+        if (late) return late;
+        // Our listening time ran out (or the line broke). The connection is
+        // closed now, so the Space has dropped the job: it cannot be followed
+        // again, only started again.
+        return {
+          state: "failed",
+          code: "engine_busy",
+          message: `poll: no result in time [events: ${eventNames(text)}]`,
+          retryable: true,
+        };
       }
       return (
         readOutcome(text, config.spaceUrl) ?? {
@@ -451,6 +463,15 @@ export function createWanSpaceProvider(
       );
     },
   };
+}
+
+// The distinct event names in the order they first appeared (at most 8).
+export function eventNames(text: string): string {
+  const names: string[] = [];
+  for (const event of parseSseEvents(text)) {
+    if (!names.includes(event.event) && names.length < 8) names.push(event.event);
+  }
+  return names.join(",") || "none";
 }
 
 // The result found in the events read so far, or null when still running.
@@ -471,7 +492,14 @@ export function readOutcome(text: string, spaceUrl: string): PollResult | null {
     if (event.event === "error") {
       const detail = event.data && event.data !== "null" ? event.data : "engine error";
       const { code, retryable } = classifyEngineError(detail);
-      return failed(code, detail.slice(0, 300), retryable);
+      // The names of the events that came before the error (never their
+      // content) show how far the Space got: a "generating" event means the
+      // GPU work had started, only heartbeats mean it never began.
+      return failed(
+        code,
+        `${detail.slice(0, 220)} [events: ${eventNames(text)}]`,
+        retryable,
+      );
     }
   }
   return null;
