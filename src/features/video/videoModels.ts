@@ -130,6 +130,9 @@ export const MODEL_TEXT: Record<Lang, {
   readonly free: string;
   readonly unavailable: string;
   readonly credits: (n: number) => string;
+  readonly priceTitle: string;
+  readonly perSecond: (n: number) => string;
+  readonly qualities: Readonly<Record<Quality, string>>;
 }> = {
   fa: {
     title: "مدل ویدیو",
@@ -138,6 +141,9 @@ export const MODEL_TEXT: Record<Lang, {
     free: "رایگان",
     unavailable: "به‌زودی",
     credits: (n) => `${n} اعتبار`,
+    priceTitle: "هزینه",
+    perSecond: (n) => `${n.toLocaleString("fa-IR")} اعتبار در ثانیه`,
+    qualities: { draft: "پیش‌نویس", standard: "استاندارد", high: "بالا" },
   },
   en: {
     title: "Video model",
@@ -146,6 +152,9 @@ export const MODEL_TEXT: Record<Lang, {
     free: "Free",
     unavailable: "Coming soon",
     credits: (n) => `${n} credits`,
+    priceTitle: "Cost",
+    perSecond: (n) => `${n.toLocaleString("en-US")} credits per second`,
+    qualities: { draft: "Draft", standard: "Standard", high: "High" },
   },
 };
 
@@ -197,6 +206,27 @@ export function creditsForVideo(
 ): number {
   const whole = Number.isFinite(seconds) ? Math.max(1, Math.ceil(seconds)) : 1;
   return whole * prices[asQuality(quality)];
+}
+
+export interface PriceLine {
+  readonly quality: Quality;
+  readonly label: string;
+  readonly price: string;
+}
+
+// The price list shown in the chooser: one line for each quality, in the
+// order draft, standard, high, with the server's price per second.
+export function priceLines(
+  prices: CreditsPerSecond = DEFAULT_CREDITS_PER_SECOND,
+  lang: Lang = "fa",
+): PriceLine[] {
+  const text = MODEL_TEXT[lang];
+  const order: readonly Quality[] = ["draft", "standard", "high"];
+  return order.map((quality) => ({
+    quality,
+    label: text.qualities[quality],
+    price: text.perSecond(prices[quality]),
+  }));
 }
 
 // end of videoModels.ts
