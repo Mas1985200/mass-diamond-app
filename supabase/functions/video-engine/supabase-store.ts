@@ -8,7 +8,13 @@ import {
   type SupabaseClient,
 } from "https://esm.sh/@supabase/supabase-js@2.117.3";
 
-import { parseCreditDecision, type VideoLimits } from "./credits.ts";
+import {
+  buildCreditStatus,
+  monthStartUtc,
+  parseCreditDecision,
+  type CreditStatus,
+  type VideoLimits,
+} from "./credits.ts";
 import { rowToJob, type Job } from "./jobs.ts";
 import { inputToRow, patchToRow } from "./rows.ts";
 import type { JobStore, VideoFiles } from "./store.ts";
@@ -153,6 +159,45 @@ export function createSupabaseStore(
   return store;
 }
 
+// Reads what is left of this month's credits without taking any. The plan and
+// the month's use are read the same way the credit function in the database
+// reads them. null when either cannot be read: never a guessed number.
+export function createCreditReader(
+  client: SupabaseClient,
+  limits: VideoLimits,
+  now: () => number = Date.now,
+): (userId: string) => Promise<CreditStatus | null> {
+  return async (userId) => {
+    const at = now();
+
+    const plans = await client
+      .from("user_plans")
+      .select("plan")
+      .eq("user_id", userId)
+      .eq("plan", "pro")
+      .or(`expires_at.is.null,expires_at.gt.${new Date(at).toISOString()}`)
+      .limit(1);
+    if (plans.error) {
+      console.error("read plan failed:", plans.error.message);
+      return null;
+    }
+
+    const usage = await client
+      .from("video_usage")
+      .select("credits")
+      .eq("user_id", userId)
+      .eq("month", monthStartUtc(at))
+      .maybeSingle();
+    if (usage.error) {
+      console.error("read video usage failed:", usage.error.message);
+      return null;
+    }
+
+    const plan = (plans.data ?? []).length > 0 ? "pro" : "free";
+    return buildCreditStatus(plan, usage.data?.credits ?? 0, limits, at);
+  };
+}
+
 export function createSupabaseFiles(client: SupabaseClient): VideoFiles {
   return {
     async upload(path, bytes, contentType) {
@@ -170,3 +215,5 @@ export function createSupabaseFiles(client: SupabaseClient): VideoFiles {
     },
   };
 }
+
+// end of supabase-store.ts
