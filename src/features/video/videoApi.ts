@@ -1,15 +1,16 @@
 // src/features/video/videoApi.ts
-// Asks the video function (video-engine) about a video, cancels it, or asks
-// which video models exist (for the model chooser). The network and the
-// sign-in are given in (see videoClient.ts), so every case is tested without
-// a network.
+// Asks the video function (video-engine) about a video, cancels it, asks which
+// video models exist (for the model chooser) or how many credits are left this
+// month. The network and the sign-in are given in (see videoClient.ts), so
+// every case is tested without a network.
 //
 // The function answers {"ok":true,"job":{...}} or {"ok":false,"error":{...}}.
 // This file only turns "something went wrong on the way" into three clear
-// outcomes; reading the answer itself is parseJobAnswer's (jobs) and
-// parseModelsAnswer's (models) job.
+// outcomes; reading the answer itself is parseJobAnswer's (jobs),
+// parseModelsAnswer's (models) and parseCreditsAnswer's (credits) job.
 
 import { parseJobAnswer, type JobAnswer } from "./videoCard.ts";
+import { parseCreditsAnswer, type CreditsAnswer } from "./videoCredits.ts";
 import { parseModelsAnswer, type ModelsAnswer } from "./videoModels.ts";
 
 export type Outcome<T> =
@@ -22,6 +23,7 @@ export type Outcome<T> =
 
 export type CallOutcome = Outcome<JobAnswer>;
 export type ModelsOutcome = Outcome<ModelsAnswer>;
+export type CreditsOutcome = Outcome<CreditsAnswer>;
 
 export interface VideoAuth {
   // The project's address, e.g. https://xxxx.supabase.co
@@ -104,6 +106,7 @@ async function send<T>(
 
 const SIGNED_OUT_JOB: JobAnswer = { ok: false, code: "AUTH_REQUIRED", retryable: false };
 const SIGNED_OUT_MODELS: ModelsAnswer = { ok: false };
+const SIGNED_OUT_CREDITS: CreditsAnswer = { ok: false };
 
 export interface VideoApi {
   status(jobId: string, signal?: AbortSignal): Promise<CallOutcome>;
@@ -128,6 +131,18 @@ export function createVideoModelsApi(deps: VideoApiDeps): VideoModelsApi {
   return {
     models: (signal) =>
       send(deps, { action: "models" }, parseModelsAnswer, SIGNED_OUT_MODELS, signal),
+  };
+}
+
+// What is left of this month's credits, for the chooser.
+export interface VideoCreditsApi {
+  credits(signal?: AbortSignal): Promise<CreditsOutcome>;
+}
+
+export function createVideoCreditsApi(deps: VideoApiDeps): VideoCreditsApi {
+  return {
+    credits: (signal) =>
+      send(deps, { action: "credits" }, parseCreditsAnswer, SIGNED_OUT_CREDITS, signal),
   };
 }
 
