@@ -133,6 +133,7 @@ export const MODEL_TEXT: Record<Lang, {
   readonly priceTitle: string;
   readonly perSecond: (n: number) => string;
   readonly qualities: Readonly<Record<Quality, string>>;
+  readonly eta: string;
 }> = {
   fa: {
     title: "مدل ویدیو",
@@ -144,6 +145,7 @@ export const MODEL_TEXT: Record<Lang, {
     priceTitle: "هزینه",
     perSecond: (n) => `${n.toLocaleString("fa-IR")} اعتبار در ثانیه`,
     qualities: { draft: "پیش‌نویس", standard: "استاندارد", high: "بالا" },
+    eta: "ساخت هر ویدیو معمولاً ۱ تا ۳ دقیقه طول می‌کشد",
   },
   en: {
     title: "Video model",
@@ -155,6 +157,7 @@ export const MODEL_TEXT: Record<Lang, {
     priceTitle: "Cost",
     perSecond: (n) => `${n.toLocaleString("en-US")} credits per second`,
     qualities: { draft: "Draft", standard: "Standard", high: "High" },
+    eta: "A video usually takes 1 to 3 minutes",
   },
 };
 
