@@ -4,7 +4,13 @@
 // pick on this device. All rules live in videoModels.ts, videoModelStore.ts
 // and videoApi.ts; this file only joins them to React and to the browser.
 
-import { useCallback, useEffect, useMemo, useState } from "react";
+import {
+  useCallback,
+  useEffect,
+  useMemo,
+  useState,
+  useSyncExternalStore,
+} from "react";
 
 import { videoModelsApi } from "./videoClient.ts";
 import {
@@ -34,6 +40,30 @@ interface Loaded {
 
 // The list does not change while the app is open, so it is asked for once.
 let cached: Loaded | null = null;
+const listeners = new Set<() => void>();
+
+function saveLoaded(loaded: Loaded): void {
+  cached = loaded;
+  listeners.forEach((listener) => listener());
+}
+
+function subscribe(listener: () => void): () => void {
+  listeners.add(listener);
+  return () => {
+    listeners.delete(listener);
+  };
+}
+
+function currentPrices(): CreditsPerSecond {
+  return cached ? cached.prices : DEFAULT_CREDITS_PER_SECOND;
+}
+
+// The server's prices per second, once they are loaded (the default prices
+// until then). Any part of the screen can use it without being handed the
+// prices, and it updates when they arrive.
+export function useVideoPrices(): CreditsPerSecond {
+  return useSyncExternalStore(subscribe, currentPrices, currentPrices);
+}
 
 function startState(): VideoModelsState {
   return cached
@@ -62,7 +92,7 @@ export function useVideoModels(enabled: boolean): VideoModelsState {
       const answer = outcome.kind === "answer" ? outcome.answer : null;
 
       if (answer && answer.ok) {
-        cached = { models: answer.models, prices: answer.creditsPerSecond };
+        saveLoaded({ models: answer.models, prices: answer.creditsPerSecond });
         setState({
           status: "ready",
           models: answer.models,
