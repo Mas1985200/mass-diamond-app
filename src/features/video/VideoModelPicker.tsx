@@ -4,11 +4,14 @@
 // (the choices, what is usable) are made in videoModels.ts; this file only
 // draws them. Nothing is drawn while there is no list to choose from. Under
 // the models the list shows what a video costs (the server's price per second
-// for each quality) and how long a video usually takes.
+// for each quality) and how long a video usually takes. When the person's
+// credits can be read, the list also says how many are left this month.
 
 import { useEffect, useRef, useState } from "react";
 
+import { useVideoCredits } from "./useVideoCredits.ts";
 import { useVideoPrices } from "./useVideoModels.ts";
+import { creditLines } from "./videoCredits.ts";
 import {
   MODEL_TEXT,
   modelChoices,
@@ -33,6 +36,8 @@ export default function VideoModelPicker({
   const [open, setOpen] = useState(false);
   const rootRef = useRef<HTMLDivElement | null>(null);
   const prices = useVideoPrices();
+  // Asked each time the list opens, so the number is fresh when it is read.
+  const credits = useVideoCredits(open);
 
   // The list closes on a tap outside it and on the Escape key.
   useEffect(() => {
@@ -70,6 +75,7 @@ export default function VideoModelPicker({
   const choices = modelChoices(models, "fa");
   const current = choices.find((choice) => choice.id === value) ?? choices[0];
   const lines = priceLines(prices, "fa");
+  const creditText = credits ? creditLines(credits, prices, "fa") : null;
 
   return (
     <div ref={rootRef} className="relative inline-block" dir="rtl">
@@ -144,6 +150,16 @@ export default function VideoModelPicker({
               </p>
             ))}
             <p className="mt-2">{TEXT.eta}</p>
+            {creditText && (
+              <div className="mt-2 border-t border-white/10 pt-2">
+                <p className="mb-1 flex justify-between gap-2 text-text">
+                  <span>{creditText.title}</span>
+                  <span className="text-text-subtle">{creditText.plan}</span>
+                </p>
+                <p>{creditText.left}</p>
+                <p>{creditText.detail}</p>
+              </div>
+            )}
           </li>
         </ul>
       )}
