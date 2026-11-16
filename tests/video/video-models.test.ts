@@ -9,9 +9,11 @@ import {
   creditsForVideo,
   DEFAULT_CREDITS_PER_SECOND,
   MAX_MODELS,
+  MODEL_TEXT,
   modelChoices,
   modelToSend,
   parseModelsAnswer,
+  priceLines,
   resolveChoice,
   type VideoModel,
 } from "../../src/features/video/videoModels.ts";
@@ -147,6 +149,32 @@ test("the price follows the server's rule", () => {
   assert.equal(creditsForVideo(NaN, "high"), 3);
   assert.equal(creditsForVideo(5, "weird"), 10);
   assert.equal(creditsForVideo(2, "high", { draft: 1, standard: 4, high: 9 }), 18);
+});
+
+test("the price list has one line per quality, in order", () => {
+  const lines = priceLines({ draft: 1, standard: 2, high: 3 }, "en");
+  assert.deepEqual(
+    lines.map((line) => line.quality),
+    ["draft", "standard", "high"],
+  );
+  assert.deepEqual(
+    lines.map((line) => line.label),
+    ["Draft", "Standard", "High"],
+  );
+  assert.equal(lines[1].price, "2 credits per second");
+});
+
+test("the price list uses the server's prices and Persian digits", () => {
+  const lines = priceLines({ draft: 1, standard: 4, high: 9 }, "fa");
+  assert.equal(lines[0].label, "پیش‌نویس");
+  assert.equal(lines[2].price, "۹ اعتبار در ثانیه");
+  const fallback = priceLines(undefined, "en");
+  assert.equal(fallback[2].price, "3 credits per second");
+});
+
+test("both languages say how long a video usually takes", () => {
+  assert.equal(MODEL_TEXT.fa.eta, "ساخت هر ویدیو معمولاً ۱ تا ۳ دقیقه طول می‌کشد");
+  assert.equal(MODEL_TEXT.en.eta, "A video usually takes 1 to 3 minutes");
 });
 
 // end of video-models.test.ts
