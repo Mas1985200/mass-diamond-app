@@ -8,7 +8,10 @@ import assert from "node:assert/strict";
 import {
   DEFAULT_FREE_MONTHLY_CREDITS,
   DEFAULT_PRO_MONTHLY_CREDITS,
+  buildCreditStatus,
   creditsFor,
+  monthStartUtc,
+  nextMonthStartUtc,
   parseCreditDecision,
   parseLimit,
   readVideoLimits,
@@ -60,3 +63,39 @@ test("the database answer is read as a list of one row, or as unknown", () => {
   assert.equal(parseCreditDecision([{ ...row, used: -1 }]), null);
   assert.equal(parseCreditDecision([{ ...row, allowed: "yes" }]), null);
 });
+
+test("the month is the UTC month, the same one the database counts in", () => {
+  assert.equal(monthStartUtc(Date.UTC(2026, 10, 16, 12)), "2026-11-01");
+  assert.equal(monthStartUtc(Date.UTC(2026, 10, 30, 23, 59, 59)), "2026-11-01");
+  assert.equal(monthStartUtc(Date.UTC(2027, 0, 1, 0, 0, 0)), "2027-01-01");
+  assert.equal(nextMonthStartUtc(Date.UTC(2026, 10, 16)), "2026-12-01T00:00:00.000Z");
+  assert.equal(nextMonthStartUtc(Date.UTC(2026, 11, 31, 23, 59)), "2027-01-01T00:00:00.000Z");
+});
+
+test("the credit status shows what is left and when it starts again", () => {
+  const limits = { free: 20, pro: 300 };
+  const now = Date.UTC(2026, 10, 16);
+  assert.deepEqual(buildCreditStatus("free", 10, limits, now), {
+    plan: "free",
+    used: 10,
+    quota: 20,
+    remaining: 10,
+    resetsAt: "2026-12-01T00:00:00.000Z",
+  });
+  const pro = buildCreditStatus("pro", 50, limits, now);
+  assert.equal(pro.quota, 300);
+  assert.equal(pro.remaining, 250);
+});
+
+test("the credit status never goes below zero and never trusts a bad count", () => {
+  const limits = { free: 20, pro: 300 };
+  const now = Date.UTC(2026, 10, 16);
+  assert.equal(buildCreditStatus("free", 35, limits, now).remaining, 0);
+  for (const bad of [undefined, null, "x", -3, 1.5, Number.NaN]) {
+    const status = buildCreditStatus("free", bad, limits, now);
+    assert.equal(status.used, 0);
+    assert.equal(status.remaining, 20);
+  }
+});
+
+// end of video-credits.test.ts
