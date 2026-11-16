@@ -2,13 +2,17 @@
 // The video model chooser, like the model list in ChatGPT: a small button
 // showing the model in use, and a list that opens above it. All the decisions
 // (the choices, what is usable) are made in videoModels.ts; this file only
-// draws them. Nothing is drawn while there is no list to choose from.
+// draws them. Nothing is drawn while there is no list to choose from. Under
+// the models the list shows what a video costs (the server's price per second
+// for each quality) and how long a video usually takes.
 
 import { useEffect, useRef, useState } from "react";
 
+import { useVideoPrices } from "./useVideoModels.ts";
 import {
   MODEL_TEXT,
   modelChoices,
+  priceLines,
   type VideoModel,
 } from "./videoModels.ts";
 
@@ -28,6 +32,7 @@ export default function VideoModelPicker({
 }: VideoModelPickerProps) {
   const [open, setOpen] = useState(false);
   const rootRef = useRef<HTMLDivElement | null>(null);
+  const prices = useVideoPrices();
 
   // The list closes on a tap outside it and on the Escape key.
   useEffect(() => {
@@ -64,6 +69,7 @@ export default function VideoModelPicker({
 
   const choices = modelChoices(models, "fa");
   const current = choices.find((choice) => choice.id === value) ?? choices[0];
+  const lines = priceLines(prices, "fa");
 
   return (
     <div ref={rootRef} className="relative inline-block" dir="rtl">
@@ -83,7 +89,7 @@ export default function VideoModelPicker({
         <ul
           role="listbox"
           aria-label={TEXT.title}
-          className="absolute bottom-full right-0 z-20 mb-2 w-60 rounded-2xl border border-white/10 bg-[#0b1410]/95 p-1 shadow-lg backdrop-blur"
+          className="absolute bottom-full right-0 z-20 mb-2 w-64 rounded-2xl border border-white/10 bg-[#0b1410]/95 p-1 shadow-lg backdrop-blur"
         >
           {choices.map((choice) => {
             const selected = choice.id === current.id;
@@ -126,6 +132,19 @@ export default function VideoModelPicker({
               </li>
             );
           })}
+          <li
+            role="presentation"
+            className="mt-1 border-t border-white/10 px-3 pb-2 pt-2 text-[11px] text-text-subtle"
+          >
+            <p className="mb-1 text-text">{TEXT.priceTitle}</p>
+            {lines.map((line) => (
+              <p key={line.quality} className="flex justify-between gap-2">
+                <span>{line.label}</span>
+                <span>{line.price}</span>
+              </p>
+            ))}
+            <p className="mt-2">{TEXT.eta}</p>
+          </li>
         </ul>
       )}
     </div>
