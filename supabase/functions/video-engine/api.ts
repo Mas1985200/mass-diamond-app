@@ -6,7 +6,7 @@
 // Every answer is {"ok":true,...} or {"ok":false,"error":{code,message,
 // retryable,...}}. The codes are stable; the app turns them into text.
 
-import { CREDITS_PER_SECOND } from "./credits.ts";
+import { CREDITS_PER_SECOND, type CreditStatus } from "./credits.ts";
 import type { Job, PublicJob } from "./jobs.ts";
 import { AUTO_MODEL, type ModelInfo } from "./providers/registry.ts";
 import { parseVideoRequest, type VideoJobInput } from "./request.ts";
@@ -25,6 +25,8 @@ export interface ApiDeps {
   list(limit: number, before?: string): Promise<Job[]>;
   present(job: Job): Promise<PublicJob>;
   models(): ModelInfo[];
+  // What is left of this month's credits; null when it cannot be read now.
+  credits(): Promise<CreditStatus | null>;
 }
 
 const UUID =
@@ -99,6 +101,14 @@ export async function handleVideoApi(
         })),
       });
 
+    case "credits": {
+      const status = await deps.credits();
+      if (!status) {
+        return fail(503, "CREDITS_UNAVAILABLE", "The credits could not be checked now.", true);
+      }
+      return ok({ credits: status });
+    }
+
     case "submit": {
       const parsed = parseVideoRequest(input, deps.userId);
       if (!parsed.ok) {
@@ -141,3 +151,5 @@ export async function handleVideoApi(
       return fail(400, "INVALID_REQUEST", "Unknown action.", false, { field: "action" });
   }
 }
+
+// end of api.ts
