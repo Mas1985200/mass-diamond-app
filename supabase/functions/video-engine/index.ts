@@ -5,8 +5,8 @@
 // sign-in check, reading the secrets and wiring the real database, storage
 // and engines together.
 //
-// Request: POST application/json {"action": "models" | "submit" | "status" |
-//   "cancel" | "list", ...}  (see api.ts for the fields)
+// Request: POST application/json {"action": "models" | "credits" | "submit" |
+//   "status" | "cancel" | "list", ...}  (see api.ts for the fields)
 // Answer: {"ok":true,...} or {"ok":false,"error":{code,message,retryable}}
 //
 // Secrets: FAL_KEY (the paid Wan 2.2 engine, made straight from the text;
@@ -18,7 +18,7 @@
 // provided by Supabase.
 
 import { handleVideoApi, type ApiDeps } from "./api.ts";
-import { readVideoLimits } from "./credits.ts";
+import { readVideoLimits, type CreditStatus } from "./credits.ts";
 import { createDownloadVideo } from "./download.ts";
 import {
   advanceVideo,
@@ -32,6 +32,7 @@ import { describeModels } from "./providers/registry.ts";
 import { createFalVideoProvider } from "./providers/fal-video.ts";
 import { createWanSpaceProvider } from "./providers/wan-space.ts";
 import {
+  createCreditReader,
   createServiceClient,
   createSupabaseFiles,
   createSupabaseStore,
@@ -112,7 +113,13 @@ async function readJson(request: Request): Promise<unknown | undefined> {
   }
 }
 
-function buildEngine(): EngineDeps | null {
+interface Built {
+  engine: EngineDeps;
+  // What is left of a person's credits this month (null: cannot be read now).
+  credits: (userId: string) => Promise<CreditStatus | null>;
+}
+
+function buildEngine(): Built | null {
   const url = Deno.env.get("SUPABASE_URL");
   const serviceKey = Deno.env.get("SUPABASE_SERVICE_ROLE_KEY");
   if (!url || !serviceKey) return null;
@@ -129,15 +136,19 @@ function buildEngine(): EngineDeps | null {
     CF_IMAGE_MODEL: Deno.env.get("CF_IMAGE_MODEL"),
   };
   const client = createServiceClient(url, serviceKey);
+  const limits = readVideoLimits((n) => Deno.env.get(n));
 
   return {
-    store: createSupabaseStore(client, readVideoLimits((n) => Deno.env.get(n))),
-    files: createSupabaseFiles(client),
-    download: createDownloadVideo({ hfToken: env.HF_TOKEN }),
-    // Best engine first. An engine without its secrets is skipped.
-    providers: [createFalVideoProvider(env), createWanSpaceProvider(env)],
-    env,
-    now: Date.now,
+    engine: {
+      store: createSupabaseStore(client, limits),
+      files: createSupabaseFiles(client),
+      download: createDownloadVideo({ hfToken: env.HF_TOKEN }),
+      // Best engine first. An engine without its secrets is skipped.
+      providers: [createFalVideoProvider(env), createWanSpaceProvider(env)],
+      env,
+      now: Date.now,
+    },
+    credits: createCreditReader(client, limits),
   };
 }
 
@@ -160,12 +171,13 @@ Deno.serve(async (request: Request): Promise<Response> => {
       return respond(400, errorBody("INVALID_REQUEST", "The request body is not valid JSON or is too large.", false));
     }
 
-    const engine = buildEngine();
-    if (!engine) {
+    const built = buildEngine();
+    if (!built) {
       console.error("video-engine: SUPABASE_URL or SUPABASE_SERVICE_ROLE_KEY is missing");
       return respond(500, errorBody("INTERNAL_ERROR", "The video service is not set up.", true));
     }
 
+    const { engine } = built;
     const api: ApiDeps = {
       userId,
       submit: (input) => submitVideo(engine, userId, input),
@@ -182,6 +194,7 @@ Deno.serve(async (request: Request): Promise<Response> => {
       list: (limit, before) => engine.store.list(userId, limit, before),
       present: (job) => presentJob(engine, job),
       models: () => describeModels(engine.providers, engine.env),
+      credits: () => built.credits(userId),
     };
 
     const result = await handleVideoApi(api, body);
