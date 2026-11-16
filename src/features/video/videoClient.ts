@@ -6,9 +6,11 @@
 import { supabase } from "../../lib/supabase";
 import {
   createVideoApi,
+  createVideoCreditsApi,
   createVideoModelsApi,
   type VideoApi,
   type VideoAuth,
+  type VideoCreditsApi,
   type VideoModelsApi,
 } from "./videoApi.ts";
 
@@ -47,5 +49,6 @@ async function getAuth(): Promise<VideoAuth | null> {
 
 export const videoApi: VideoApi = createVideoApi({ getAuth });
 export const videoModelsApi: VideoModelsApi = createVideoModelsApi({ getAuth });
+export const videoCreditsApi: VideoCreditsApi = createVideoCreditsApi({ getAuth });
 
 // end of videoClient.ts
