@@ -38,6 +38,9 @@ function deps(over: Partial<ApiDeps> = {}) {
     models: () => [
       { id: "m1", label: "M1", kinds: ["text_to_video"], aspectRatios: ["16:9"], maxDurationSeconds: 5, free: true, costMicroUsdPerSecond: 777, available: true },
     ],
+    async credits() {
+      return { plan: "free", used: 10, quota: 20, remaining: 10, resetsAt: "2026-12-01T00:00:00.000Z" };
+    },
   };
   return { deps: { ...base, ...over }, calls };
 }
@@ -150,3 +153,24 @@ test("the model list starts with auto and shows the credit prices", async () => 
   assert.deepEqual(r.creditsPerSecond, { draft: 1, standard: 2, high: 3 });
   assert.deepEqual(r.models.map((m) => [m.id, m.available]), [["m1", true]]);
 });
+
+test("credits answers with this month's credits and nothing else", async () => {
+  const { deps: d } = deps();
+  const r = await handleVideoApi(d, { action: "credits" });
+  assert.equal(r.status, 200);
+  assert.deepEqual(r.body, {
+    ok: true,
+    credits: { plan: "free", used: 10, quota: 20, remaining: 10, resetsAt: "2026-12-01T00:00:00.000Z" },
+  });
+});
+
+test("credits that cannot be read are a retryable 503, never a guessed number", async () => {
+  const { deps: d } = deps({ credits: async () => null });
+  const r = await handleVideoApi(d, { action: "credits" });
+  assert.equal(r.status, 503);
+  assert.equal(code(r), "CREDITS_UNAVAILABLE");
+  assert.equal((r.body as { error: { retryable: boolean } }).error.retryable, true);
+  assert.equal(JSON.stringify(r.body).includes("remaining"), false);
+});
+
+// end of video-api.test.ts
