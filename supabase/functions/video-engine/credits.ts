@@ -31,6 +31,16 @@ export interface CreditDecision {
   readonly plan: "free" | "pro";
 }
 
+// Where a person stands this month, shown in the app before a video is made.
+export interface CreditStatus {
+  readonly plan: "free" | "pro";
+  readonly used: number;
+  readonly quota: number;
+  readonly remaining: number;
+  // The start of the next UTC month, when the credits begin again.
+  readonly resetsAt: string;
+}
+
 // The price of one video. Always a whole number of at least 1.
 export function creditsFor(
   durationSeconds: number,
@@ -98,3 +108,45 @@ export function parseCreditDecision(data: unknown): CreditDecision | null {
     plan: record.plan,
   };
 }
+
+// The first day (YYYY-MM-01) of the UTC month of the given time: the same
+// month the credit meter in the database counts in.
+export function monthStartUtc(nowMs: number): string {
+  const at = new Date(nowMs);
+
+  return new Date(Date.UTC(at.getUTCFullYear(), at.getUTCMonth(), 1))
+    .toISOString()
+    .slice(0, 10);
+}
+
+// The moment the credits begin again: the start of the next UTC month.
+export function nextMonthStartUtc(nowMs: number): string {
+  const at = new Date(nowMs);
+
+  return new Date(
+    Date.UTC(at.getUTCFullYear(), at.getUTCMonth() + 1, 1),
+  ).toISOString();
+}
+
+// What is left this month. A count that is not a whole number counts as 0,
+// and "remaining" never goes below 0 (the limits can be lowered after credits
+// were used).
+export function buildCreditStatus(
+  plan: "free" | "pro",
+  used: unknown,
+  limits: VideoLimits,
+  nowMs: number,
+): CreditStatus {
+  const spent = isCount(used) ? used : 0;
+  const quota = plan === "pro" ? limits.pro : limits.free;
+
+  return {
+    plan,
+    used: spent,
+    quota,
+    remaining: Math.max(0, quota - spent),
+    resetsAt: nextMonthStartUtc(nowMs),
+  };
+}
+
+// end of credits.ts
