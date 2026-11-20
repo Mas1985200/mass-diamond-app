@@ -20,6 +20,7 @@
 //    engine that has not failed yet (fallback). A model the person picked is
 //    never replaced by another one.
 
+import { decideAdmission, type AdmissionLimits } from "./admission.ts";
 import { creditsFor } from "./credits.ts";
 import {
   JOB_DEADLINE_MS,
@@ -38,7 +39,12 @@ import {
   type VideoRequest,
 } from "./providers/types.ts";
 import type { VideoJobInput } from "./request.ts";
-import type { DownloadVideo, JobStore, VideoFiles } from "./store.ts";
+import type {
+  DownloadVideo,
+  JobStore,
+  QueueGauge,
+  VideoFiles,
+} from "./store.ts";
 
 // A step may hold the connection to the engine for a long time (the Space is
 // followed by one open connection), so the lease must outlast it.
@@ -55,6 +61,9 @@ export interface EngineDeps {
   providers: readonly VideoProvider[];
   env: Readonly<Record<string, string | undefined>>;
   now: () => number;
+  // The doorman of the queue (see admission.ts). Optional: without it every
+  // video may enter, as before.
+  admission?: { gauge: QueueGauge; limits: AdmissionLimits };
 }
 
 export type SubmitFailure =
@@ -63,7 +72,10 @@ export type SubmitFailure =
   | "unsupported_request"
   | "storage_unavailable"
   | "credits_unavailable"
-  | "quota_exceeded";
+  | "quota_exceeded"
+  | "too_many_active"
+  | "queue_full"
+  | "queue_unavailable";
 
 export type SubmitOutcome =
   | { ok: true; job: Job; existing: boolean }
@@ -71,6 +83,9 @@ export type SubmitOutcome =
       ok: false;
       code: SubmitFailure;
       quota?: { used: number; quota: number; plan: "free" | "pro" };
+      // Set when the doorman said "not now": when to ask again and the limit.
+      retryAfterSeconds?: number;
+      limit?: number;
     };
 
 const iso = (ms: number): string => new Date(ms).toISOString();
@@ -220,6 +235,29 @@ async function startAttempt(deps: EngineDeps, job: Job): Promise<Job> {
   );
 }
 
+// Lets a video into the queue, or says why not. A count that cannot be read is
+// a refusal ("try again in a moment"), never a free pass.
+async function admit(
+  admission: NonNullable<EngineDeps["admission"]>,
+  userId: string,
+): Promise<Extract<SubmitOutcome, { ok: false }> | null> {
+  const [userActive, totalActive] = await Promise.all([
+    admission.gauge.countActive(userId),
+    admission.gauge.countAllActive(),
+  ]);
+  if (userActive === null || totalActive === null) {
+    return { ok: false, code: "queue_unavailable" };
+  }
+  const decision = decideAdmission({ userActive, totalActive }, admission.limits);
+  if (decision.ok) return null;
+  return {
+    ok: false,
+    code: decision.code,
+    retryAfterSeconds: decision.retryAfterSeconds,
+    limit: decision.limit,
+  };
+}
+
 // Asks for a video. Checks, charges, saves and starts it.
 export async function submitVideo(
   deps: EngineDeps,
@@ -251,6 +289,12 @@ export async function submitVideo(
       ok: false,
       code: selection.reason === "not_available" ? "no_engine" : selection.reason,
     };
+  }
+
+  // The doorman comes before the credits, so a refused video costs nothing.
+  if (deps.admission) {
+    const refused = await admit(deps.admission, userId);
+    if (refused) return refused;
   }
 
   const cost = creditsFor(input.durationSeconds, input.quality);
