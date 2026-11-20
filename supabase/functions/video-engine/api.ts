@@ -68,6 +68,18 @@ function submitFailure(outcome: Extract<SubmitOutcome, { ok: false }>): ApiResul
       return fail(502, "STORAGE_UNAVAILABLE", "The pictures could not be read.", true);
     case "credits_unavailable":
       return fail(503, "CREDITS_UNAVAILABLE", "The credits could not be checked now.", true);
+    case "too_many_active":
+      return fail(429, "VIDEO_TOO_MANY_ACTIVE", "Too many of your videos are being made. Wait for one to finish.", true, {
+        retryAfterSeconds: outcome.retryAfterSeconds,
+        limit: outcome.limit,
+      });
+    case "queue_full":
+      return fail(503, "VIDEO_QUEUE_FULL", "The video queue is full now. Try again in a moment.", true, {
+        retryAfterSeconds: outcome.retryAfterSeconds,
+        limit: outcome.limit,
+      });
+    case "queue_unavailable":
+      return fail(503, "VIDEO_QUEUE_UNAVAILABLE", "The video queue could not be checked now.", true);
   }
 }
 
