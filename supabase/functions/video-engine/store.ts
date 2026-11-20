@@ -59,6 +59,16 @@ export interface JobStore {
   refundCredits(userId: string, cost: number, chargedAt: string): Promise<void>;
 }
 
+// How busy the video queue is. A separate door from JobStore on purpose: only
+// the doorman (admission.ts) uses it. A count is null when the database did not
+// answer properly: the caller treats it as "unknown", never as an empty queue.
+export interface QueueGauge {
+  // Videos of one person that are queued or being made.
+  countActive(userId: string): Promise<number | null>;
+  // Videos of everybody that are queued or being made.
+  countAllActive(): Promise<number | null>;
+}
+
 export interface VideoFiles {
   upload(path: string, bytes: Uint8Array, contentType: string): Promise<void>;
   // A short-lived link to a private file; null when it cannot be made.
