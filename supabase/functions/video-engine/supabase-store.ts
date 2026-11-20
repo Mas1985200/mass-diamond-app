@@ -1,6 +1,7 @@
 // supabase/functions/video-engine/supabase-store.ts
-// The real doors (see store.ts): the job table, the credit functions and the
-// private "videos" storage bucket, reached with the server's service key.
+// The real doors (see store.ts): the job table, the credit functions, the queue
+// counts and the private "videos" storage bucket, reached with the server's
+// service key.
 // All of the rules live in engine.ts; this file only moves data.
 
 import {
@@ -8,6 +9,7 @@ import {
   type SupabaseClient,
 } from "https://esm.sh/@supabase/supabase-js@2.117.3";
 
+import { parseCount } from "./admission.ts";
 import {
   buildCreditStatus,
   monthStartUtc,
@@ -15,9 +17,9 @@ import {
   type CreditStatus,
   type VideoLimits,
 } from "./credits.ts";
-import { rowToJob, type Job } from "./jobs.ts";
+import { JOB_DEADLINE_MS, rowToJob, type Job } from "./jobs.ts";
 import { inputToRow, patchToRow } from "./rows.ts";
-import type { JobStore, VideoFiles } from "./store.ts";
+import type { JobStore, QueueGauge, VideoFiles } from "./store.ts";
 
 export const VIDEO_BUCKET = "videos";
 const TABLE = "video_jobs";
@@ -157,6 +159,35 @@ export function createSupabaseStore(
     },
   };
   return store;
+}
+
+// Counts the videos that are queued or being made. A video older than the time
+// a job may live (JOB_DEADLINE_MS) is not counted: its person closed the app and
+// it will never be finished, so it must not fill the queue or lock the person
+// out for ever. A count that cannot be read is null: never a guessed number.
+export function createQueueGauge(
+  client: SupabaseClient,
+  now: () => number = Date.now,
+): QueueGauge {
+  async function count(userId: string | null): Promise<number | null> {
+    let query = client
+      .from(TABLE)
+      .select("id", { count: "exact", head: true })
+      .in("status", ["queued", "processing"])
+      .gt("created_at", new Date(now() - JOB_DEADLINE_MS).toISOString());
+    if (userId !== null) query = query.eq("user_id", userId);
+    const { count: total, error } = await query;
+    if (error) {
+      console.error("count active videos failed:", error.message);
+      return null;
+    }
+    return parseCount(total);
+  }
+
+  return {
+    countActive: (userId) => count(userId),
+    countAllActive: () => count(null),
+  };
 }
 
 // Reads what is left of this month's credits without taking any. The plan and
