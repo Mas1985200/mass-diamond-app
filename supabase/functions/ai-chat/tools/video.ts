@@ -62,6 +62,10 @@ export const CREATE_VIDEO_TOOL: ToolDefinition = {
 const FAILURE_HINTS: Readonly<Record<VideoCreateFailure, string>> = {
   quota_exceeded:
     "The user's video credits for this month are used up. Tell them so in one or two short sentences in their language, say they can try again next month or upgrade their plan, and do not start the video.",
+  too_many_active:
+    "The user already has the most videos being made at once that is allowed. Nothing was charged. Tell them in one or two short sentences in their language to wait until one of their videos is finished, then ask again. Do not start the video and never pretend one was made.",
+  queue_busy:
+    "Many people are making videos right now and the queue is full. Nothing was charged. Tell the user in one or two short sentences in their language that it is very busy and to try again in a few minutes (use retry_after_seconds if it is given, rounded to a friendly time). Do not start the video and never pretend one was made.",
   engine_unavailable:
     "No video engine is available right now. Tell the user in one short sentence that video making is temporarily unavailable and to try again in a little while. Never pretend a video was made.",
   unsupported:
@@ -106,6 +110,9 @@ export async function runCreateVideo(
         status: result.code,
         retryable: result.retryable,
         ...(result.quota ? { used: result.quota.used, quota: result.quota.quota } : {}),
+        ...(result.retryAfterSeconds !== undefined
+          ? { retry_after_seconds: result.retryAfterSeconds }
+          : {}),
         hint: FAILURE_HINTS[result.code],
       },
     };
