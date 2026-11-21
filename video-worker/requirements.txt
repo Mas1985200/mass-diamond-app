@@ -1,0 +1,18 @@
+# video-worker/requirements.txt
+# What a Mass Diamond video worker needs on its GPU machine:
+#
+#     pip install -r requirements.txt
+#
+# torch is deliberately NOT listed: Kaggle, Colab and most rented GPU machines
+# already have the torch that matches their GPU, and installing another one would
+# break it. If your machine has none, install it first from https://pytorch.org
+# (version 2.5 or newer). ffmpeg and ffprobe must be installed too (they are on
+# Kaggle and Colab; on Ubuntu: apt install ffmpeg).
+
+diffusers>=0.36.0
+transformers>=4.50.0
+accelerate>=1.0.0
+sentencepiece>=0.2.0
+protobuf>=4.25.0
+numpy>=1.26.0
+pillow>=10.0.0
