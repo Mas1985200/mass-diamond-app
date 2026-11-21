@@ -8,6 +8,8 @@ import type { CreateVideoArgs } from "./args.ts";
 
 export type VideoCreateFailure =
   | "quota_exceeded"
+  | "too_many_active"
+  | "queue_busy"
   | "engine_unavailable"
   | "unsupported"
   | "invalid"
@@ -31,6 +33,10 @@ export type VideoCreateResult =
       code: VideoCreateFailure;
       retryable: boolean;
       quota?: { used: number; quota: number; plan: string };
+      // When to ask again (seconds), for "too_many_active" and "queue_busy".
+      retryAfterSeconds?: number;
+      // The limit that was reached, when the video function says which.
+      limit?: number;
     };
 
 export interface VideoCreateOptions {
@@ -78,6 +84,8 @@ export async function uuidFromText(text: string): Promise<string> {
 
 const FAILURES: Readonly<Record<string, [VideoCreateFailure, boolean]>> = {
   VIDEO_QUOTA_EXCEEDED: ["quota_exceeded", false],
+  VIDEO_TOO_MANY_ACTIVE: ["too_many_active", true],
+  VIDEO_QUEUE_FULL: ["queue_busy", true],
   VIDEO_ENGINE_UNAVAILABLE: ["engine_unavailable", true],
   UNKNOWN_MODEL: ["unsupported", false],
   UNSUPPORTED_REQUEST: ["unsupported", false],
@@ -90,6 +98,24 @@ const FAILURES: Readonly<Record<string, [VideoCreateFailure, boolean]>> = {
 
 function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === "object" && value !== null && !Array.isArray(value);
+}
+
+// The "ask again in N seconds" and "limit" hints of a busy answer. Only whole,
+// sensible numbers are passed on; anything else is left out.
+function waitHints(error: Record<string, unknown>): {
+  retryAfterSeconds?: number;
+  limit?: number;
+} {
+  const out: { retryAfterSeconds?: number; limit?: number } = {};
+  const wait = error.retryAfterSeconds;
+  if (typeof wait === "number" && Number.isInteger(wait) && wait > 0 && wait <= 3600) {
+    out.retryAfterSeconds = wait;
+  }
+  const limit = error.limit;
+  if (typeof limit === "number" && Number.isInteger(limit) && limit >= 0) {
+    out.limit = limit;
+  }
+  return out;
 }
 
 // Reads the video function's answer. Anything unexpected is a temporary
@@ -132,6 +158,9 @@ export function readCreateAnswer(status: number, body: unknown): VideoCreateResu
       typeof quota.quota === "number" &&
       typeof quota.plan === "string"
         ? { quota: { used: quota.used, quota: quota.quota, plan: quota.plan } }
+        : {}),
+      ...(failure === "too_many_active" || failure === "queue_busy"
+        ? waitHints(body.error)
         : {}),
     };
   }
