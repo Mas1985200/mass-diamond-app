@@ -14,9 +14,11 @@
 // HF_VIDEO_API_NAME), CF_ACCOUNT_ID and CF_AI_TOKEN (the picture maker that
 // turns a text into the first picture; optional CF_IMAGE_MODEL),
 // VIDEO_FREE_MONTHLY_CREDITS and VIDEO_PRO_MONTHLY_CREDITS (optional plan
-// sizes). SUPABASE_URL, SUPABASE_ANON_KEY and SUPABASE_SERVICE_ROLE_KEY are
+// sizes), VIDEO_MAX_ACTIVE_PER_USER and VIDEO_MAX_QUEUE (optional queue limits;
+// a queue limit of 0 closes the door for new videos). SUPABASE_URL, SUPABASE_ANON_KEY and SUPABASE_SERVICE_ROLE_KEY are
 // provided by Supabase.
 
+import { readAdmissionLimits } from "./admission.ts";
 import { handleVideoApi, type ApiDeps } from "./api.ts";
 import { readVideoLimits, type CreditStatus } from "./credits.ts";
 import { createDownloadVideo } from "./download.ts";
@@ -27,6 +29,7 @@ import {
   submitVideo,
   type EngineDeps,
 } from "./engine.ts";
+import { createQueueGauge } from "./queue-gauge.ts";
 import { answerSoon } from "./soon.ts";
 import { describeModels } from "./providers/registry.ts";
 import { createFalVideoProvider } from "./providers/fal-video.ts";
@@ -147,6 +150,10 @@ function buildEngine(): Built | null {
       providers: [createFalVideoProvider(env), createWanSpaceProvider(env)],
       env,
       now: Date.now,
+      admission: {
+        gauge: createQueueGauge(client),
+        limits: readAdmissionLimits((n) => Deno.env.get(n)),
+      },
     },
     credits: createCreditReader(client, limits),
   };
