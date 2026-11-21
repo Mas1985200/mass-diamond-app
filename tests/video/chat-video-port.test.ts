@@ -103,3 +103,23 @@ test("a strange answer is a temporary failure, never a made-up success", async (
   });
   assert.deepEqual(await down.create(args, { requestKey: "k" }), { ok: false, code: "temporary", retryable: true });
 });
+
+test("a busy answer keeps the wait and the limit, and is worth trying again", () => {
+  const busy = (c: string, extra: object = {}) =>
+    readCreateAnswer(c === "VIDEO_TOO_MANY_ACTIVE" ? 429 : 503, { ok: false, error: { code: c, ...extra } });
+  assert.deepEqual(busy("VIDEO_TOO_MANY_ACTIVE", { retryAfterSeconds: 30, limit: 2 }), {
+    ok: false, code: "too_many_active", retryable: true, retryAfterSeconds: 30, limit: 2,
+  });
+  assert.deepEqual(busy("VIDEO_QUEUE_FULL", { retryAfterSeconds: 120, limit: 200 }), {
+    ok: false, code: "queue_busy", retryable: true, retryAfterSeconds: 120, limit: 200,
+  });
+  assert.deepEqual(busy("VIDEO_QUEUE_FULL"), { ok: false, code: "queue_busy", retryable: true });
+  // Strange hints are dropped, never passed on.
+  assert.deepEqual(busy("VIDEO_QUEUE_FULL", { retryAfterSeconds: -5, limit: "x" }), {
+    ok: false, code: "queue_busy", retryable: true,
+  });
+  assert.deepEqual(busy("VIDEO_QUEUE_FULL", { retryAfterSeconds: 999999 }), {
+    ok: false, code: "queue_busy", retryable: true,
+  });
+  assert.deepEqual(busy("VIDEO_QUEUE_UNAVAILABLE"), { ok: false, code: "temporary", retryable: true });
+});
