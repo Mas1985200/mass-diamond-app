@@ -37,6 +37,9 @@ _JOINED = 92
 _UPLOADED = 97
 # A machine with no GPU can never make a video: it must stop, not eat tasks.
 _FATAL_CODES = frozenset({"no_gpu"})
+# The exit code that says "do not start me again on this machine". Any other
+# stop (a crash gives 1) may be started again by whoever runs the worker.
+FATAL_EXIT_CODE = 3
 
 
 class WorkerFatal(Exception):
@@ -203,7 +206,7 @@ def main() -> None:
         serve(config, api, runner, lambda: stopping)
     except WorkerFatal as error:
         log.error("this worker cannot work: %s", error)
-        raise SystemExit(1) from error
+        raise SystemExit(FATAL_EXIT_CODE) from error
     finally:
         backend.close()
 
