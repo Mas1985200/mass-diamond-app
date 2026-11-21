@@ -15,7 +15,11 @@
 // turns a text into the first picture; optional CF_IMAGE_MODEL),
 // VIDEO_FREE_MONTHLY_CREDITS and VIDEO_PRO_MONTHLY_CREDITS (optional plan
 // sizes), VIDEO_MAX_ACTIVE_PER_USER and VIDEO_MAX_QUEUE (optional queue limits;
-// a queue limit of 0 closes the door for new videos). SUPABASE_URL, SUPABASE_ANON_KEY and SUPABASE_SERVICE_ROLE_KEY are
+// a queue limit of 0 closes the door for new videos), VIDEO_SELF_WORKER (on:
+// Mass Diamond's own engine, run by our own GPU workers, is used first; off or
+// missing: it is never used) and VIDEO_WORKER_PICKUP_SECONDS (optional: how long
+// a task waits for a worker before the next engine takes over).
+// SUPABASE_URL, SUPABASE_ANON_KEY and SUPABASE_SERVICE_ROLE_KEY are
 // provided by Supabase.
 
 import { readAdmissionLimits } from "./admission.ts";
@@ -33,6 +37,10 @@ import { createQueueGauge } from "./queue-gauge.ts";
 import { answerSoon } from "./soon.ts";
 import { describeModels } from "./providers/registry.ts";
 import { createFalVideoProvider } from "./providers/fal-video.ts";
+import {
+  createSelfWorkerProvider,
+  readPickupSeconds,
+} from "./providers/self-worker.ts";
 import { createWanSpaceProvider } from "./providers/wan-space.ts";
 import {
   createCreditReader,
@@ -40,6 +48,7 @@ import {
   createSupabaseFiles,
   createSupabaseStore,
 } from "./supabase-store.ts";
+import { createWorkerQueue } from "./worker-queue.ts";
 
 const MAX_BODY_BYTES = 64 * 1024;
 const AUTH_TIMEOUT_MS = 6_000;
@@ -137,6 +146,8 @@ function buildEngine(): Built | null {
     CF_ACCOUNT_ID: Deno.env.get("CF_ACCOUNT_ID"),
     CF_AI_TOKEN: Deno.env.get("CF_AI_TOKEN"),
     CF_IMAGE_MODEL: Deno.env.get("CF_IMAGE_MODEL"),
+    VIDEO_SELF_WORKER: Deno.env.get("VIDEO_SELF_WORKER"),
+    VIDEO_WORKER_PICKUP_SECONDS: Deno.env.get("VIDEO_WORKER_PICKUP_SECONDS"),
   };
   const client = createServiceClient(url, serviceKey);
   const limits = readVideoLimits((n) => Deno.env.get(n));
@@ -146,8 +157,15 @@ function buildEngine(): Built | null {
       store: createSupabaseStore(client, limits),
       files: createSupabaseFiles(client),
       download: createDownloadVideo({ hfToken: env.HF_TOKEN }),
-      // Best engine first. An engine without its secrets is skipped.
-      providers: [createFalVideoProvider(env), createWanSpaceProvider(env)],
+      // Best engine first. An engine without its secrets (or switched off) is
+      // skipped. Our own engine comes first: it has no outside limits.
+      providers: [
+        createSelfWorkerProvider(createWorkerQueue(client), {
+          pickupSeconds: readPickupSeconds(env),
+        }),
+        createFalVideoProvider(env),
+        createWanSpaceProvider(env),
+      ],
       env,
       now: Date.now,
       admission: {
