@@ -109,3 +109,17 @@ test("a strange setting in the answer never breaks the card", async () => {
   assert.equal(card.aspectRatio, "16:9");
   assert.equal(card.quality, "standard");
 });
+
+test("a busy video service tells the model to wait and shows no card", async () => {
+  for (const code of ["too_many_active", "queue_busy"] as const) {
+    const { ctx } = context({ ok: false, code, retryable: true, retryAfterSeconds: 120, limit: 2 });
+    const outcome = await runCreateVideo(good, ctx);
+    assert.equal(data(outcome).status, code);
+    assert.equal(data(outcome).retryable, true);
+    assert.equal(data(outcome).retry_after_seconds, 120);
+    assert.match(String(data(outcome).hint), /Nothing was charged/);
+    assert.equal(outcome.cards, undefined);
+  }
+  const { ctx } = context({ ok: false, code: "queue_busy", retryable: true });
+  assert.equal("retry_after_seconds" in data(await runCreateVideo(good, ctx)), false);
+});
