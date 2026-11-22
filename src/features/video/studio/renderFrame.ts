@@ -7,6 +7,7 @@
 // with a small fake and works the same on a screen canvas and an offscreen one.
 
 import { sourceRect } from "./motion.ts";
+import { drawParallax, type DrawableParallax } from "./parallaxDraw.ts";
 import { layersAt, type Layer, type Timeline } from "./timeline.ts";
 
 export interface ImageLike {
@@ -122,13 +123,16 @@ function drawCaption(ctx: CanvasLike, size: FrameSize, text: string, alpha: numb
 
 // Draws the frame at `time` seconds. `images` has the loaded picture of each
 // scene by its index. Returns the indexes of the scenes that had to be drawn but
-// have no picture yet (the caller may wait and draw again).
+// have no picture yet (the caller may wait and draw again). `parallax` has the 3D
+// layers of the scenes that have them: such a scene is drawn as a 3D photo, the
+// others as the flat photo.
 export function renderFrame(
   ctx: CanvasLike,
   size: FrameSize,
   timeline: Timeline,
   images: ReadonlyMap<number, ImageLike>,
   time: number,
+  parallax?: ReadonlyMap<number, DrawableParallax>,
 ): number[] {
   ctx.save();
   ctx.globalAlpha = 1;
@@ -138,20 +142,19 @@ export function renderFrame(
   const missing: number[] = [];
   for (const layer of layersAt(timeline, time)) {
     const planned = timeline.scenes[layer.index];
+    const solid3d = parallax?.get(layer.index);
     const image = images.get(layer.index);
-    if (!image) {
-      missing.push(layer.index);
-      continue;
-    }
-    const rect = sourceRect(
-      planned.scene.motion,
-      layer.sceneProgress,
-      image.width,
-      image.height,
-      size.width,
-      size.height,
-    );
-    if (!rect) {
+    const rect = image
+      ? sourceRect(
+          planned.scene.motion,
+          layer.sceneProgress,
+          image.width,
+          image.height,
+          size.width,
+          size.height,
+        )
+      : null;
+    if (!solid3d && (!image || !rect)) {
       missing.push(layer.index);
       continue;
     }
@@ -160,17 +163,21 @@ export function renderFrame(
     ctx.globalAlpha = layer.alpha;
     ctx.translate(size.width / 2 + layer.offsetX * size.width, size.height / 2);
     ctx.scale(layer.scale, layer.scale);
-    ctx.drawImage(
-      image as never,
-      rect.x,
-      rect.y,
-      rect.width,
-      rect.height,
-      -size.width / 2,
-      -size.height / 2,
-      size.width,
-      size.height,
-    );
+    if (solid3d) {
+      drawParallax(ctx, size, solid3d, planned.scene.motion, layer.sceneProgress);
+    } else if (image && rect) {
+      ctx.drawImage(
+        image as never,
+        rect.x,
+        rect.y,
+        rect.width,
+        rect.height,
+        -size.width / 2,
+        -size.height / 2,
+        size.width,
+        size.height,
+      );
+    }
     const caption = planned.scene.caption?.trim();
     if (caption) {
       // The caption is drawn in the same shifted and zoomed space as its picture.
