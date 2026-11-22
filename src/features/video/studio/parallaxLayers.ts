@@ -6,6 +6,10 @@
 // Pixels in, pixels out: reading the photo and making a picture from a layer are
 // given by the caller (a canvas in the browser), so everything here is tested
 // without a browser.
+//
+// Making the layers of a photo takes a moment on a phone, and a film is recorded in
+// real time, so the work is also offered in small steps (one layer per step): the
+// film maker does one step between frames instead of one long pause.
 
 import {
   PARALLAX_FEATHER,
@@ -46,6 +50,20 @@ export interface PreparedParallax<T> {
   readonly height: number;
   // From the farthest (index 0, holds everything) to the nearest.
   readonly layers: readonly T[];
+}
+
+export type BuilderState = "working" | "done" | "failed";
+
+// The layers of one photo, made step by step.
+export interface ParallaxBuilder<T> {
+  // How many steps the whole work takes (the first reads the photo and the depth,
+  // then one per layer).
+  readonly totalSteps: number;
+  readonly state: BuilderState;
+  // Does the next small part of the work. Does nothing once done or failed.
+  step(): void;
+  // The layers when `state` is "done", otherwise null.
+  result(): PreparedParallax<T> | null;
 }
 
 export const MIN_LAYERS = 2;
@@ -116,29 +134,20 @@ function validDepth(depth: DepthMap): boolean {
   );
 }
 
-// The layers of one photo, or null when it cannot be done (bad sizes, no pixels,
-// a depth map that does not fit); the caller then draws the flat photo instead.
-export function prepareParallax<T>(
+// The layers of one photo, step by step, or null when it can be seen at once that
+// it cannot be done (bad sizes, a depth map that does not fit). A problem found
+// later (no pixels) makes the builder "failed"; the caller then draws the flat photo.
+export function createParallaxBuilder<T>(
   image: { readonly width: number; readonly height: number },
   depth: DepthMap,
   frame: { readonly width: number; readonly height: number },
   deps: ParallaxDeps<T>,
   options: ParallaxOptions = {},
-): PreparedParallax<T> | null {
+): ParallaxBuilder<T> | null {
   const frameWidth = Math.round(frame.width);
   const frameHeight = Math.round(frame.height);
   const rect = coverRect(image.width, image.height, frameWidth, frameHeight);
   if (!rect || !validDepth(depth)) return null;
-
-  const pixels = deps.readPixels();
-  if (
-    !pixels ||
-    pixels.width !== frameWidth ||
-    pixels.height !== frameHeight ||
-    pixels.data.length !== frameWidth * frameHeight * 4
-  ) {
-    return null;
-  }
 
   const requested = options.layers ?? PARALLAX_LAYERS;
   const count = Math.min(
@@ -146,22 +155,92 @@ export function prepareParallax<T>(
     Math.max(MIN_LAYERS, Number.isFinite(requested) ? Math.round(requested) : PARALLAX_LAYERS),
   );
   const feather = options.feather ?? PARALLAX_FEATHER;
-
-  const frameDepth = depthForFrame(depth, rect, image.width, image.height, frameWidth, frameHeight);
   const total = frameWidth * frameHeight;
+
+  let state: BuilderState = "working";
+  let pixels: PixelBuffer | null = null;
+  let frameDepth: Uint8Array | null = null;
   const layers: T[] = [];
-  for (let index = 0; index < count; index += 1) {
-    const data = new Uint8ClampedArray(pixels.data);
-    if (index > 0) {
-      // One table per layer: the mask value for each of the 256 depths.
-      const table = new Uint8Array(256);
-      for (let d = 0; d < 256; d += 1) table[d] = layerAlpha(d, index, count, feather);
-      for (let i = 0; i < total; i += 1) {
-        const alpha = 4 * i + 3;
-        data[alpha] = Math.round((data[alpha] * table[frameDepth[i]]) / 255);
+
+  const fail = () => {
+    state = "failed";
+    pixels = null;
+    frameDepth = null;
+    layers.length = 0;
+  };
+
+  return {
+    totalSteps: count + 1,
+    get state() {
+      return state;
+    },
+    step() {
+      if (state !== "working") return;
+      try {
+        if (!pixels || !frameDepth) {
+          const read = deps.readPixels();
+          if (
+            !read ||
+            read.width !== frameWidth ||
+            read.height !== frameHeight ||
+            read.data.length !== total * 4
+          ) {
+            fail();
+            return;
+          }
+          pixels = read;
+          frameDepth = depthForFrame(
+            depth,
+            rect,
+            image.width,
+            image.height,
+            frameWidth,
+            frameHeight,
+          );
+          return;
+        }
+        const index = layers.length;
+        const data = new Uint8ClampedArray(pixels.data);
+        if (index > 0) {
+          // One table per layer: the mask value for each of the 256 depths.
+          const table = new Uint8Array(256);
+          for (let d = 0; d < 256; d += 1) table[d] = layerAlpha(d, index, count, feather);
+          for (let i = 0; i < total; i += 1) {
+            const alpha = 4 * i + 3;
+            data[alpha] = Math.round((data[alpha] * table[frameDepth[i]]) / 255);
+          }
+        }
+        layers.push(deps.makeLayer({ width: frameWidth, height: frameHeight, data }));
+        if (layers.length === count) {
+          state = "done";
+          pixels = null;
+          frameDepth = null;
+        }
+      } catch {
+        fail();
       }
-    }
-    layers.push(deps.makeLayer({ width: frameWidth, height: frameHeight, data }));
+    },
+    result() {
+      return state === "done"
+        ? { width: frameWidth, height: frameHeight, layers: layers.slice() }
+        : null;
+    },
+  };
+}
+
+// All the layers of one photo at once, or null when it cannot be done (bad sizes, no
+// pixels, a depth map that does not fit); the caller then draws the flat photo.
+export function prepareParallax<T>(
+  image: { readonly width: number; readonly height: number },
+  depth: DepthMap,
+  frame: { readonly width: number; readonly height: number },
+  deps: ParallaxDeps<T>,
+  options: ParallaxOptions = {},
+): PreparedParallax<T> | null {
+  const builder = createParallaxBuilder(image, depth, frame, deps, options);
+  if (!builder) return null;
+  for (let i = 0; i < builder.totalSteps && builder.state === "working"; i += 1) {
+    builder.step();
   }
-  return { width: frameWidth, height: frameHeight, layers };
+  return builder.result();
 }
