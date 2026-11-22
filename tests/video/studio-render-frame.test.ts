@@ -2,7 +2,8 @@
 // Drawing one frame with a small fake canvas that writes down every call: the
 // background, the camera part of each picture, the transparency and shift of a
 // change, captions (wrapping, fading), pictures that are not loaded yet, and that
-// every save has its restore. No browser.
+// every save has its restore, and the 3D photos (layers instead of one flat
+// picture). No browser.
 
 import test from "node:test";
 import assert from "node:assert/strict";
@@ -28,6 +29,7 @@ class FakeCanvas implements CanvasLike {
   textBaseline: CanvasTextBaseline = "alphabetic";
   direction: CanvasDirection = "ltr";
   calls: Call[] = [];
+  drawn: unknown[] = [];
   depth = 0;
   private stack: number[] = [];
 
@@ -41,7 +43,7 @@ class FakeCanvas implements CanvasLike {
   fillRect(x: number, y: number, w: number, h: number) { this.log("fillRect", [x, y, w, h, this.fillStyle]); }
   fillText(text: string, x: number, y: number) { this.log("fillText", [text, x, y]); }
   measureText(text: string) { return { width: text.length * 10 }; }
-  drawImage(_i: never, ...rest: number[]) { this.log("drawImage", rest); }
+  drawImage(image: never, ...rest: number[]) { this.drawn.push(image); this.log("drawImage", rest); }
   of(name: string) { return this.calls.filter((c) => c.name === name); }
 }
 
@@ -180,4 +182,65 @@ test("a caption moves and fades together with its picture", () => {
   assert.ok(secondTranslate > firstSave);
   assert.equal(ctx.of("fillText").length, 1);
   assert.equal(ctx.depth, 0);
+});
+
+const LAYERS = ["far", "mid", "near"];
+const threeD = (...indexes: number[]) =>
+  new Map(indexes.map((i) => [i, { width: 640, height: 360, layers: LAYERS.map((l) => `${i}-${l}`) }]));
+
+test("a 3D scene is drawn from its layers, far to near, not from the flat picture", () => {
+  const ctx = new FakeCanvas();
+  const timeline = timelineOf([scene("a", 10, { motion: "pan-right" })]);
+  assert.deepEqual(renderFrame(ctx, SIZE, timeline, images(1), 5, threeD(0)), []);
+  assert.deepEqual(ctx.drawn, ["0-far", "0-mid", "0-near"]);
+  assert.equal(ctx.depth, 0);
+});
+
+test("a 3D scene needs no flat picture and is not reported missing", () => {
+  const ctx = new FakeCanvas();
+  const timeline = timelineOf([scene("a", 10)]);
+  assert.deepEqual(renderFrame(ctx, SIZE, timeline, new Map(), 5, threeD(0)), []);
+  assert.equal(ctx.drawn.length, 3);
+});
+
+test("3D and flat scenes can be mixed in one film", () => {
+  const ctx = new FakeCanvas();
+  const timeline = timelineOf([scene("a", 6), scene("b", 6)]);
+  // During the change scene 0 is flat and scene 1 is 3D.
+  assert.deepEqual(renderFrame(ctx, SIZE, timeline, images(2), 5, threeD(1)), []);
+  assert.equal(ctx.drawn.length, 1 + 3);
+  assert.equal(ctx.drawn[0], IMG);
+  assert.deepEqual(ctx.drawn.slice(1), ["1-far", "1-mid", "1-near"]);
+  assert.equal(ctx.depth, 0);
+});
+
+test("a 3D scene follows the same change and caption as a flat one", () => {
+  const ctx = new FakeCanvas();
+  const timeline = timelineOf([scene("a", 6, { transition: "slide-left", caption: "A" }), scene("b", 6)]);
+  renderFrame(ctx, SIZE, timeline, images(2), 5, threeD(0, 1));
+  // The sideways shifts are the same as for flat pictures.
+  const shifts = ctx.of("translate").map((c) => c.args[0]);
+  assert.equal(shifts[0], 0);
+  assert.equal(ctx.of("fillText").length, 1);
+  // Layers are drawn at the transparency of their scene.
+  const alphas = ctx.of("drawImage").map((c) => c.alpha);
+  assert.ok(alphas.every((a) => a === 1));
+  assert.equal(ctx.depth, 0);
+});
+
+test("a fading 3D scene is drawn with the transparency of the fade", () => {
+  const ctx = new FakeCanvas();
+  const timeline = timelineOf([scene("a", 6), scene("b", 6)]);
+  renderFrame(ctx, SIZE, timeline, images(2), 5, threeD(1));
+  const alphas = ctx.of("drawImage").map((c) => c.alpha);
+  assert.deepEqual(alphas, [1, 0.5, 0.5, 0.5]);
+});
+
+test("an empty 3D map changes nothing", () => {
+  const a = new FakeCanvas();
+  const b = new FakeCanvas();
+  const timeline = timelineOf([scene("a", 10, { motion: "zoom-in", caption: "Hi" })]);
+  renderFrame(a, SIZE, timeline, images(1), 5);
+  renderFrame(b, SIZE, timeline, images(1), 5, new Map());
+  assert.deepEqual(a.calls, b.calls);
 });
