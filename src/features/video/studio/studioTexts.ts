@@ -185,7 +185,7 @@ export const STUDIO_TEXT: Readonly<Record<Lang, StudioTexts>> = {
 // The text of an error; anything unknown reads as a general failure.
 export function errorText(lang: Lang, code: string): string {
   const errors = STUDIO_TEXT[lang].errors as Readonly<Record<string, string>>;
-  return Object.hasOwn(errors, code) ? errors[code] : STUDIO_TEXT[lang].errors.failed;
+  return Object.prototype.hasOwnProperty.call(errors, code) ? errors[code] : STUDIO_TEXT[lang].errors.failed;
 }
 
 // What the person is told about changes made to the project, one line each.
