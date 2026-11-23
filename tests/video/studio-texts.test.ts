@@ -41,7 +41,7 @@ test("no text is empty and every word of the studio has its text", () => {
     for (const transition of STUDIO_TRANSITIONS) assert.ok(text.transitions[transition]?.length > 0, `${lang} ${transition}`);
     for (const aspect of STUDIO_ASPECTS) assert.ok(text.shapes[aspect]?.length > 0, `${lang} ${aspect}`);
     for (const quality of STUDIO_QUALITIES) assert.ok(text.qualities[quality]?.length > 0, `${lang} ${quality}`);
-    for (const stage of ["loading", "recording"] as const) assert.ok(text.stages[stage].length > 0);
+    for (const stage of ["loading", "depth", "recording"] as const) assert.ok(text.stages[stage].length > 0);
     for (const value of Object.values(text.errors)) assert.ok(value.length > 0);
   }
 });
@@ -74,6 +74,8 @@ test("every change made to the project has a sentence with its number", () => {
 test("the progress line has the stage and the percent, kept between 0 and 100", () => {
   assert.equal(progressText("en", "recording", 0.42), "Making the film 42%");
   assert.equal(progressText("fa", "recording", 0.42), "در حال ساخت فیلم ۴۲٪");
+  assert.equal(progressText("en", "depth", 0.5), "Finding the depth of the photos 50%");
+  assert.equal(progressText("fa", "depth", 0.5), "در حال تشخیص عمق عکس‌ها ۵۰٪");
   assert.equal(progressText("en", "loading", 5), "Getting the photos ready 100%");
   assert.equal(progressText("en", "loading", -1), "Getting the photos ready 0%");
   assert.equal(progressText("en", "loading", Number.NaN), "Getting the photos ready 0%");
