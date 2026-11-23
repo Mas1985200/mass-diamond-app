@@ -13,6 +13,11 @@ import type {
 } from "./types.ts";
 import type { StudioWarning } from "./validate.ts";
 
+// The parts of making a film that have a progress line. "depth" (finding how far
+// away things in a photo are, for the 3D photo) is listed here so the texts are ready
+// before the film maker reports it.
+export type StudioStage = FilmStage | "depth";
+
 // Everything that can go wrong while making a film or taking a photo.
 export type StudioErrorCode =
   | "invalid"
@@ -48,11 +53,14 @@ interface StudioTexts {
   readonly keepOpen: string;
   readonly done: string;
   readonly total: string;
+  readonly threeDLabel: string;
+  readonly threeDHint: string;
+  readonly depthApprox: string;
   readonly motions: Readonly<Record<StudioMotion, string>>;
   readonly transitions: Readonly<Record<StudioTransition, string>>;
   readonly shapes: Readonly<Record<StudioAspect, string>>;
   readonly qualities: Readonly<Record<StudioQuality, string>>;
-  readonly stages: Readonly<Record<FilmStage, string>>;
+  readonly stages: Readonly<Record<StudioStage, string>>;
   readonly errors: Readonly<Record<StudioErrorCode, string>>;
   readonly seconds: string;
   readonly scenesTruncated: (kept: number) => string;
@@ -85,6 +93,9 @@ export const STUDIO_TEXT: Readonly<Record<Lang, StudioTexts>> = {
     keepOpen: "تا پایان ساخت، این صفحه را باز نگه دار",
     done: "فیلمت آماده است",
     total: "طول فیلم",
+    threeDLabel: "عکس سه‌بعدی",
+    threeDHint: "عکس‌ها عمق پیدا می‌کنند و دوربین بین چیزهای نزدیک و دور می‌چرخد. ساخت کمی بیشتر طول می‌کشد.",
+    depthApprox: "مدل تشخیص عمق باز نشد؛ جلوهٔ سه‌بعدی تقریبی است.",
     motions: {
       "zoom-in": "نزدیک شدن",
       "zoom-out": "دور شدن",
@@ -103,7 +114,11 @@ export const STUDIO_TEXT: Readonly<Record<Lang, StudioTexts>> = {
     },
     shapes: { "16:9": "افقی", "9:16": "عمودی", "1:1": "مربع" },
     qualities: { draft: "پیش‌نویس", standard: "استاندارد", high: "بالا" },
-    stages: { loading: "در حال آماده‌سازی عکس‌ها", recording: "در حال ساخت فیلم" },
+    stages: {
+      loading: "در حال آماده‌سازی عکس‌ها",
+      depth: "در حال تشخیص عمق عکس‌ها",
+      recording: "در حال ساخت فیلم",
+    },
     errors: {
       invalid: "پروژهٔ فیلم درست نیست. عکس‌ها را دوباره اضافه کن.",
       no_images: "هیچ‌کدام از عکس‌ها باز نشد. دوباره امتحان کن.",
@@ -144,6 +159,9 @@ export const STUDIO_TEXT: Readonly<Record<Lang, StudioTexts>> = {
     keepOpen: "Keep this page open until the film is made",
     done: "Your film is ready",
     total: "Film length",
+    threeDLabel: "3D photos",
+    threeDHint: "Photos get depth and the camera moves between near and far things. Making the film takes a little longer.",
+    depthApprox: "The depth model could not be loaded; the 3D effect is approximate.",
     motions: {
       "zoom-in": "Move closer",
       "zoom-out": "Move away",
@@ -162,7 +180,11 @@ export const STUDIO_TEXT: Readonly<Record<Lang, StudioTexts>> = {
     },
     shapes: { "16:9": "Wide", "9:16": "Tall", "1:1": "Square" },
     qualities: { draft: "Draft", standard: "Standard", high: "High" },
-    stages: { loading: "Getting the photos ready", recording: "Making the film" },
+    stages: {
+      loading: "Getting the photos ready",
+      depth: "Finding the depth of the photos",
+      recording: "Making the film",
+    },
     errors: {
       invalid: "The film project is not valid. Add the photos again.",
       no_images: "None of the photos could be opened. Try again.",
@@ -202,7 +224,7 @@ export function warningText(lang: Lang, warning: StudioWarning): string {
 }
 
 // "Making the film 42%" for the progress line (progress is 0 to 1).
-export function progressText(lang: Lang, stage: FilmStage, progress: number): string {
+export function progressText(lang: Lang, stage: StudioStage, progress: number): string {
   const safe = Number.isFinite(progress) ? Math.min(1, Math.max(0, progress)) : 0;
   return `${STUDIO_TEXT[lang].stages[stage]} ${formatPercent(safe * 100, lang)}`;
 }
