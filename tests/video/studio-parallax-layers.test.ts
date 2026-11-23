@@ -1,6 +1,6 @@
 // tests/video/studio-parallax-layers.test.ts
 // Cutting a photo into layers: the part of the photo the frame shows, the depth map
-// laid over it, and the pixels each layer keeps.
+// laid over it, the pixels each layer keeps, and making them step by step.
 
 import test from "node:test";
 import assert from "node:assert/strict";
@@ -9,6 +9,7 @@ import {
   MAX_LAYERS,
   MIN_LAYERS,
   coverRect,
+  createParallaxBuilder,
   depthForFrame,
   prepareParallax,
   type PixelBuffer,
@@ -146,6 +147,130 @@ test("bad input gives null, so the flat photo is used", () => {
       ...good,
       readPixels: () => ({ width: 2, height: 2, data: new Uint8ClampedArray(5) }),
     }),
+    null,
+  );
+});
+
+const DEPTH4: DepthMap = { width: 2, height: 2, data: Uint8Array.from([0, 90, 180, 255]) };
+
+test("the builder works one small step at a time and gives the layers at the end", () => {
+  let reads = 0;
+  let made = 0;
+  const builder = createParallaxBuilder(
+    { width: 2, height: 2 },
+    DEPTH4,
+    { width: 2, height: 2 },
+    {
+      readPixels: () => {
+        reads += 1;
+        return solid(2, 2);
+      },
+      makeLayer: (p) => {
+        made += 1;
+        return p;
+      },
+    },
+    { layers: 4 },
+  )!;
+  assert.equal(builder.totalSteps, 5);
+  assert.equal(builder.state, "working");
+  assert.equal(builder.result(), null);
+
+  builder.step(); // reads the photo and the depth
+  assert.equal(reads, 1);
+  assert.equal(made, 0);
+  for (let i = 1; i <= 3; i += 1) {
+    builder.step();
+    assert.equal(made, i);
+    assert.equal(builder.state, "working");
+    assert.equal(builder.result(), null);
+  }
+  builder.step();
+  assert.equal(builder.state, "done");
+  assert.equal(made, 4);
+  assert.equal(builder.result()!.layers.length, 4);
+
+  // More steps change nothing.
+  builder.step();
+  builder.step();
+  assert.equal(made, 4);
+  assert.equal(reads, 1);
+});
+
+test("step by step gives the same layers as all at once", () => {
+  const deps = { readPixels: () => solid(2, 2), makeLayer: (p: PixelBuffer) => p };
+  const all = prepareParallax({ width: 2, height: 2 }, DEPTH4, { width: 2, height: 2 }, deps, { layers: 5 })!;
+  const builder = createParallaxBuilder({ width: 2, height: 2 }, DEPTH4, { width: 2, height: 2 }, deps, { layers: 5 })!;
+  for (let i = 0; i < builder.totalSteps; i += 1) builder.step();
+  const stepped = builder.result()!;
+  assert.equal(stepped.layers.length, all.layers.length);
+  stepped.layers.forEach((layer, i) => {
+    assert.deepEqual(Array.from(layer.data), Array.from(all.layers[i].data));
+  });
+});
+
+test("every result is its own copy of the list, so a caller cannot change the builder", () => {
+  const builder = createParallaxBuilder(
+    { width: 2, height: 2 },
+    DEPTH4,
+    { width: 2, height: 2 },
+    { readPixels: () => solid(2, 2), makeLayer: (p) => p },
+    { layers: 3 },
+  )!;
+  for (let i = 0; i < builder.totalSteps; i += 1) builder.step();
+  const first = builder.result()!;
+  assert.equal(builder.result()!.layers.length, 3);
+  assert.notEqual(builder.result()!.layers, first.layers);
+});
+
+test("a photo that cannot be read makes the builder fail, and it stays failed", () => {
+  let made = 0;
+  const builder = createParallaxBuilder(
+    { width: 2, height: 2 },
+    DEPTH4,
+    { width: 2, height: 2 },
+    {
+      readPixels: () => null,
+      makeLayer: (p) => {
+        made += 1;
+        return p;
+      },
+    },
+  )!;
+  builder.step();
+  assert.equal(builder.state, "failed");
+  assert.equal(builder.result(), null);
+  builder.step();
+  assert.equal(builder.state, "failed");
+  assert.equal(made, 0);
+});
+
+test("an error while making a layer makes the builder fail instead of throwing", () => {
+  let calls = 0;
+  const builder = createParallaxBuilder(
+    { width: 2, height: 2 },
+    DEPTH4,
+    { width: 2, height: 2 },
+    {
+      readPixels: () => solid(2, 2),
+      makeLayer: (p) => {
+        calls += 1;
+        if (calls === 2) throw new Error("out of memory");
+        return p;
+      },
+    },
+    { layers: 4 },
+  )!;
+  for (let i = 0; i < builder.totalSteps; i += 1) builder.step();
+  assert.equal(builder.state, "failed");
+  assert.equal(builder.result(), null);
+});
+
+test("silly sizes or a depth map that does not fit give no builder", () => {
+  const deps = { readPixels: () => solid(2, 2), makeLayer: (p: PixelBuffer) => p };
+  assert.equal(createParallaxBuilder({ width: 2, height: 2 }, DEPTH4, { width: 0, height: 2 }, deps), null);
+  assert.equal(
+    createParallaxBuilder({ width: 2, height: 2 }, { width: 2, height: 2, data: new Uint8Array(1) }, { width: 2, height: 2 }, deps),
     null,
   );
 });
