@@ -17,7 +17,7 @@ import {
   type FilmDraft,
   type PhotoChanges,
 } from "./filmDraft.ts";
-import { makeFilm, type FilmStage } from "./makeFilm.ts";
+import { makeFilm, type FilmStage, type ThreeDMode } from "./makeFilm.ts";
 import { createBrowserPhotoDeps, importPhoto, releasePhoto } from "./photoIntake.ts";
 import type { StudioErrorCode } from "./studioTexts.ts";
 import type { StudioAspect, StudioQuality } from "./types.ts";
@@ -39,6 +39,9 @@ export interface FilmOutput {
   readonly fileName: string;
   readonly warnings: StudioWarning[];
   readonly failedScenes: number;
+  // "off": flat photos. "model": 3D photos. "approximate": 3D photos with a simple
+  // guess of the depth (the depth model could not be used).
+  readonly threeD: ThreeDMode;
 }
 
 export interface FilmMakerHandle {
@@ -50,6 +53,8 @@ export interface FilmMakerHandle {
   readonly progress: FilmProgress | null;
   readonly error: StudioErrorCode | null;
   readonly output: FilmOutput | null;
+  // Whether the photos are made 3D (on by default).
+  readonly threeD: boolean;
   readonly addPhotos: (files: ArrayLike<File>) => Promise<void>;
   readonly removePhoto: (id: string) => void;
   readonly movePhoto: (id: string, direction: -1 | 1) => void;
@@ -57,6 +62,7 @@ export interface FilmMakerHandle {
   readonly setShape: (aspectRatio: StudioAspect) => void;
   readonly setQuality: (quality: StudioQuality) => void;
   readonly setTitle: (title: string) => void;
+  readonly setThreeD: (on: boolean) => void;
   readonly make: () => void;
   readonly cancel: () => void;
   // Back to an empty screen for a new film.
@@ -88,6 +94,7 @@ export function useFilmMaker(): FilmMakerHandle {
   const [progress, setProgress] = useState<FilmProgress | null>(null);
   const [error, setError] = useState<StudioErrorCode | null>(null);
   const [output, setOutput] = useState<FilmOutput | null>(null);
+  const [threeD, setThreeDState] = useState(true);
 
   const supported = useMemo(() => canMakeFilm(), []);
   const summary = useMemo(() => draftSummary(draft), [draft]);
@@ -99,8 +106,10 @@ export function useFilmMaker(): FilmMakerHandle {
   const aliveRef = useRef(true);
   const draftRef = useRef(draft);
   const outputRef = useRef<FilmOutput | null>(null);
+  const threeDRef = useRef(threeD);
   draftRef.current = draft;
   outputRef.current = output;
+  threeDRef.current = threeD;
 
   // Everything made on the phone is given back when the screen goes away.
   useEffect(() => {
@@ -164,6 +173,10 @@ export function useFilmMaker(): FilmMakerHandle {
     dispatch({ type: "setTitle", title });
   }, []);
 
+  const setThreeD = useCallback((on: boolean): void => {
+    setThreeDState(on);
+  }, []);
+
   const dropOutput = useCallback((): void => {
     if (outputRef.current) releasePhoto(outputRef.current.url, photoDeps);
     setOutput(null);
@@ -181,24 +194,30 @@ export function useFilmMaker(): FilmMakerHandle {
     setPhase("making");
     setProgress({ stage: "loading", value: 0 });
 
+    const wantThreeD = threeDRef.current;
     let lastStage: FilmStage | null = null;
     let lastPercent = -1;
 
     void (async () => {
       const release = await keepAwake();
       try {
-        const result = await makeFilm(draftToProject(current), createBrowserEnv(), {
-          isCancelled: () => cancelledRef.current,
-          // The drawing reports every frame; the screen is updated only when the
-          // percent or the stage changes.
-          onProgress: (stage, value) => {
-            const percent = Math.floor(value * 100);
-            if (stage === lastStage && percent === lastPercent) return;
-            lastStage = stage;
-            lastPercent = percent;
-            if (aliveRef.current) setProgress({ stage, value });
+        const result = await makeFilm(
+          draftToProject(current),
+          createBrowserEnv(),
+          {
+            isCancelled: () => cancelledRef.current,
+            // The drawing reports every frame; the screen is updated only when the
+            // percent or the stage changes.
+            onProgress: (stage, value) => {
+              const percent = Math.floor(value * 100);
+              if (stage === lastStage && percent === lastPercent) return;
+              lastStage = stage;
+              lastPercent = percent;
+              if (aliveRef.current) setProgress({ stage, value });
+            },
           },
-        });
+          { threeD: wantThreeD },
+        );
         // The screen is gone: no address was made yet, so there is nothing to free.
         if (!aliveRef.current) return;
         if (result.ok) {
@@ -209,6 +228,7 @@ export function useFilmMaker(): FilmMakerHandle {
             fileName: fileNameFor(result.mimeType),
             warnings: result.warnings,
             failedScenes: result.failedScenes.length,
+            threeD: result.threeD,
           });
           setPhase("done");
         } else {
@@ -255,6 +275,7 @@ export function useFilmMaker(): FilmMakerHandle {
     progress,
     error,
     output,
+    threeD,
     addPhotos,
     removePhoto,
     movePhoto,
@@ -262,6 +283,7 @@ export function useFilmMaker(): FilmMakerHandle {
     setShape,
     setQuality,
     setTitle,
+    setThreeD,
     make,
     cancel,
     reset,
