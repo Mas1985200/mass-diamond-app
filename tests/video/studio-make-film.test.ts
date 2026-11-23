@@ -1,12 +1,14 @@
 // tests/video/studio-make-film.test.ts
 // The whole studio in order with fake browser parts: a project goes in, a video
 // file comes out; bad projects, missing pictures, cancelling and a browser that
-// cannot record each give a clear answer. No browser, no network.
+// cannot record each give a clear answer, and the 3D photos (depth first, layers made
+// as the film goes, every layer let go at the end). No browser, no network.
 
 import test from "node:test";
 import assert from "node:assert/strict";
 
 import { makeFilm, type FilmEnv, type FilmStage } from "../../src/features/video/studio/makeFilm.ts";
+import type { DepthEngine } from "../../src/features/video/studio/depthModel.ts";
 import type { CanvasLike } from "../../src/features/video/studio/renderFrame.ts";
 import type { RecorderLike } from "../../src/features/video/studio/recorder.ts";
 
@@ -40,7 +42,7 @@ class FakeRecorder implements RecorderLike {
   }
 }
 
-function setup(over: { loader?: FilmEnv["loader"]; supported?: string[]; createCanvas?: FilmEnv["createCanvas"] } = {}) {
+function setup(over: { loader?: FilmEnv["loader"]; supported?: string[]; createCanvas?: FilmEnv["createCanvas"]; parallax?: FilmEnv["parallax"] } = {}) {
   let clock = 0;
   let pending: (() => void) | null = null;
   const canvas = new FakeCanvas();
@@ -48,6 +50,7 @@ function setup(over: { loader?: FilmEnv["loader"]; supported?: string[]; createC
   const env: FilmEnv = {
     createCanvas: over.createCanvas ?? ((size) => { sizes.push(size); return { canvas, ctx: canvas as unknown as CanvasLike }; }),
     loader: over.loader ?? (async () => ({ width: 1600, height: 900 })),
+    parallax: over.parallax,
     recorder: {
       createRecorder: () => new FakeRecorder(),
       isTypeSupported: (t) => (over.supported ?? ["video/webm"]).includes(t),
@@ -157,4 +160,150 @@ test("a browser that cannot make a canvas or record says unsupported", async () 
   assert.deepEqual(await makeFilm(project(), noCanvas.env), { ok: false, code: "unsupported" });
   const noRecorder = setup({ supported: [] });
   assert.deepEqual(await makeFilm(project(), noRecorder.env), { ok: false, code: "unsupported" });
+});
+
+// A fake browser side of the 3D photo: every layer is a small object, and the work is counted.
+function fakeParallax(over: { engine?: DepthEngine; noDeps?: boolean } = {}) {
+  const stats = { layerDeps: 0, made: 0, released: 0 };
+  const parallax: NonNullable<FilmEnv["parallax"]> = {
+    depthEngine: over.engine,
+    layerDeps: (_image, size) => {
+      stats.layerDeps += 1;
+      if (over.noDeps) return null;
+      return {
+        readPixels: () => ({ width: size.width, height: size.height, data: new Uint8ClampedArray(size.width * size.height * 4) }),
+        makeLayer: () => {
+          stats.made += 1;
+          return { layer: stats.made };
+        },
+      };
+    },
+    release: (prepared) => {
+      stats.released += prepared.layers.length;
+    },
+  };
+  return { parallax, stats };
+}
+
+async function film(s: ReturnType<typeof setup>, threeD: boolean | undefined, callbacks: Parameters<typeof makeFilm>[2] = {}) {
+  const promise = makeFilm(project(), s.env, callbacks, threeD === undefined ? {} : { threeD });
+  await s.run();
+  return promise;
+}
+
+test("3D photos are off unless asked for, even when the browser can do them", async () => {
+  const fake = fakeParallax();
+  const s = setup({ parallax: fake.parallax });
+  const stages: FilmStage[] = [];
+  const result = await film(s, undefined, { onProgress: (stage) => stages.push(stage) });
+  assert.ok(result.ok);
+  assert.equal(result.threeD, "off");
+  assert.equal(fake.stats.layerDeps, 0);
+  assert.ok(!stages.includes("depth"));
+});
+
+test("asking for 3D in a browser that cannot do it gives a flat film", async () => {
+  const s = setup();
+  const stages: FilmStage[] = [];
+  const result = await film(s, true, { onProgress: (stage) => stages.push(stage) });
+  assert.ok(result.ok);
+  assert.equal(result.threeD, "off");
+  assert.ok(!stages.includes("depth"));
+});
+
+test("a 3D film finds the depth first, draws every layer, and lets all layers go", async () => {
+  const flat = setup();
+  assert.ok((await film(flat, false)).ok);
+
+  const fake = fakeParallax();
+  const s = setup({ parallax: fake.parallax });
+  const stages: Array<[FilmStage, number]> = [];
+  const result = await film(s, true, { onProgress: (stage, p) => stages.push([stage, p]) });
+  assert.ok(result.ok);
+  // No depth model here, so the depth is a guess.
+  assert.equal(result.threeD, "approximate");
+  assert.deepEqual(stages.filter(([st]) => st === "depth").map(([, p]) => p), [0.5, 1]);
+  // Loading comes before the depth, and the depth before the recording.
+  const order = stages.map(([st]) => st);
+  assert.ok(order.indexOf("loading") < order.indexOf("depth"));
+  assert.ok(order.lastIndexOf("depth") < order.indexOf("recording"));
+  // Many more pictures are drawn (the layers), and every layer made is let go.
+  assert.ok(s.canvas.drawn > flat.canvas.drawn * 2);
+  assert.ok(fake.stats.made > 0);
+  assert.equal(fake.stats.released, fake.stats.made);
+});
+
+test("the depth model is asked for every picture, and a good answer is not 'approximate'", async () => {
+  const asked: string[] = [];
+  const engine = {
+    estimate: async (url: string) => {
+      asked.push(url);
+      return { width: 2, height: 2, data: [1, 2, 3, 4] };
+    },
+  };
+  const fake = fakeParallax({ engine });
+  const s = setup({ parallax: fake.parallax });
+  const result = await film(s, true);
+  assert.ok(result.ok);
+  assert.equal(result.threeD, "model");
+  assert.deepEqual(asked, ["https://x/1.jpg", "https://x/2.jpg"]);
+});
+
+test("one picture whose depth fails makes the whole film approximate, not broken", async () => {
+  let calls = 0;
+  const engine = {
+    estimate: async () => {
+      calls += 1;
+      if (calls === 2) throw new Error("download blocked");
+      return { width: 2, height: 2, data: [1, 2, 3, 4] };
+    },
+  };
+  const fake = fakeParallax({ engine });
+  const s = setup({ parallax: fake.parallax });
+  const result = await film(s, true);
+  assert.ok(result.ok);
+  assert.equal(result.threeD, "approximate");
+});
+
+test("when layers cannot be made the pictures are drawn flat and the film still comes out", async () => {
+  const flat = setup();
+  assert.ok((await film(flat, false)).ok);
+  const fake = fakeParallax({ noDeps: true });
+  const s = setup({ parallax: fake.parallax });
+  const result = await film(s, true);
+  assert.ok(result.ok);
+  assert.equal(fake.stats.made, 0);
+  assert.equal(s.canvas.drawn, flat.canvas.drawn);
+});
+
+test("cancelling while the depth is found stops everything, even if the model never answers", async () => {
+  let cancel = false;
+  const engine = {
+    estimate: () => {
+      cancel = true;
+      return new Promise<never>(() => {});
+    },
+  };
+  const fake = fakeParallax({ engine });
+  const s = setup({ parallax: fake.parallax });
+  const result = await film(s, true, { isCancelled: () => cancel });
+  assert.deepEqual(result, { ok: false, code: "cancelled" });
+  assert.equal(s.sizes.length, 0);
+});
+
+test("cancelling while a 3D film is recorded still lets every layer go", async () => {
+  const fake = fakeParallax();
+  const s = setup({ parallax: fake.parallax });
+  let calls = 0;
+  const result = await film(s, true, { isCancelled: () => ++calls > 20 });
+  assert.deepEqual(result, { ok: false, code: "cancelled" });
+  assert.ok(fake.stats.made > 0);
+  assert.equal(fake.stats.released, fake.stats.made);
+});
+
+test("a browser that cannot make a canvas lets nothing leak in 3D either", async () => {
+  const fake = fakeParallax();
+  const s = setup({ parallax: fake.parallax, createCanvas: () => { throw new Error("no canvas"); } });
+  assert.deepEqual(await makeFilm(project(), s.env, {}, { threeD: true }), { ok: false, code: "unsupported" });
+  assert.equal(fake.stats.released, fake.stats.made);
 });
