@@ -1,7 +1,8 @@
 // src/features/video/studio/FilmMakerPanel.tsx
 // The film-making screen: add photos from the phone camera or gallery, set each
 // photo's time, camera movement, change and caption, choose the shape and quality,
-// make the film on the phone, then play and download it. Every decision is made in
+// choose whether the photos are 3D, make the film on the phone, then play and
+// download it. Every decision is made in
 // the studio files (filmDraft.ts, makeFilm.ts, studioTexts.ts, useFilmMaker.ts);
 // this file only draws the state and sends what the person does.
 
@@ -269,6 +270,34 @@ export default function FilmMakerPanel({ lang = "fa", onClose }: FilmMakerPanelP
                   ))}
                 </div>
               </div>
+              <button
+                type="button"
+                role="switch"
+                aria-checked={maker.threeD}
+                onClick={() => maker.setThreeD(!maker.threeD)}
+                className={`flex items-start gap-3 rounded-xl border px-3 py-2 text-start transition-colors ${
+                  maker.threeD ? "border-primary/60 bg-primary/5" : "border-white/15 bg-white/5"
+                }`}
+              >
+                <span
+                  aria-hidden="true"
+                  className={`mt-0.5 flex h-5 w-9 flex-none items-center rounded-full p-0.5 transition-colors ${
+                    maker.threeD ? "bg-primary" : "bg-white/20"
+                  }`}
+                >
+                  <span
+                    className={`h-4 w-4 rounded-full bg-black transition-transform ${
+                      maker.threeD ? (lang === "fa" ? "-translate-x-4" : "translate-x-4") : ""
+                    }`}
+                  />
+                </span>
+                <span className="flex min-w-0 flex-col gap-0.5">
+                  <span className={`text-xs font-semibold ${maker.threeD ? "text-primary" : "text-text"}`}>
+                    {text.threeDLabel}
+                  </span>
+                  <span className="text-xs leading-5 text-text-subtle">{text.threeDHint}</span>
+                </span>
+              </button>
               <input
                 type="text"
                 className={FIELD}
@@ -332,6 +361,9 @@ export default function FilmMakerPanel({ lang = "fa", onClose }: FilmMakerPanelP
             <p className="text-xs text-text-subtle">
               {text.total}: {clockText(output.seconds, lang)}
             </p>
+            {output.threeD === "approximate" && (
+              <p className="text-xs leading-5 text-warning">{text.depthApprox}</p>
+            )}
             {output.failedScenes > 0 && (
               <p className="text-xs leading-5 text-warning">{text.failedScenes(output.failedScenes)}</p>
             )}
