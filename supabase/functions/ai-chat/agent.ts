@@ -123,15 +123,16 @@ export function firstRoundOptions(
     }
   }
 
-  // Video mode: the first message of a video chat is the idea for a video, so
-  // the model must start it. Left to its own choice a model sometimes only
-  // says "I am making it" without calling the tool, and then nothing is made.
-  // Later messages stay free: they may only ask about the video or change it.
-  if (capability === "video" && isFirstUserTurn(messages)) {
+  // Video mode: the chat is a film director (see video/rules.ts). It asks the
+  // idea, asks its few questions, shows the plan and asks "anything else?", and
+  // only then calls create_video, so no message is forced to call the tool.
+  // The rule tells the model never to say it is making a video in a message
+  // that did not call the tool.
+  if (capability === "video") {
     const videoTools = only(["create_video"]);
 
     if (videoTools.length > 0) {
-      return { tools: videoTools, toolChoice: "required" };
+      return { tools: videoTools, toolChoice: "auto" };
     }
   }
 
