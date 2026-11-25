@@ -1,6 +1,7 @@
 // tests/video/first-turn.test.ts
-// In video mode the first message of the chat must start the video: the model
-// is required to call create_video. Later messages stay free.
+// In video mode the chat is a film director: it may ask questions before it
+// starts the video, so no message is forced to call create_video. Only the
+// video tool is offered, and the model decides when to call it.
 
 import test from "node:test";
 import assert from "node:assert/strict";
@@ -40,7 +41,7 @@ test("the first user message is recognized, in any language", () => {
   assert.equal(isFirstUserTurn([]), false);
 });
 
-test("video mode, first message: create_video is required", () => {
+test("video mode, first message: only create_video is offered and the model decides", () => {
   const options = firstRoundOptions(
     [user("یک گربه روی دیوار قدم می‌زند")],
     videoTools,
@@ -48,16 +49,16 @@ test("video mode, first message: create_video is required", () => {
   );
 
   assert.ok(options);
-  assert.equal(options.toolChoice, "required");
+  assert.equal(options.toolChoice, "auto");
   assert.deepEqual(
     options.tools.map((item) => item.function.name),
     ["create_video"],
   );
 });
 
-test("video mode, later messages: the model stays free to answer", () => {
+test("video mode, later messages: the model stays free as well", () => {
   const options = firstRoundOptions(
-    [user("a cat"), assistant("Making it."), user("how long is left?")],
+    [user("a cat"), assistant("Which look?"), user("anime")],
     videoTools,
     "video",
   );
