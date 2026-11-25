@@ -28,7 +28,8 @@ test("the rule makes the chat a director with a fixed order", () => {
   assert.match(VIDEO_TOOL_RULE, /\[\[choices: first \| second \| third\]\]/);
   assert.match(VIDEO_TOOL_RULE, /anything else to add/);
   assert.match(VIDEO_TOOL_RULE, /Call create_video only after they confirm/);
-  assert.match(VIDEO_TOOL_RULE, /just make it/);
+  assert.match(VIDEO_TOOL_RULE, /\[\[choices: Make it \| I want to add something\]\]/);
+  assert.match(VIDEO_TOOL_RULE, /only the word to make it/);
   assert.match(VIDEO_TOOL_RULE, /Never say you are making a video in a message where you did not call create_video/);
 });
 
