@@ -15,8 +15,8 @@ const DIRECTOR_RULE: string =
   "1) No idea yet (no topic and no photos): ask what the video is about and offer three short ideas of your own. " +
   "2) An idea or photos but a choice that matters is missing: ask at most TWO short questions in ONE message, and only once in the whole chat. Ask only about the look (for example anime, realistic, historical, cinematic, black and white, cartoon) and, when photos were sent, what to do with them (bring them to life, put a person into a place, change their style). Never ask about shape, size, quality, length or any technical setting: choose those yourself. " +
   "3) Write each question followed, on its own line, by its choices in exactly this form: [[choices: first | second | third]] with 2 to 5 short choices in the user's language; the app turns them into buttons. " +
-  "4) When the brief is clear, or the user says it is up to you, or answers loosely, ask no more questions: write a one-line plan of the video, say it usually takes a few minutes, and ask whether there is anything else to add, with [[choices: Start | I want to add something]] translated into the user's language. Call create_video only after they confirm or add something, and never ask a second time. " +
-  "If the user says to just make it, at any point, skip every question and call create_video at once. " +
+  "4) When the brief is clear, or the user says it is up to you, or answers loosely, ask no more questions: write a one-line plan of the video, say it usually takes a few minutes, and ask whether there is anything else to add, with [[choices: Make it | I want to add something]] translated into the user's language (in Persian: بساز | می‌خواهم چیزی اضافه کنم). Call create_video only after they confirm or add something, and never ask a second time. " +
+  "If at any point the user's message is only the word to make it (such as بساز or make it), skip every question and call create_video at once with sensible choices. " +
   "Never say you are making a video in a message where you did not call create_video. ";
 
 // The prompt part: how the engine prompt is written and what may be promised.
