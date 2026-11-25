@@ -16,6 +16,7 @@ import { useChat } from "../../hooks/useChat";
 import { useVoiceInput } from "../../hooks/useVoiceInput";
 import { VOICE_LABELS } from "../../features/voice/voiceMessages";
 import { CHAT_ERROR_MESSAGES } from "../../features/chat/errorMessages";
+import { summaryFor } from "../../features/chat/capabilities";
 import DiamondMark from "../DiamondMark";
 import MarkdownText from "./MarkdownText";
 import DirectionsButton from "./DirectionsButton";
@@ -1951,7 +1952,7 @@ export default function ChatScreen() {
                   type="button"
                   onClick={() => handleQuickAction(action)}
                   disabled={!action.enabled}
-                  className={`md-glass flex items-center gap-2 rounded-full px-3.5 py-2.5 text-[13px] text-text transition-colors duration-180 hover:border-[rgba(57,255,136,0.4)] disabled:cursor-not-allowed ${
+                  className={`md-glass flex items-center gap-2 rounded-2xl px-3.5 py-2.5 text-[13px] text-text transition-colors duration-180 hover:border-[rgba(57,255,136,0.4)] disabled:cursor-not-allowed ${
                     action.wide ? "col-span-2 justify-center" : ""
                   } ${
                     action.highlight
@@ -1960,7 +1961,17 @@ export default function ChatScreen() {
                   }`}
                 >
                   <span className="shrink-0 text-primary">{action.icon}</span>
-                  <span className="truncate">{action.label}</span>
+                  <span className="min-w-0 flex-1 text-start">
+                    <span className="block truncate">{action.label}</span>
+                    {summaryFor(action.id) && (
+                      <span
+                        dir="rtl"
+                        className="mt-0.5 line-clamp-2 block text-[11px] leading-4 text-text-subtle"
+                      >
+                        {summaryFor(action.id)}
+                      </span>
+                    )}
+                  </span>
                 </button>
               ))}
             </div>
