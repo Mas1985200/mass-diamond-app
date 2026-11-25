@@ -13,12 +13,23 @@ test("the rule names the tool and states the real maximum length", () => {
   assert.ok(VIDEO_TOOL_RULE.includes(`at most ${MAX_VIDEO_SECONDS} seconds`));
 });
 
-test("the rule covers the engine prompt, the one question, changes and honesty", () => {
+test("the rule covers the engine prompt, changes and honesty", () => {
   assert.match(VIDEO_TOOL_RULE, /in English, 40 to 120 words/);
-  assert.match(VIDEO_TOOL_RULE, /ONE short question/);
   assert.match(VIDEO_TOOL_RULE, /change, redo or vary/);
   assert.match(VIDEO_TOOL_RULE, /never say it is finished/);
   assert.match(VIDEO_TOOL_RULE, /real person's face/);
+});
+
+test("the rule makes the chat a director with a fixed order", () => {
+  assert.match(VIDEO_TOOL_RULE, /film director/);
+  assert.match(VIDEO_TOOL_RULE, /ask what the video is about and offer three short ideas/);
+  assert.match(VIDEO_TOOL_RULE, /at most TWO short questions in ONE message, and only once/);
+  assert.match(VIDEO_TOOL_RULE, /Never ask about shape, size, quality, length/);
+  assert.match(VIDEO_TOOL_RULE, /\[\[choices: first \| second \| third\]\]/);
+  assert.match(VIDEO_TOOL_RULE, /anything else to add/);
+  assert.match(VIDEO_TOOL_RULE, /Call create_video only after they confirm/);
+  assert.match(VIDEO_TOOL_RULE, /just make it/);
+  assert.match(VIDEO_TOOL_RULE, /Never say you are making a video in a message where you did not call create_video/);
 });
 
 test("the rule is one line and tied to no single example", () => {
