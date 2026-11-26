@@ -17,9 +17,11 @@ import { useVoiceInput } from "../../hooks/useVoiceInput";
 import { VOICE_LABELS } from "../../features/voice/voiceMessages";
 import { CHAT_ERROR_MESSAGES } from "../../features/chat/errorMessages";
 import { summaryFor } from "../../features/chat/capabilities";
+import { joinAnswers, splitChoices } from "../../features/chat/choices";
 import DiamondMark from "../DiamondMark";
 import MarkdownText from "./MarkdownText";
 import DirectionsButton from "./DirectionsButton";
+import ChoiceRow from "./ChoiceRow";
 import VoiceStatusBar from "./VoiceStatusBar";
 import PhotosCard, { parsePhotosCard, type PhotosCardData } from "./PhotosCard";
 import SourcesCard from "./SourcesCard";
@@ -76,6 +78,12 @@ const VOICE_ERROR_VISIBLE_MS = 6_000;
 // What the voice input is told about the person's own earlier words.
 const VOICE_CONTEXT_MESSAGES = 3;
 const VOICE_CONTEXT_MESSAGE_CHARS = 200;
+
+// The answers tapped so far under the questions of one assistant message.
+interface PickedAnswers {
+  readonly messageId: string;
+  readonly answers: readonly (string | null)[];
+}
 
 interface QuickAction {
   readonly id: string;
@@ -1210,6 +1218,7 @@ export default function ChatScreen() {
   const [photoError, setPhotoError] = useState<AttachErrorCode | null>(null);
   const [isPreparing, setIsPreparing] = useState(false);
   const [sheetOpen, setSheetOpen] = useState(false);
+  const [picked, setPicked] = useState<PickedAnswers | null>(null);
 
   // The voice input asks for these when a recording is sent, so it always
   // sees the newest draft and messages.
@@ -1262,6 +1271,12 @@ export default function ChatScreen() {
     !voiceBusy &&
     !isVideoBlocked(activeId);
   const showThinking = isSending && !isStreaming;
+  // Only the newest assistant message, once it is finished, has live buttons.
+  const lastAssistant = [...messages]
+    .reverse()
+    .find((message) => message.role === "assistant");
+  const choicesActiveId =
+    !isSending && !isStreaming && lastAssistant ? lastAssistant.id : null;
 
   const activeAction =
     QUICK_ACTIONS.find((action) => action.id === activeId) ?? null;
@@ -1724,6 +1739,39 @@ export default function ChatScreen() {
     await submit(draft);
   };
 
+  // A tapped answer. With one question it is sent at once; with several, the
+  // answers are collected and sent together when every question has one.
+  const handlePickChoice = (
+    messageId: string,
+    total: number,
+    index: number,
+    option: string,
+  ) => {
+    if (isSending || isPreparing || voiceBusy) {
+      return;
+    }
+
+    const before = picked && picked.messageId === messageId ? picked.answers : [];
+    const answers: (string | null)[] = Array.from(
+      { length: total },
+      (_, position) => before[position] ?? null,
+    );
+
+    answers[index] = option;
+
+    const complete = answers.filter(
+      (answer): answer is string => answer !== null,
+    );
+
+    if (complete.length === total) {
+      setPicked(null);
+      void submit(joinAnswers(complete));
+      return;
+    }
+
+    setPicked({ messageId, answers });
+  };
+
   // One tap starts the recording, the next tap stops it and sends the sound
   // to be turned into text.
   const handleMic = () => {
@@ -1884,14 +1932,66 @@ export default function ChatScreen() {
               ) : (
                 <li key={message.id} className="w-full">
                   <div className="md-prose w-full px-1 text-[15px] text-text">
-                    {splitAssistantContent(message.content).map(
-                      (part, index) =>
-                        part.kind === "card" ? (
-                          <CardView key={`card-${index}`} card={part.card} />
-                        ) : (
-                          <MarkdownText key={`text-${index}`} text={part.text} />
-                        ),
-                    )}
+                    {(() => {
+                      const live = message.id === choicesActiveId;
+                      const total = live
+                        ? splitChoices(message.content).filter(
+                            (piece) => piece.kind === "choices",
+                          ).length
+                        : 0;
+                      const chosenNow =
+                        picked && picked.messageId === message.id
+                          ? picked.answers
+                          : [];
+                      let groupIndex = 0;
+
+                      return splitAssistantContent(message.content).map(
+                        (part, index) => {
+                          if (part.kind === "card") {
+                            return (
+                              <CardView key={`card-${index}`} card={part.card} />
+                            );
+                          }
+
+                          return splitChoices(part.text).map(
+                            (piece, pieceIndex) => {
+                              if (piece.kind === "text") {
+                                return (
+                                  <MarkdownText
+                                    key={`text-${index}-${pieceIndex}`}
+                                    text={piece.text}
+                                  />
+                                );
+                              }
+
+                              const mine = groupIndex;
+
+                              groupIndex += 1;
+
+                              if (!live) {
+                                return null;
+                              }
+
+                              return (
+                                <ChoiceRow
+                                  key={`choices-${index}-${pieceIndex}`}
+                                  options={piece.options}
+                                  chosen={chosenNow[mine] ?? null}
+                                  onPick={(option) =>
+                                    handlePickChoice(
+                                      message.id,
+                                      total,
+                                      mine,
+                                      option,
+                                    )
+                                  }
+                                />
+                              );
+                            },
+                          );
+                        },
+                      );
+                    })()}
                   </div>
                 </li>
               ),
