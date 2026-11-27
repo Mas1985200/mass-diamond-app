@@ -215,23 +215,22 @@ Deno.serve(async (request: Request): Promise<Response> => {
     const memory: MemoryContext = { facts, summaries };
     const activeUserId = user.id;
 
-    // Video mode: the chat only offers the create_video tool, through a door
-    // that calls the video function with this person's own sign-in.
-    const videoMode = body.mode === "video";
-    const video = videoMode
-      ? scopeToTurn(
-          pinModel(
-            createVideoPort({
-              baseUrl: supabaseUrl,
-              authorization: request.headers.get("Authorization") ?? "",
-              conversationId,
-              apiKey: supabaseAnonKey,
-            }),
-            body.videoModel,
-          ),
-          turnKeyOf(conversationId, history.length, message),
-        )
-      : null;
+    // The door to the video function, with this person's own sign-in. It is
+    // always built, but the chat model is only offered the create_video tool
+    // when the turn is about making a video: the app is in video mode (the
+    // /video address) or the router decided so from the words of the chat.
+    const video = scopeToTurn(
+      pinModel(
+        createVideoPort({
+          baseUrl: supabaseUrl,
+          authorization: request.headers.get("Authorization") ?? "",
+          conversationId,
+          apiKey: supabaseAnonKey,
+        }),
+        body.videoModel,
+      ),
+      turnKeyOf(conversationId, history.length, message),
+    );
 
     const ctx: ToolContext = {
       now: new Date(),
@@ -337,16 +336,28 @@ Deno.serve(async (request: Request): Promise<Response> => {
 
       // Pictures of the subject are chosen beside the answer (never when the
       // user sent photos of their own).
-      const illustration: Promise<readonly PhotoItem[]> | null =
-        photos.length === 0 && !videoMode
+      // It starts beside the router, so no time is lost; it is dropped when
+      // the turn turns out to be about making a video.
+      const startedIllustration: Promise<readonly PhotoItem[]> | null =
+        photos.length === 0 && body.mode !== "video"
           ? prepareIllustration(conversation, master.signal)
           : null;
 
       // What kind of question is this? The answer decides which prompt rules
-      // and tools the model receives (null = unknown: everything).
-      const capability: Capability | null = videoMode
-        ? "video"
-        : await routeCapability(conversation, master.signal);
+      // and tools the model receives (null = unknown: everything except the
+      // video tool). The /video address always means video.
+      const capability: Capability | null =
+        body.mode === "video"
+          ? "video"
+          : await routeCapability(conversation, master.signal);
+      const videoMode = capability === "video";
+      const illustration = videoMode ? null : startedIllustration;
+
+      if (videoMode) {
+        // Nobody waits for the dropped pictures; a late failure must not
+        // surface as an unhandled error.
+        void startedIllustration?.catch(() => undefined);
+      }
 
       const basePrompt = buildSystemPrompt(
         ctx,
