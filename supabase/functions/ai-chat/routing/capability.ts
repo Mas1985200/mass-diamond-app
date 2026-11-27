@@ -24,7 +24,9 @@ export type Capability =
   | "place"
   | "time"
   | "attach"
-  // Never chosen by the router: the app sets it when the user is in video mode.
+  // Making a video, film or animation. The router picks it from the words of
+  // the conversation (in any language); the app also sets it when the user is
+  // in the video mode (the /video address).
   | "video";
 
 export const ROUTER_TIMEOUT_MS = 3_500;
@@ -45,12 +47,18 @@ export const TOOLS_BY_CAPABILITY: Record<Capability, readonly string[]> = {
   video: ["create_video"],
 };
 
-// null = unknown: everything is offered.
+// null = unknown: every tool is offered, except the one that starts a video.
+// A video costs the person credits and server time, so it is only ever started
+// when the conversation was clearly about making one (capability "video").
 export function offersTool(
   capability: Capability | null,
   toolName: string,
 ): boolean {
-  return capability === null || TOOLS_BY_CAPABILITY[capability].includes(toolName);
+  if (capability === null) {
+    return toolName !== "create_video";
+  }
+
+  return TOOLS_BY_CAPABILITY[capability].includes(toolName);
 }
 
 export function selectTools(
@@ -170,9 +178,10 @@ const INSTRUCTION = [
   "TIME: asks for today's date, the weekday, the current time, or the time in another place.",
   "KNOW: a factual, educational or scientific question whose answer does not change over time and where accuracy matters: science, medicine and health facts, space, history, geography, how a technology or concept works, cooking and food science, culture, people, definitions; also requests for research, studies or sources, and requests to see a picture, photo or diagram of a thing, animal, plant, place, person or body part (also as a follow-up such as 'عکسی داری ازش').",
   "ATTACH: the LAST message only points at something the user says they sent or showed (a photo, picture, screenshot, file or voice message) and names no subject of its own, for example 'what is this?', 'what is in it?', 'look at this', 'این چیه؟', 'این عکسو ببین', and nothing like it appears in the earlier messages. A message that names ANY subject (an animal, plant, object, body part, food, place, person, event, anything), even when it asks for a 'photo', 'picture' or 'image' of it, is never ATTACH: it is KNOW. A message that contains a 'Photo description' is never ATTACH.",
+  "VIDEO: asks to make, create or produce a video, film, movie, animation, cartoon, anime, clip, reel, short, trailer or video advertisement, in any language and with or without a topic, also when it points at photos the user sent (for example 'make a video from these photos'); or the LAST message is a short answer or follow-up inside such a conversation (a style, length, music, text, a topic, 'yes', 'go ahead', 'make it brighter') while the assistant is gathering details for a video or has just made one. A question ABOUT videos or films (how one was made, which film to watch, editing advice, a video file the user wants explained) is not VIDEO.",
   "CHAT: everything else: chit-chat, greetings, advice, opinions, jokes, stories, writing, editing, translation, math, programming, planning, brainstorming, business or real estate help, asking to remember something.",
   "A short follow-up ('more', 'and what else', 'دیگه', 'و چی؟') keeps the label of the topic it continues.",
-  "Reply with exactly one word: FRESH, PLACE, TIME, KNOW, ATTACH or CHAT.",
+  "Reply with exactly one word: FRESH, PLACE, TIME, KNOW, VIDEO, ATTACH or CHAT.",
 ].join("\n");
 
 export type CapabilityAsk = (
@@ -198,13 +207,13 @@ export function buildRouterMessages(
     { role: "system", content: INSTRUCTION },
     {
       role: "user",
-      content: `${transcript}\n\nLabel (FRESH, PLACE, TIME, KNOW, ATTACH or CHAT):`,
+      content: `${transcript}\n\nLabel (FRESH, PLACE, TIME, KNOW, VIDEO, ATTACH or CHAT):`,
     },
   ];
 }
 
 export function parseCapability(text: string): Capability | null {
-  const match = /\b(FRESH|PLACE|TIME|KNOW|ATTACH|CHAT)\b/i.exec(text);
+  const match = /\b(FRESH|PLACE|TIME|KNOW|VIDEO|ATTACH|CHAT)\b/i.exec(text);
 
   switch (match?.[1]?.toUpperCase()) {
     case "FRESH":
@@ -215,6 +224,8 @@ export function parseCapability(text: string): Capability | null {
       return "time";
     case "KNOW":
       return "know";
+    case "VIDEO":
+      return "video";
     case "ATTACH":
       return "attach";
     case "CHAT":
