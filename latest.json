@@ -1,0 +1,109 @@
+{
+  "commit": "1a0792675c6e4ef32e3138ebc689a7babf0cf5e0",
+  "message": "Refactor style handling in video creation",
+  "time": "2026-11-28 20:45:14 (تهران)",
+  "stages": [
+    {
+      "id": "install",
+      "label": "نصب پکیج‌ها",
+      "outcome": "success"
+    },
+    {
+      "id": "tests",
+      "label": "تست‌های واحد",
+      "outcome": "success"
+    },
+    {
+      "id": "types",
+      "label": "بررسی نوع‌ها (tsc)",
+      "outcome": "success"
+    },
+    {
+      "id": "build",
+      "label": "ساخت اپ (vite build)",
+      "outcome": "success"
+    }
+  ],
+  "details": [
+    {
+      "label": "بررسی نوع‌ها",
+      "lines": []
+    },
+    {
+      "label": "ساخت اپ",
+      "lines": []
+    }
+  ],
+  "tests": {
+    "tests": 1056,
+    "pass": 1056,
+    "fail": 0,
+    "cancelled": 0,
+    "skipped": 0
+  },
+  "failedTests": [],
+  "live": [
+    {
+      "label": "اپ (Cloudflare)",
+      "ok": true,
+      "detail": "page opens (HTTP 200)"
+    },
+    {
+      "label": "تابع ai-chat",
+      "ok": true,
+      "detail": "answers (HTTP 401)"
+    },
+    {
+      "label": "تابع video-engine",
+      "ok": true,
+      "detail": "answers (HTTP 401)"
+    },
+    {
+      "label": "تابع transcribe",
+      "ok": true,
+      "detail": "answers (HTTP 401)"
+    }
+  ],
+  "requirements": [
+    {
+      "id": "auto-video",
+      "text": "وقتی داخل چت ویدیو، فیلم یا انیمیشن خواستم، خودش وصل شود (بدون دکمه)",
+      "state": "pass"
+    },
+    {
+      "id": "director",
+      "text": "کارگردان هر پیام فقط یک سؤال با گزینه لمسی بپرسد و بعد از آخرین پاسخ شروع به ساخت کند",
+      "state": "planned"
+    },
+    {
+      "id": "merge",
+      "text": "ساخت ویدیو و ساخت فیلم یکی باشند و داخل چت اجرا شوند",
+      "state": "planned"
+    },
+    {
+      "id": "clean-entry",
+      "text": "صفحه ورودی خلوت باشد و فقط یک معرفی شیک داشته باشد",
+      "state": "planned"
+    },
+    {
+      "id": "styles",
+      "text": "همه سبک‌های وایرال و انیمه با یک فهرست قابلیت‌ها، بدون تغییر کد برای هر سبک",
+      "state": "planned"
+    },
+    {
+      "id": "photo",
+      "text": "عکس خودش: متحرک شود، حرف بزند، پیر و جوان شود",
+      "state": "planned"
+    },
+    {
+      "id": "device-first",
+      "text": "کار روی گوشی خود کاربر اجرا شود و ابر فقط پشتیبان باشد",
+      "state": "planned"
+    },
+    {
+      "id": "long-films",
+      "text": "ویدیو تا ۱۰ دقیقه و فیلم چندبخشی",
+      "state": "planned"
+    }
+  ]
+}
