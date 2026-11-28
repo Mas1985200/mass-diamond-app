@@ -5,6 +5,7 @@
 // storage. No Deno-only code, so it is tested with a faked network.
 
 import type { CreateVideoArgs } from "./args.ts";
+import { engineStyleOf } from "./catalog/engine-style.ts";
 
 export type VideoCreateFailure =
   | "quota_exceeded"
@@ -186,7 +187,9 @@ export function createVideoPort(config: VideoPortConfig): VideoPort {
         conversation_id: config.conversationId,
         prompt: args.idea,
         engine_prompt: args.enginePrompt,
-        style: args.style,
+        // The video function only knows six style words; the look itself is in
+        // the engine prompt (see catalog/engine-style.ts).
+        style: engineStyleOf(args.style),
         aspect_ratio: args.aspectRatio,
         duration_seconds: args.durationSeconds,
         quality: args.quality,
