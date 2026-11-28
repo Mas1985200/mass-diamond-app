@@ -1,0 +1,90 @@
+name: Status report
+
+# After every push to dev this builds a plain report of what really works: unit
+# tests, type check, app build, and a call to the live app and functions. The
+# report is written to the branch "status" (latest.md and latest.json), so it
+# can be read without opening GitHub Actions. It only reads the repository and
+# writes that one branch; it never deploys anything.
+
+on:
+  push:
+    branches: [dev]
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+concurrency:
+  group: status-report
+  cancel-in-progress: false
+
+jobs:
+  report:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: "22.22.0"
+
+      - name: Install packages
+        id: install
+        continue-on-error: true
+        run: npm install --no-audit --no-fund
+
+      - name: Unit tests
+        id: tests
+        continue-on-error: true
+        run: |
+          node --test "tests/**/*.test.ts" > test-output.txt 2>&1 || { tail -n 60 test-output.txt; exit 1; }
+
+      - name: Type check
+        id: types
+        if: steps.install.outcome == 'success'
+        continue-on-error: true
+        run: |
+          npx tsc -b > types-output.txt 2>&1 || { head -n 60 types-output.txt; exit 1; }
+
+      - name: Build the app
+        id: build
+        if: steps.install.outcome == 'success'
+        continue-on-error: true
+        run: |
+          npx vite build > build-output.txt 2>&1 || { tail -n 60 build-output.txt; exit 1; }
+
+      - name: Build the report
+        if: always()
+        run: node scripts/status/build-report.mjs
+        env:
+          COMMIT_SHA: ${{ github.sha }}
+          COMMIT_MESSAGE: ${{ github.event.head_commit.message }}
+          STAGE_INSTALL: ${{ steps.install.outcome }}
+          STAGE_TESTS: ${{ steps.tests.outcome }}
+          STAGE_TYPES: ${{ steps.types.outcome }}
+          STAGE_BUILD: ${{ steps.build.outcome }}
+
+      - name: Publish the report to the status branch
+        if: always()
+        run: |
+          set -e
+          git config user.name "status-bot"
+          git config user.email "status-bot@users.noreply.github.com"
+          cp status-out/latest.md status-out/latest.json /tmp/
+          git checkout --orphan status-report-tmp
+          git rm -rf --quiet .
+          cp /tmp/latest.md /tmp/latest.json .
+          git add latest.md latest.json
+          git commit -q -m "Status of ${GITHUB_SHA::7}"
+          git push --force origin HEAD:refs/heads/status
+
+      - name: Fail this run when the commit has a problem
+        if: always()
+        run: |
+          if [ "${{ steps.install.outcome }}" != "success" ] || [ "${{ steps.tests.outcome }}" != "success" ] || [ "${{ steps.types.outcome }}" != "success" ] || [ "${{ steps.build.outcome }}" != "success" ]; then
+            echo "The report was published, but the commit has a problem. Read latest.md on the status branch."
+            exit 1
+          fi
